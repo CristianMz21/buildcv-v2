@@ -1,0 +1,13 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/BuildCv.Api/BuildCv.Api.csproj" />
+    <Project Path="src/BuildCv.Application/BuildCv.Application.csproj" />
+    <Project Path="src/BuildCv.Domain/BuildCv.Domain.csproj" />
+    <Project Path="src/BuildCv.Infrastructure/BuildCv.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/BuildCv.Api.Tests/BuildCv.Api.Tests.csproj" />
+    <Project Path="tests/BuildCv.Application.Tests/BuildCv.Application.Tests.csproj" />
+    <Project Path="tests/BuildCv.Domain.Tests/BuildCv.Domain.Tests.csproj" />
+  </Folder>
+</Solution>

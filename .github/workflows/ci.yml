@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore BuildCv.slnx
+
+      - name: Build
+        run: dotnet build BuildCv.slnx -c Release --no-restore
+
+      - name: Format check
+        run: dotnet format BuildCv.slnx --verify-no-changes --no-restore
+
+      - name: Test
+        run: dotnet test BuildCv.slnx -c Release --no-build --collect:"XPlat Code Coverage"
