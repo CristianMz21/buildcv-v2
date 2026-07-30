@@ -38,8 +38,8 @@ bld/
 .idea/
 *.sln.iml
 
-## VS Code
-.vscode/
+## VS Code (config tracked, user settings local)
+# .vscode/
 
 ## Test results
 [Tt]est[Rr]esult*/
