@@ -16,7 +16,7 @@ public class ResumeTests
         var resume = Resume.Create(contact);
 
         resume.ContactInformation.FullName.Value.Should().Be("Cristian Arellano");
-        resume.WorkExperiences.Should().BeEmpty();
+        resume.Experiences.Should().BeEmpty();
         resume.Skills.Should().BeEmpty();
     }
 
@@ -30,8 +30,9 @@ public class ResumeTests
             Location: "Bogotá, Colombia",
             Summary: "Senior .NET Developer");
 
-        var work = new WorkExperience(
-            Company: "TechCorp",
+        var work = new Experience(
+            Type: ExperienceType.Professional,
+            Organization: OrganizationName.Create("TechCorp"),
             Position: "Senior .NET Developer",
             Period: new DateRange(DateOnly.Parse("2022-01-01"), null),
             Summary: "Led backend team")
@@ -41,10 +42,10 @@ public class ResumeTests
 
         var resume = Resume.Create(contact);
         resume.AddWorkExperience(work);
-        resume.AddSkill(new Skill("C#", "Expert"));
+        resume.AddSkill(new Skill(Technology.Create("C#"), "Expert"));
 
-        resume.WorkExperiences.Should().HaveCount(1);
-        resume.WorkExperiences[0].Company.Should().Be("TechCorp");
+        resume.Experiences.Should().HaveCount(1);
+        resume.Experiences[0].Organization.Value.Should().Be("TechCorp");
         resume.Skills.Should().HaveCount(1);
     }
 

@@ -4,7 +4,7 @@ namespace BuildCv.Domain.Resumes;
 
 public sealed record Publication(
     string Title,
-    string? Publisher,
+    OrganizationName? Publisher,
     Url? Url,
     DateOnly? ReleaseDate,
     string? Summary);

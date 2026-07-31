@@ -1,3 +1,4 @@
+using BuildCv.Domain.Common.ValueObjects;
 using BuildCv.Domain.Jobs;
 using FluentAssertions;
 
@@ -10,7 +11,7 @@ public class JobPostingTests
     {
         var job = new JobPosting(
             Title: "Senior .NET Developer",
-            Company: "TechCorp",
+            Company: OrganizationName.Create("TechCorp"),
             Description: "Seeking experienced .NET developer")
         {
             Requirements =
@@ -31,7 +32,7 @@ public class JobPostingTests
     {
         var job = new JobPosting(
             Title: "Junior .NET Developer",
-            Company: "TechCorp");
+            Company: OrganizationName.Create("TechCorp"));
 
         job.Requirements.Should().BeEmpty();
         job.Description.Should().BeNull();
@@ -42,7 +43,7 @@ public class JobPostingTests
     {
         var job1 = new JobPosting(
             Title: "Junior .NET Developer",
-            Company: "TechCorp");
+            Company: OrganizationName.Create("TechCorp"));
 
         var job2 = job1 with { Title = "Senior .NET Developer" };
 

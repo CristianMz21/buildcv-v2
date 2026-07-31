@@ -5,12 +5,13 @@ public sealed record ScoreBreakdown(
     double StructureScore,
     double AchievementsScore,
     double FormatScore,
-    double LengthScore)
+    double LengthScore,
+    ScoringWeightsSnapshot Weights)
 {
     public double WeightedTotal =>
-        ScoringWeights.Skills * MatchScore +
-        ScoringWeights.Experience * StructureScore +
-        ScoringWeights.Education * AchievementsScore +
-        ScoringWeights.Certifications * FormatScore +
-        ScoringWeights.Projects * LengthScore;
+        Weights.Skills * MatchScore +
+        Weights.Experience * StructureScore +
+        Weights.Education * AchievementsScore +
+        Weights.Certifications * FormatScore +
+        Weights.Projects * LengthScore;
 }
