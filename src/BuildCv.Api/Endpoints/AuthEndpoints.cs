@@ -128,6 +128,10 @@ public static class AuthEndpoints
             return result.ToHttpResult();
         });
 
+        // Client contract: fetch this token AFTER logging in, and re-fetch it after every login,
+        // logout, or account switch. ASP.NET Core binds the request token to the principal that
+        // was authenticated when the token was issued, so a token obtained while anonymous is
+        // rejected with 403 once the caller holds an auth cookie.
         group.MapGet("/antiforgery", (IAntiforgery antiforgery, HttpContext httpContext) =>
         {
             var tokens = antiforgery.GetAndStoreTokens(httpContext);

@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using BuildCv.Api.Security;
 using FluentAssertions;
 using Microsoft.AspNetCore.Mvc.Testing;
 
@@ -77,6 +78,47 @@ public sealed class CsrfTests
         };
         request.Headers.Add("Cookie", accessCookie);
         request.Headers.TryAddWithoutValidation("Authorization", authorization);
+
+        var response = await client.SendAsync(request);
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task CookieMutation_WithAntiforgeryTokenFetchedAfterLogin_Succeeds()
+    {
+        using var factory = new ApiTestFactory();
+        using var client = factory.CreateCookieClient();
+
+        await client.RegisterAndLoginAsync(TestHelpers.CandidateEmail);
+
+        var csrfToken = await client.GetAntiforgeryTokenAsync();
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/resumes")
+        {
+            Content = JsonContent.Create(ResumeBody)
+        };
+        request.Headers.Add(CsrfGuardMiddleware.CsrfHeaderName, csrfToken);
+
+        var response = await client.SendAsync(request);
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+    }
+
+    // Pins the client contract documented on /auth/antiforgery: the request token is bound to the
+    // principal it was issued for, so a token fetched while anonymous is rejected after login.
+    [Fact]
+    public async Task CookieMutation_WithAntiforgeryTokenFetchedBeforeLogin_Returns403()
+    {
+        using var factory = new ApiTestFactory();
+        using var client = factory.CreateCookieClient();
+
+        var preLoginToken = await client.GetAntiforgeryTokenAsync();
+        await client.RegisterAndLoginAsync(TestHelpers.CandidateEmail);
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/resumes")
+        {
+            Content = JsonContent.Create(ResumeBody)
+        };
+        request.Headers.Add(CsrfGuardMiddleware.CsrfHeaderName, preLoginToken);
 
         var response = await client.SendAsync(request);
         response.StatusCode.Should().Be(HttpStatusCode.Forbidden);

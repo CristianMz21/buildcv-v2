@@ -69,6 +69,16 @@ internal static class TestHelpers
         return request;
     }
 
+    // The antiforgery request token is bound to the current principal, so callers must fetch it
+    // after authenticating. See the /auth/antiforgery endpoint comment.
+    public static async Task<string> GetAntiforgeryTokenAsync(this HttpClient client)
+    {
+        var response = await client.GetAsync("/auth/antiforgery");
+        response.EnsureSuccessStatusCode();
+        var body = await response.Content.ReadFromJsonAsync<AntiforgeryBody>();
+        return body!.RequestToken;
+    }
+
     public static string GetSetCookie(HttpResponseMessage response, string name) =>
         response.Headers.GetValues("Set-Cookie")
             .First(v => v.StartsWith(name + "=", StringComparison.Ordinal));
@@ -85,4 +95,6 @@ internal static class TestHelpers
             .Any(a => a.Trim().Equals(attribute, StringComparison.OrdinalIgnoreCase));
 
     private sealed record TokenBody(string AccessToken, int ExpiresIn);
+
+    private sealed record AntiforgeryBody(string RequestToken);
 }

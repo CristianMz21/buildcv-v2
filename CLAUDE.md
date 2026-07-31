@@ -55,6 +55,7 @@ Follow this strictly; don't mix tiers:
 Auth is JWT in HttpOnly cookies (with `Authorization: Bearer` fallback — `OnMessageReceived` reads the `access_token` cookie). Refresh tokens are opaque, cookie-scoped to `/auth/refresh`. Cross-cutting pieces live in `src/BuildCv.Api/Security/`:
 
 - `CsrfGuardMiddleware`: double-submit-cookie CSRF check (`X-XSRF-TOKEN` header) for unsafe methods on cookie-authenticated requests only; bearer requests are exempt by design. "Bearer request" means a non-blank `Authorization` value — the same `string.IsNullOrWhiteSpace` test the JWT `OnMessageReceived` handler uses, so a blank header cannot disarm the guard while the cookie still authenticates.
+- **Antiforgery client contract**: the request token from `GET /auth/antiforgery` is bound to the principal it was issued for, so clients must fetch it *after* logging in and re-fetch it after every login, logout, or account switch. A token obtained while anonymous is rejected with 403 once the caller holds an auth cookie.
 - `SecurityHeadersMiddleware`: locked-down CSP and friends on every response.
 - Rate limiting: `"auth"` policy (5 req/min per IP) on register/login/refresh, plus a global 100 req/min limiter; 429 with `Retry-After`.
 - Authorization: role policies in `Security/Policies.cs` plus a fallback policy requiring authentication — endpoints are secure by default; opt out explicitly with `AllowAnonymous`.
