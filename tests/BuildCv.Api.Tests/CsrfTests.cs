@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using BuildCv.Api.Security;
 using FluentAssertions;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Testing;
 
 namespace BuildCv.Api.Tests;
@@ -81,6 +82,8 @@ public sealed class CsrfTests
 
         var response = await client.SendAsync(request);
         response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemDetails>();
+        problem!.Detail.Should().Be("CSRF validation failed.");
     }
 
     [Fact]
@@ -122,5 +125,7 @@ public sealed class CsrfTests
 
         var response = await client.SendAsync(request);
         response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemDetails>();
+        problem!.Detail.Should().Be("CSRF validation failed.");
     }
 }
