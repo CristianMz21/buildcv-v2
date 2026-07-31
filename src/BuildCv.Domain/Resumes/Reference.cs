@@ -5,7 +5,7 @@ namespace BuildCv.Domain.Resumes;
 public sealed record Reference(
     string Name,
     string? Position,
-    string? Company,
+    OrganizationName? Company,
     Email? Email,
     PhoneNumber? PhoneNumber,
     string? ReferenceText);

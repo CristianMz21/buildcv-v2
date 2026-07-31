@@ -24,3 +24,13 @@ public sealed class InvalidPersonNameException : DomainException
 {
     public InvalidPersonNameException(string message) : base(message) { }
 }
+
+public sealed class InvalidOrganizationNameException : DomainException
+{
+    public InvalidOrganizationNameException(string message) : base(message) { }
+}
+
+public sealed class InvalidTechnologyException : DomainException
+{
+    public InvalidTechnologyException(string message) : base(message) { }
+}

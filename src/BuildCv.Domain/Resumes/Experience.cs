@@ -2,8 +2,9 @@ using BuildCv.Domain.Common.ValueObjects;
 
 namespace BuildCv.Domain.Resumes;
 
-public sealed record WorkExperience(
-    string Company,
+public sealed record Experience(
+    ExperienceType Type,
+    OrganizationName Organization,
     string Position,
     DateRange Period,
     string? Summary = null)

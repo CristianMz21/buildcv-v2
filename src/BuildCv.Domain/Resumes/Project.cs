@@ -9,6 +9,6 @@ public sealed record Project(
     Url? RepositoryUrl = null,
     Url? LiveDemoUrl = null)
 {
-    public IReadOnlyList<string> Technologies { get; init; } = [];
+    public IReadOnlyList<Technology> Technologies { get; init; } = [];
     public IReadOnlyList<string> Highlights { get; init; } = [];
 }

@@ -1,8 +1,10 @@
+using BuildCv.Domain.Common.ValueObjects;
+
 namespace BuildCv.Domain.Jobs;
 
 public sealed record JobPosting(
     string Title,
-    string Company,
+    OrganizationName Company,
     string? Description = null)
 {
     public IReadOnlyList<JobRequirement> Requirements { get; init; } = [];

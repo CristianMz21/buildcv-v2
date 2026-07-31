@@ -4,8 +4,7 @@ namespace BuildCv.Domain.Resumes;
 
 public sealed record Certificate(
     string Name,
-    string Issuer,
+    OrganizationName Issuer,
     string? CredentialId,
     Url? CredentialUrl,
-    DateOnly? IssuedDate,
-    DateOnly? ExpirationDate);
+    DateRange? ValidityPeriod);

@@ -5,6 +5,10 @@ namespace BuildCv.Domain.Tests.Scoring;
 
 public class ScoreBreakdownTests
 {
+    private static readonly ScoringWeightsSnapshot DefaultWeights = new(
+        Skills: 0.45, Experience: 0.20, Education: 0.20,
+        Certifications: 0.10, Projects: 0.05);
+
     [Fact]
     public void WeightedTotal_calculates_correctly()
     {
@@ -13,7 +17,8 @@ public class ScoreBreakdownTests
             StructureScore: 0.8,
             AchievementsScore: 0.7,
             FormatScore: 0.6,
-            LengthScore: 1.0);
+            LengthScore: 1.0,
+            Weights: DefaultWeights);
 
         var total = breakdown.WeightedTotal;
 
@@ -29,7 +34,8 @@ public class ScoreBreakdownTests
             StructureScore: 0.0,
             AchievementsScore: 0.0,
             FormatScore: 0.0,
-            LengthScore: 0.0);
+            LengthScore: 0.0,
+            Weights: DefaultWeights);
 
         breakdown.WeightedTotal.Should().Be(0.0);
     }
@@ -42,7 +48,8 @@ public class ScoreBreakdownTests
             StructureScore: 1.0,
             AchievementsScore: 1.0,
             FormatScore: 1.0,
-            LengthScore: 1.0);
+            LengthScore: 1.0,
+            Weights: DefaultWeights);
 
         breakdown.WeightedTotal.Should().BeApproximately(1.0, 0.001);
     }
@@ -50,7 +57,7 @@ public class ScoreBreakdownTests
     [Fact]
     public void ScoreBreakdown_is_immutable()
     {
-        var b1 = new ScoreBreakdown(0.5, 0.5, 0.5, 0.5, 0.5);
+        var b1 = new ScoreBreakdown(0.5, 0.5, 0.5, 0.5, 0.5, DefaultWeights);
         var b2 = b1 with { MatchScore = 0.9 };
 
         b1.MatchScore.Should().Be(0.5);
