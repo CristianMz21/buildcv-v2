@@ -1,13 +1,12 @@
 namespace BuildCv.Domain.Scoring;
 
-public class ScoreBreakdown
+public sealed record ScoreBreakdown(
+    double MatchScore,
+    double StructureScore,
+    double AchievementsScore,
+    double FormatScore,
+    double LengthScore)
 {
-    public required double MatchScore { get; init; }
-    public required double StructureScore { get; init; }
-    public required double AchievementsScore { get; init; }
-    public required double FormatScore { get; init; }
-    public required double LengthScore { get; init; }
-
     public double WeightedTotal =>
         0.45 * MatchScore +
         0.20 * StructureScore +
