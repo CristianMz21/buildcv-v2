@@ -13,10 +13,12 @@ using BuildCv.Domain.Organizations;
 using BuildCv.Domain.Resumes;
 using BuildCv.Domain.Scoring;
 using BuildCv.Infrastructure.Persistence;
+using BuildCv.Infrastructure.Persistence.BlindIndexes;
 using BuildCv.Infrastructure.Security;
 using BuildCv.Infrastructure.Security.Encryption;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 
 namespace BuildCv.Infrastructure;
@@ -48,6 +50,17 @@ public static class DependencyInjection
             new BlindIndexKeyRing(provider.GetRequiredService<IOptions<EncryptionSettings>>().Value.BlindIndex));
         services.AddSingleton<IFieldEncryptor, AesGcmFieldEncryptor>();
         services.AddSingleton<IBlindIndex, HmacBlindIndex>();
+
+        // The only supported entry points to a blind-index digest. Registered as concrete types
+        // rather than behind an interface on purpose: they exist to make the CONTEXT string and the
+        // normalized input impossible to get wrong, and an interface that took (string, string)
+        // would hand both back to every caller.
+        services.AddSingleton<AccountEmailIndex>();
+        services.AddSingleton<RefreshTokenIndex>();
+
+        // TryAdd so the Api can register an HttpContext-backed principal without removing this one.
+        // Nothing in Application consumes ICurrentUser yet; the audit interceptor does.
+        services.TryAddSingleton<ICurrentUser, UnknownCurrentUser>();
 
         services.AddSingleton(TimeProvider.System);
         services.AddSingleton<IPasswordHasher, PasswordHasher>();

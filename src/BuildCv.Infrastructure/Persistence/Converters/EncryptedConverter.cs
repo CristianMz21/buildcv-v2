@@ -11,7 +11,7 @@ namespace BuildCv.Infrastructure.Persistence.Converters;
 //
 // `context` must be the fully-qualified property path (e.g. "Account.Email"). It is the AAD, so it
 // also decides which column an envelope is allowed to decrypt in.
-internal sealed class EncryptedConverter<T> : ValueConverter<T, byte[]>
+internal sealed class EncryptedConverter<T> : ValueConverter<T, byte[]>, IEncryptedConverter
 {
     public EncryptedConverter(IFieldEncryptor encryptor, string context, Func<T, string> toText, Func<string, T> fromText)
         : base(
@@ -20,4 +20,14 @@ internal sealed class EncryptedConverter<T> : ValueConverter<T, byte[]>
         => Context = context;
 
     public string Context { get; }
+}
+
+// Reaches the context without knowing T. A built model hands back converters as the non-generic
+// ValueConverter, so without this the only way to read the AAD path off a mapped property would be
+// reflection over a closed generic — and ModelConfigurationTests exists precisely to catch a context
+// that does not match the column it was applied to, at model-build time rather than on the first
+// read after deploy.
+internal interface IEncryptedConverter
+{
+    string Context { get; }
 }
