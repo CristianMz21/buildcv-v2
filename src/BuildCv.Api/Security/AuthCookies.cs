@@ -9,13 +9,16 @@ public static class AuthCookies
     public const string RefreshTokenCookie = "refresh_token";
     public const string RefreshCookiePath = "/auth/refresh";
 
+    // Development is the only environment allowed to serve auth cookies without Secure, so that
+    // local http debugging keeps working. Every other environment — Staging, QA, Preview,
+    // Production — gets the Secure attribute unconditionally. Both helpers must agree: gating
+    // one on Production and the other on Development previously left the antiforgery cookie
+    // Secure while the auth cookies were not.
     public static CookieSecurePolicy SecurePolicyFor(IHostEnvironment environment) =>
-        environment.IsProduction() ? CookieSecurePolicy.Always : CookieSecurePolicy.SameAsRequest;
+        environment.IsDevelopment() ? CookieSecurePolicy.SameAsRequest : CookieSecurePolicy.Always;
 
-    // CookieOptions.Secure maps to the Secure attribute: Always in production, omitted
-    // outside production so local dev and tests work over plain http.
     private static bool IsSecure(HttpContext context) =>
-        context.RequestServices.GetRequiredService<IHostEnvironment>().IsProduction();
+        !context.RequestServices.GetRequiredService<IHostEnvironment>().IsDevelopment();
 
     public static void SetTokens(HttpContext context, AuthResult auth, JwtSettings settings)
     {

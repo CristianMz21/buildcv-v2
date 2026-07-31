@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using FluentAssertions;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.Hosting;
 
 namespace BuildCv.Api.Tests;
 
@@ -63,6 +64,37 @@ public sealed class AuthFlowTests
         var register = await client.RegisterAsync(TestHelpers.CandidateEmail, role);
 
         register.StatusCode.Should().Be(HttpStatusCode.Created);
+    }
+
+    [Fact]
+    public async Task Login_OutsideDevelopment_MarksAuthCookiesSecure()
+    {
+        using var factory = new ApiTestFactory(Environments.Staging);
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            HandleCookies = false,
+            AllowAutoRedirect = false
+        });
+
+        (await client.RegisterAsync(TestHelpers.CandidateEmail)).EnsureSuccessStatusCode();
+        var login = await client.LoginAsync(TestHelpers.CandidateEmail);
+        login.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        TestHelpers.HasCookieAttribute(login, "access_token", "Secure").Should().BeTrue();
+        TestHelpers.HasCookieAttribute(login, "refresh_token", "Secure").Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Login_InDevelopment_OmitsSecureSoLocalHttpKeepsWorking()
+    {
+        using var factory = new ApiTestFactory();
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+
+        (await client.RegisterAsync(TestHelpers.CandidateEmail)).EnsureSuccessStatusCode();
+        var login = await client.LoginAsync(TestHelpers.CandidateEmail);
+
+        TestHelpers.HasCookieAttribute(login, "access_token", "Secure").Should().BeFalse();
+        TestHelpers.HasCookieAttribute(login, "refresh_token", "Secure").Should().BeFalse();
     }
 
     [Fact]

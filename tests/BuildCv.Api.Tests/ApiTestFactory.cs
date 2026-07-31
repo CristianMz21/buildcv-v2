@@ -8,11 +8,15 @@ using Microsoft.Extensions.Hosting;
 
 namespace BuildCv.Api.Tests;
 
-public sealed class ApiTestFactory : WebApplicationFactory<Program>
+// Defaults to Development because most tests rely on the relaxed local-http behavior; pass a
+// different environment name to exercise the production-shaped configuration.
+public sealed class ApiTestFactory(string? environment = null) : WebApplicationFactory<Program>
 {
+    private readonly string _environment = environment ?? Environments.Development;
+
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
-        builder.UseEnvironment(Environments.Development);
+        builder.UseEnvironment(_environment);
         builder.ConfigureAppConfiguration((_, config) =>
         {
             config.AddInMemoryCollection(new Dictionary<string, string?>
@@ -71,6 +75,14 @@ internal static class TestHelpers
 
     public static string GetCookieValue(HttpResponseMessage response, string name) =>
         GetSetCookie(response, name).Split(';')[0];
+
+    // Skips the name=value pair so a cookie whose VALUE happens to contain the attribute text
+    // cannot produce a false positive.
+    public static bool HasCookieAttribute(HttpResponseMessage response, string cookieName, string attribute) =>
+        GetSetCookie(response, cookieName)
+            .Split(';')
+            .Skip(1)
+            .Any(a => a.Trim().Equals(attribute, StringComparison.OrdinalIgnoreCase));
 
     private sealed record TokenBody(string AccessToken, int ExpiresIn);
 }
