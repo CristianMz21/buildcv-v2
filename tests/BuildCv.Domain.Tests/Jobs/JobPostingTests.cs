@@ -1,4 +1,5 @@
 using BuildCv.Domain.Common.ValueObjects;
+using BuildCv.Domain.Identity;
 using BuildCv.Domain.Jobs;
 using FluentAssertions;
 
@@ -6,10 +7,13 @@ namespace BuildCv.Domain.Tests.Jobs;
 
 public class JobPostingTests
 {
+    private static readonly AccountId OwnerId = AccountId.New();
+
     [Fact]
     public void JobPosting_with_requirements_can_be_created()
     {
         var job = new JobPosting(
+            OwnerId: OwnerId,
             Title: "Senior .NET Developer",
             Company: OrganizationName.Create("TechCorp"),
             Description: "Seeking experienced .NET developer")
@@ -31,6 +35,7 @@ public class JobPostingTests
     public void JobPosting_with_defaults_can_be_created()
     {
         var job = new JobPosting(
+            OwnerId: OwnerId,
             Title: "Junior .NET Developer",
             Company: OrganizationName.Create("TechCorp"));
 
@@ -42,6 +47,7 @@ public class JobPostingTests
     public void JobPosting_is_immutable()
     {
         var job1 = new JobPosting(
+            OwnerId: OwnerId,
             Title: "Junior .NET Developer",
             Company: OrganizationName.Create("TechCorp"));
 

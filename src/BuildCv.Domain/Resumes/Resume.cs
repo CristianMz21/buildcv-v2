@@ -1,7 +1,10 @@
+using BuildCv.Domain.Identity;
+
 namespace BuildCv.Domain.Resumes;
 
 public sealed class Resume
 {
+    public AccountId OwnerId { get; }
     public ContactInformation ContactInformation { get; private set; }
     public IReadOnlyList<Experience> Experiences { get; private set; }
     public IReadOnlyList<Education> Educations { get; private set; }
@@ -14,8 +17,9 @@ public sealed class Resume
     public IReadOnlyList<Interest> Interests { get; private set; }
     public IReadOnlyList<Reference> References { get; private set; }
 
-    private Resume(ContactInformation contactInformation)
+    private Resume(AccountId ownerId, ContactInformation contactInformation)
     {
+        OwnerId = ownerId;
         ContactInformation = contactInformation;
         Experiences = [];
         Educations = [];
@@ -29,8 +33,8 @@ public sealed class Resume
         References = [];
     }
 
-    public static Resume Create(ContactInformation contactInformation) =>
-        new(contactInformation);
+    public static Resume Create(AccountId ownerId, ContactInformation contactInformation) =>
+        new(ownerId, contactInformation);
 
     public void AddExperience(Experience experience) =>
         Experiences = [.. Experiences, experience];

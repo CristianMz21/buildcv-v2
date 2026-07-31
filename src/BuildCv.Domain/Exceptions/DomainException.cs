@@ -34,3 +34,23 @@ public sealed class InvalidTechnologyException : DomainException
 {
     public InvalidTechnologyException(string message) : base(message) { }
 }
+
+public sealed class InvalidAccountException : DomainException
+{
+    public InvalidAccountException(string message) : base(message) { }
+}
+
+public sealed class InvalidOrganizationException : DomainException
+{
+    public InvalidOrganizationException(string message) : base(message) { }
+}
+
+public sealed class InvalidMembershipException : DomainException
+{
+    public InvalidMembershipException(string message) : base(message) { }
+}
+
+public sealed class InvalidSlugException : DomainException
+{
+    public InvalidSlugException(string message) : base(message) { }
+}
