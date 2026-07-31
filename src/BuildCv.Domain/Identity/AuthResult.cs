@@ -8,4 +8,6 @@ public sealed record AuthResult(
     public string AccessToken { get; } = !string.IsNullOrWhiteSpace(AccessToken)
         ? AccessToken
         : throw new ArgumentException("AccessToken must not be empty.", nameof(AccessToken));
+
+    public override string ToString() => "[redacted]";
 }

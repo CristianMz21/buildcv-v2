@@ -18,10 +18,10 @@ public sealed record Url
         ArgumentException.ThrowIfNullOrWhiteSpace(value);
 
         if (!Uri.TryCreate(value, UriKind.Absolute, out var uri))
-            throw new InvalidUrlException($"Invalid URL format: {value}");
+            throw new InvalidUrlException("Invalid URL format.");
 
         if (uri.Scheme is not ("http" or "https"))
-            throw new InvalidUrlException($"URL must use http or https scheme: {value}");
+            throw new InvalidUrlException("URL must use http or https scheme.");
 
         return new Url(value, uri);
     }
@@ -34,6 +34,11 @@ public sealed record Url
             return true;
         }
         catch (DomainException)
+        {
+            url = null;
+            return false;
+        }
+        catch (ArgumentException)
         {
             url = null;
             return false;

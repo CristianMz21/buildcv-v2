@@ -40,11 +40,6 @@ public sealed class InvalidAccountException : DomainException
     public InvalidAccountException(string message) : base(message) { }
 }
 
-public sealed class InvalidOrganizationException : DomainException
-{
-    public InvalidOrganizationException(string message) : base(message) { }
-}
-
 public sealed class InvalidMembershipException : DomainException
 {
     public InvalidMembershipException(string message) : base(message) { }
@@ -53,4 +48,19 @@ public sealed class InvalidMembershipException : DomainException
 public sealed class InvalidSlugException : DomainException
 {
     public InvalidSlugException(string message) : base(message) { }
+}
+
+public sealed class InvalidDateRangeException : DomainException
+{
+    public InvalidDateRangeException(string message) : base(message) { }
+}
+
+public sealed class InvalidJobPostingException : DomainException
+{
+    public InvalidJobPostingException(string message) : base(message) { }
+}
+
+public sealed class DuplicateSkillException : DomainException
+{
+    public DuplicateSkillException(string message) : base(message) { }
 }

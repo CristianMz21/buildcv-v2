@@ -1,9 +1,13 @@
 namespace BuildCv.Domain.Scoring;
 
+using BuildCv.Domain.Jobs;
+using BuildCv.Domain.Resumes;
+
 public sealed record Analysis(
+    AnalysisId Id,
     ScoreBreakdown Breakdown,
-    string CandidateName,
-    string JobTitle,
+    ResumeId ResumeId,
+    JobPostingId JobPostingId,
     DateTimeOffset ScoredAt)
 {
     public int OverallScore => (int)Math.Round(Breakdown.WeightedTotal * 100);

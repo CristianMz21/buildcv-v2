@@ -5,20 +5,18 @@ namespace BuildCv.Domain.Tests.Scoring;
 
 public class ScoreBreakdownTests
 {
-    private static readonly ScoringWeightsSnapshot DefaultWeights = new(
-        Skills: 0.45, Experience: 0.20, Education: 0.20,
-        Certifications: 0.10, Projects: 0.05);
+    private static readonly ScoringWeightsSnapshot DefaultWeights = ScoringWeightsSnapshot.Default();
 
     [Fact]
     public void WeightedTotal_calculates_correctly()
     {
-        var breakdown = new ScoreBreakdown(
-            MatchScore: 0.9,
-            StructureScore: 0.8,
-            AchievementsScore: 0.7,
-            FormatScore: 0.6,
-            LengthScore: 1.0,
-            Weights: DefaultWeights);
+        var breakdown = ScoreBreakdown.Create(
+            skillsScore: 0.9,
+            experienceScore: 0.8,
+            educationScore: 0.7,
+            certificationsScore: 0.6,
+            projectsScore: 1.0,
+            weights: DefaultWeights);
 
         var total = breakdown.WeightedTotal;
 
@@ -29,13 +27,13 @@ public class ScoreBreakdownTests
     [Fact]
     public void WeightedTotal_with_zero_scores()
     {
-        var breakdown = new ScoreBreakdown(
-            MatchScore: 0.0,
-            StructureScore: 0.0,
-            AchievementsScore: 0.0,
-            FormatScore: 0.0,
-            LengthScore: 0.0,
-            Weights: DefaultWeights);
+        var breakdown = ScoreBreakdown.Create(
+            skillsScore: 0.0,
+            experienceScore: 0.0,
+            educationScore: 0.0,
+            certificationsScore: 0.0,
+            projectsScore: 0.0,
+            weights: DefaultWeights);
 
         breakdown.WeightedTotal.Should().Be(0.0);
     }
@@ -43,24 +41,69 @@ public class ScoreBreakdownTests
     [Fact]
     public void WeightedTotal_with_perfect_scores()
     {
-        var breakdown = new ScoreBreakdown(
-            MatchScore: 1.0,
-            StructureScore: 1.0,
-            AchievementsScore: 1.0,
-            FormatScore: 1.0,
-            LengthScore: 1.0,
-            Weights: DefaultWeights);
+        var breakdown = ScoreBreakdown.Create(
+            skillsScore: 1.0,
+            experienceScore: 1.0,
+            educationScore: 1.0,
+            certificationsScore: 1.0,
+            projectsScore: 1.0,
+            weights: DefaultWeights);
 
         breakdown.WeightedTotal.Should().BeApproximately(1.0, 0.001);
     }
 
     [Fact]
+    public void ScoreBreakdown_rejects_score_below_zero()
+    {
+        var act = () => ScoreBreakdown.Create(
+            skillsScore: -0.1,
+            experienceScore: 0.0,
+            educationScore: 0.0,
+            certificationsScore: 0.0,
+            projectsScore: 0.0,
+            weights: DefaultWeights);
+
+        act.Should().Throw<ArgumentException>();
+    }
+
+    [Fact]
+    public void ScoreBreakdown_rejects_score_above_one()
+    {
+        var act = () => ScoreBreakdown.Create(
+            skillsScore: 1.5,
+            experienceScore: 0.0,
+            educationScore: 0.0,
+            certificationsScore: 0.0,
+            projectsScore: 0.0,
+            weights: DefaultWeights);
+
+        act.Should().Throw<ArgumentException>();
+    }
+
+    [Fact]
+    public void ScoreBreakdown_default_snapshot_has_expected_weights()
+    {
+        DefaultWeights.Skills.Should().Be(0.45);
+        DefaultWeights.Experience.Should().Be(0.20);
+        DefaultWeights.Education.Should().Be(0.20);
+        DefaultWeights.Certifications.Should().Be(0.10);
+        DefaultWeights.Projects.Should().Be(0.05);
+        DefaultWeights.SchemaVersion.Should().Be(1);
+    }
+
+    [Fact]
+    public void ScoringWeightsSnapshot_rejects_weights_that_do_not_sum_to_one()
+    {
+        var act = () => ScoringWeightsSnapshot.Create(0.5, 0.2, 0.2, 0.1, 0.05);
+
+        act.Should().Throw<ArgumentException>();
+    }
+
+    [Fact]
     public void ScoreBreakdown_is_immutable()
     {
-        var b1 = new ScoreBreakdown(0.5, 0.5, 0.5, 0.5, 0.5, DefaultWeights);
-        var b2 = b1 with { MatchScore = 0.9 };
+        var b1 = ScoreBreakdown.Create(0.5, 0.5, 0.5, 0.5, 0.5, DefaultWeights);
 
-        b1.MatchScore.Should().Be(0.5);
-        b2.MatchScore.Should().Be(0.9);
+        b1.SkillsScore.Should().Be(0.5);
     }
 }

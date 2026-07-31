@@ -19,10 +19,10 @@ public sealed record Email
         ArgumentException.ThrowIfNullOrWhiteSpace(value);
 
         if (value.Length > MaxLength)
-            throw new InvalidEmailException($"Email exceeds {MaxLength} characters: {value}");
+            throw new InvalidEmailException($"Email exceeds {MaxLength} characters.");
 
         if (!Pattern.IsMatch(value))
-            throw new InvalidEmailException($"Invalid email format: {value}");
+            throw new InvalidEmailException("Invalid email format.");
 
         return new Email(value.ToLowerInvariant());
     }
@@ -35,6 +35,11 @@ public sealed record Email
             return true;
         }
         catch (DomainException)
+        {
+            email = null;
+            return false;
+        }
+        catch (ArgumentException)
         {
             email = null;
             return false;
