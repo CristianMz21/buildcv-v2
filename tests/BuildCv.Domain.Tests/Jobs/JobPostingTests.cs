@@ -121,4 +121,15 @@ public class JobPostingTests
         job.Equals(job).Should().BeTrue();
         JobPosting.Create(OwnerId, "Dev2", OrganizationName.Create("TechCorp")).Equals(job).Should().BeFalse();
     }
+
+    [Fact]
+    public void JobPosting_requirements_view_reflects_subsequent_additions()
+    {
+        var job = JobPosting.Create(OwnerId, "Dev", OrganizationName.Create("TechCorp"));
+        var view = job.Requirements;
+
+        job.AddRequirement(JobRequirement.Create(Technology.Create("C#"), RequirementPriority.MustHave));
+
+        view.Should().HaveCount(1);
+    }
 }
