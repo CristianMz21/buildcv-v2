@@ -21,10 +21,10 @@ public sealed record PhoneNumber
         var digitsOnly = new string(value.Where(c => char.IsDigit(c) || c == '+').ToArray());
 
         if (digitsOnly.Length > MaxLength)
-            throw new InvalidPhoneNumberException($"Phone number exceeds {MaxLength} characters: {value}");
+            throw new InvalidPhoneNumberException($"Phone number exceeds {MaxLength} characters.");
 
         if (!Pattern.IsMatch(digitsOnly))
-            throw new InvalidPhoneNumberException($"Invalid phone number format. Must start with + and have 7-15 digits: {value}");
+            throw new InvalidPhoneNumberException("Invalid phone number format. Must start with + and have 7-15 digits.");
 
         return new PhoneNumber(digitsOnly);
     }
@@ -36,7 +36,12 @@ public sealed record PhoneNumber
             phoneNumber = Create(value);
             return true;
         }
-        catch (Exception)
+        catch (DomainException)
+        {
+            phoneNumber = null;
+            return false;
+        }
+        catch (ArgumentException)
         {
             phoneNumber = null;
             return false;

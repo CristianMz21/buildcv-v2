@@ -8,8 +8,7 @@ public sealed record ContactInformation(
     PhoneNumber? PhoneNumber = null,
     string? Location = null,
     Url? Website = null,
-    string? Summary = null,
-    Demographics? Demographics = null)
+    string? Summary = null)
 {
     public IReadOnlyList<Profile> Profiles { get; init; } = [];
 }

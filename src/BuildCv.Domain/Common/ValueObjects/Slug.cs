@@ -21,7 +21,7 @@ public sealed record Slug
             throw new InvalidSlugException($"Slug exceeds {MaxLength} characters.");
 
         if (!Pattern.IsMatch(trimmed))
-            throw new InvalidSlugException($"Invalid slug format: '{value}'. Use lowercase letters, numbers, and hyphens.");
+            throw new InvalidSlugException("Invalid slug format. Use lowercase letters, numbers, and hyphens.");
 
         return new Slug(trimmed);
     }
@@ -29,7 +29,8 @@ public sealed record Slug
     public static bool TryCreate(string value, out Slug? slug)
     {
         try { slug = Create(value); return true; }
-        catch (Exception) { slug = null; return false; }
+        catch (DomainException) { slug = null; return false; }
+        catch (ArgumentException) { slug = null; return false; }
     }
 
     public override string ToString() => Value;

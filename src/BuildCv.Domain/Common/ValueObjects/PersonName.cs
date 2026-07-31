@@ -1,3 +1,4 @@
+using System.Text;
 using BuildCv.Domain.Exceptions;
 
 namespace BuildCv.Domain.Common.ValueObjects;
@@ -14,10 +15,14 @@ public sealed record PersonName
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(value);
 
-        if (value.Length > MaxLength)
-            throw new InvalidPersonNameException($"Name exceeds {MaxLength} characters: {value}");
+        var normalized = value.Trim().Normalize(NormalizationForm.FormC);
+        if (normalized.Any(char.IsControl))
+            throw new InvalidPersonNameException("Name must not contain control characters.");
 
-        return new PersonName(value.Trim());
+        if (normalized.Length > MaxLength)
+            throw new InvalidPersonNameException($"Name exceeds {MaxLength} characters.");
+
+        return new PersonName(normalized);
     }
 
     public static bool TryCreate(string value, out PersonName? name)
@@ -27,7 +32,12 @@ public sealed record PersonName
             name = Create(value);
             return true;
         }
-        catch (Exception)
+        catch (DomainException)
+        {
+            name = null;
+            return false;
+        }
+        catch (ArgumentException)
         {
             name = null;
             return false;
