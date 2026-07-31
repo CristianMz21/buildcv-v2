@@ -26,6 +26,9 @@ public sealed class ChangePasswordHandler(
             // Verifying the current password makes this a credential check, so it runs through the
             // same lockout path as LoginHandler. Without it the endpoint is a password oracle that
             // accepts unlimited guesses against an already-stolen session.
+            if (account.Status != AccountStatus.Active)
+                return Result<AccountDto>.Failure("Account is not active.");
+
             if (account.IsLocked)
                 return Result<AccountDto>.Failure("Account is temporarily locked. Try again later.");
 

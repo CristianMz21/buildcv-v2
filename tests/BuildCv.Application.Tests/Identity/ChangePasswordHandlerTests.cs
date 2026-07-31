@@ -64,6 +64,18 @@ public class ChangePasswordHandlerTests
     }
 
     [Fact]
+    public async Task ChangePassword_suspended_account_rejected_even_with_correct_current_password()
+    {
+        var account = await SeedAccountAsync();
+        account.Suspend();
+
+        var result = await _handler.Handle(new ChangePasswordCommand(account.Id, CurrentPassword, NewPassword));
+
+        result.IsSuccess.Should().BeFalse();
+        result.Error.Should().Be("Account is not active.");
+    }
+
+    [Fact]
     public async Task ChangePassword_locked_account_rejected_even_with_correct_current_password()
     {
         var account = await SeedAccountAsync();
