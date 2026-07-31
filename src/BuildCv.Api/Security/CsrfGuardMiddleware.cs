@@ -25,10 +25,17 @@ public sealed class CsrfGuardMiddleware(RequestDelegate next)
     public async Task Invoke(HttpContext context, IAntiforgery antiforgery)
     {
         var request = context.Request;
+
+        // Must use the exact emptiness test the JwtBearer OnMessageReceived handler uses in
+        // Program.cs: it falls back to the cookie whenever the Authorization VALUE is blank, so
+        // testing only for the presence of the header KEY would let a blank `Authorization:`
+        // header disarm this guard while the request still authenticates from the cookie.
+        var hasBearerCredential = !string.IsNullOrWhiteSpace(request.Headers.Authorization.ToString());
+
         var requiresValidation =
             UnsafeMethods.Contains(request.Method)
             && !Array.Exists(ExemptPaths, path => request.Path.StartsWithSegments(path, StringComparison.OrdinalIgnoreCase))
-            && !request.Headers.ContainsKey("Authorization")
+            && !hasBearerCredential
             && request.Cookies.ContainsKey(AuthCookies.AccessTokenCookie);
 
         if (requiresValidation)

@@ -52,4 +52,33 @@ public sealed class CsrfTests
         var response = await client.SendAsync(request);
         response.StatusCode.Should().Be(HttpStatusCode.Created);
     }
+
+    // A blank Authorization header carries no bearer credential, so the JwtBearer handler still
+    // authenticates from the cookie. The guard must not treat the bare header key as an exemption.
+    // HttpClient drops a zero-length header value before it reaches TestServer, so whitespace is
+    // the closest expressible equivalent here — the JwtBearer handler's IsNullOrWhiteSpace check
+    // treats both identically, and this middleware must too.
+    [Theory]
+    [InlineData(" ")]
+    [InlineData("\t")]
+    [InlineData("   ")]
+    public async Task CookieMutation_WithBlankAuthorizationHeader_Returns403(string authorization)
+    {
+        using var factory = new ApiTestFactory();
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+
+        (await client.RegisterAsync(TestHelpers.CandidateEmail)).EnsureSuccessStatusCode();
+        var login = await client.LoginAsync(TestHelpers.CandidateEmail);
+        var accessCookie = TestHelpers.GetCookieValue(login, "access_token");
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/resumes")
+        {
+            Content = JsonContent.Create(ResumeBody)
+        };
+        request.Headers.Add("Cookie", accessCookie);
+        request.Headers.TryAddWithoutValidation("Authorization", authorization);
+
+        var response = await client.SendAsync(request);
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
 }
