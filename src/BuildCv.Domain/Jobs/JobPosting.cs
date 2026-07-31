@@ -24,8 +24,8 @@ public sealed class JobPosting
     public DateTimeOffset UpdatedAt { get; private set; }
     public DateTimeOffset? PublishedAt { get; private set; }
     public DateTimeOffset? ClosesAt { get; private set; }
-    public IReadOnlyList<JobRequirement> Requirements => _requirements;
-    public IReadOnlyList<Responsibility> Responsibilities => _responsibilities;
+    public IReadOnlyList<JobRequirement> Requirements => _requirements.AsReadOnly();
+    public IReadOnlyList<Responsibility> Responsibilities => _responsibilities.AsReadOnly();
 
     private JobPosting(
         JobPostingId id,

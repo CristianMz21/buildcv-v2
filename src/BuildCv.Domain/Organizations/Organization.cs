@@ -15,7 +15,7 @@ public sealed class Organization
     public OrganizationStatus Status { get; private set; }
     public DateTimeOffset CreatedAt { get; }
     public DateTimeOffset UpdatedAt { get; private set; }
-    public IReadOnlyList<Membership> Members => _members;
+    public IReadOnlyList<Membership> Members => _members.AsReadOnly();
 
     private Organization(OrganizationId id, OrganizationName name, Slug slug)
     {
@@ -39,6 +39,8 @@ public sealed class Organization
         return organization;
     }
 
+    private void Touch() => UpdatedAt = DateTimeOffset.UtcNow;
+
     public void AddMember(AccountId accountId, MembershipRole role = MembershipRole.Member)
     {
         ArgumentNullException.ThrowIfNull(accountId);
@@ -46,7 +48,7 @@ public sealed class Organization
             throw new InvalidMembershipException("Account is already a member.");
 
         _members.Add(new Membership(accountId, role, DateTimeOffset.UtcNow));
-        UpdatedAt = DateTimeOffset.UtcNow;
+        Touch();
     }
 
     public void RemoveMember(AccountId accountId)
@@ -59,7 +61,7 @@ public sealed class Organization
             throw new InvalidMembershipException("Cannot remove the only owner of an organization.");
 
         _members.Remove(member);
-        UpdatedAt = DateTimeOffset.UtcNow;
+        Touch();
     }
 
     public void ChangeMemberRole(AccountId accountId, MembershipRole newRole)
@@ -75,25 +77,25 @@ public sealed class Organization
             throw new InvalidMembershipException("Cannot demote the only owner of an organization.");
 
         _members[index] = member with { Role = newRole };
-        UpdatedAt = DateTimeOffset.UtcNow;
+        Touch();
     }
 
     public void Suspend()
     {
         Status = OrganizationStatus.Suspended;
-        UpdatedAt = DateTimeOffset.UtcNow;
+        Touch();
     }
 
     public void Restore()
     {
         Status = OrganizationStatus.Active;
-        UpdatedAt = DateTimeOffset.UtcNow;
+        Touch();
     }
 
     public void Delete()
     {
         Status = OrganizationStatus.Deleted;
-        UpdatedAt = DateTimeOffset.UtcNow;
+        Touch();
     }
 
     public override bool Equals(object? obj) => obj is Organization other && Id.Equals(other.Id);

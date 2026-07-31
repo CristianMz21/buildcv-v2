@@ -21,16 +21,16 @@ public sealed class Resume
     public ContactInformation ContactInformation { get; private set; }
     public DateTimeOffset CreatedAt { get; }
     public DateTimeOffset UpdatedAt { get; private set; }
-    public IReadOnlyList<Experience> Experiences => _experiences;
-    public IReadOnlyList<Education> Educations => _educations;
-    public IReadOnlyList<Skill> Skills => _skills;
-    public IReadOnlyList<Project> Projects => _projects;
-    public IReadOnlyList<Certificate> Certificates => _certificates;
-    public IReadOnlyList<Language> Languages => _languages;
-    public IReadOnlyList<Award> Awards => _awards;
-    public IReadOnlyList<Publication> Publications => _publications;
-    public IReadOnlyList<Interest> Interests => _interests;
-    public IReadOnlyList<Reference> References => _references;
+    public IReadOnlyList<Experience> Experiences => _experiences.AsReadOnly();
+    public IReadOnlyList<Education> Educations => _educations.AsReadOnly();
+    public IReadOnlyList<Skill> Skills => _skills.AsReadOnly();
+    public IReadOnlyList<Project> Projects => _projects.AsReadOnly();
+    public IReadOnlyList<Certificate> Certificates => _certificates.AsReadOnly();
+    public IReadOnlyList<Language> Languages => _languages.AsReadOnly();
+    public IReadOnlyList<Award> Awards => _awards.AsReadOnly();
+    public IReadOnlyList<Publication> Publications => _publications.AsReadOnly();
+    public IReadOnlyList<Interest> Interests => _interests.AsReadOnly();
+    public IReadOnlyList<Reference> References => _references.AsReadOnly();
 
     private Resume(ResumeId id, AccountId ownerId, ContactInformation contactInformation)
     {
