@@ -1,4 +1,5 @@
 using BuildCv.Domain.Common.ValueObjects;
+using BuildCv.Domain.Identity;
 using BuildCv.Domain.Resumes;
 using FluentAssertions;
 
@@ -9,11 +10,12 @@ public class ResumeTests
     [Fact]
     public void Resume_with_minimal_data_can_be_created()
     {
+        var ownerId = AccountId.New();
         var contact = new ContactInformation(
             FullName: PersonName.Create("Cristian Arellano"),
             Email: Email.Create("cristian@example.com"));
 
-        var resume = Resume.Create(contact);
+        var resume = Resume.Create(ownerId, contact);
 
         resume.ContactInformation.FullName.Value.Should().Be("Cristian Arellano");
         resume.Experiences.Should().BeEmpty();
@@ -23,6 +25,7 @@ public class ResumeTests
     [Fact]
     public void Resume_with_work_experiences_can_be_created()
     {
+        var ownerId = AccountId.New();
         var contact = new ContactInformation(
             FullName: PersonName.Create("Cristian Arellano"),
             Email: Email.Create("cristian@example.com"),
@@ -40,7 +43,7 @@ public class ResumeTests
             Highlights = ["Improved performance by 40%", "Mentored 3 junior devs"]
         };
 
-        var resume = Resume.Create(contact);
+        var resume = Resume.Create(ownerId, contact);
         resume.AddWorkExperience(work);
         resume.AddSkill(new Skill(Technology.Create("C#"), "Expert"));
 
@@ -52,6 +55,7 @@ public class ResumeTests
     [Fact]
     public void Resume_is_immutable()
     {
+        var ownerId = AccountId.New();
         var contact1 = new ContactInformation(
             FullName: PersonName.Create("Cristian Arellano"),
             Email: Email.Create("cristian@example.com"));
@@ -60,8 +64,8 @@ public class ResumeTests
             FullName: PersonName.Create("Cristian Arellano Muñoz"),
             Email: Email.Create("cristian@example.com"));
 
-        var resume1 = Resume.Create(contact1);
-        var resume2 = Resume.Create(contact2);
+        var resume1 = Resume.Create(ownerId, contact1);
+        var resume2 = Resume.Create(ownerId, contact2);
 
         resume1.ContactInformation.FullName.Value.Should().Be("Cristian Arellano");
         resume2.ContactInformation.FullName.Value.Should().Be("Cristian Arellano Muñoz");
