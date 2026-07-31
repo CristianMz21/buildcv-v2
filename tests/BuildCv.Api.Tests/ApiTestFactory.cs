@@ -31,7 +31,8 @@ public sealed class ApiTestFactory(string? environment = null) : WebApplicationF
                 // committed development keys.
                 ["Encryption:ActiveKeyId"] = "test-v1",
                 ["Encryption:Keys:test-v1:Aes"] = "Z6h2YbISQC6Wo2Xbs2xQr1PistFWXwHrenrptzxtc6o=",
-                ["Encryption:Keys:test-v1:Hmac"] = "plvayg6COUHk/ZPifZ4984Ps7ytigDoGldjSe+SVKsA="
+                ["Encryption:BlindIndex:ActiveKeyId"] = "test-b1",
+                ["Encryption:BlindIndex:Keys:test-b1"] = "Xw273xuvdyoZuGb8kJo1vYXumxFtiHqIZkntZaZLegs="
             });
         });
     }

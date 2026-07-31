@@ -1,28 +1,27 @@
+using System.Buffers.Binary;
 using System.Security.Cryptography;
 using System.Text;
 
 namespace BuildCv.Infrastructure.Security.Encryption;
 
-// HMAC-SHA256(active HMAC key, context + U+001F + value). The unit separator keeps the context and
-// the value from running together, so "Account.Ema" + "il@x" and "Account.Email" + "@x" cannot
-// collide into the same digest.
+// HMAC-SHA256(blind-index key, int32BE(len(context)) || context || value).
+//
+// The length prefix makes the split between context and value unambiguous by construction, so
+// ("Account.Ema", "il@x") and ("Account.Email", "@x") cannot hash to the same digest. An in-band
+// separator byte would only hold for as long as no context and no value ever contains that byte.
 //
 // Inputs are taken verbatim: the Domain already normalizes them (Email lower-cases in its factory),
 // and re-normalizing here would let this type and the Domain disagree about what equality means.
 //
-// Unlike the encryption envelope the digest carries no key id — it is a fixed 32-byte column. Rotating
-// the HMAC secret therefore invalidates every stored index and requires recomputing them; rotate the
-// AES secret independently when only payload keys need to move.
+// Keys come from BlindIndexKeyRing, never from the AES ring: repointing Encryption:ActiveKeyId must
+// not change how lookups hash.
 public sealed class HmacBlindIndex : IBlindIndex
 {
     public const int DigestSizeInBytes = 32;
 
-    // ASCII unit separator: never produced by an email, an opaque token, or a property path.
-    private const string ContextSeparator = "\u001F";
+    private readonly BlindIndexKeyRing _keyRing;
 
-    private readonly EncryptionKeyRing _keyRing;
-
-    public HmacBlindIndex(EncryptionKeyRing keyRing)
+    public HmacBlindIndex(BlindIndexKeyRing keyRing)
     {
         ArgumentNullException.ThrowIfNull(keyRing);
         _keyRing = keyRing;
@@ -33,11 +32,36 @@ public sealed class HmacBlindIndex : IBlindIndex
         ArgumentNullException.ThrowIfNull(value);
         ArgumentException.ThrowIfNullOrWhiteSpace(context);
 
-        var payload = Encoding.UTF8.GetBytes(string.Concat(context, ContextSeparator, value));
+        return Compute(value, context, _keyRing.ActiveKeyId);
+    }
+
+    public IReadOnlyList<byte[]> ComputeCandidates(string value, string context)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        ArgumentException.ThrowIfNullOrWhiteSpace(context);
+
+        var keyIds = _keyRing.KeyIds;
+        var digests = new byte[keyIds.Count][];
+        for (var index = 0; index < keyIds.Count; index++)
+            digests[index] = Compute(value, context, keyIds[index]);
+
+        return digests;
+    }
+
+    private byte[] Compute(string value, string context, string keyId)
+    {
+        var contextLength = Encoding.UTF8.GetByteCount(context);
+        var valueLength = Encoding.UTF8.GetByteCount(value);
+
+        var payload = new byte[sizeof(int) + contextLength + valueLength];
+        BinaryPrimitives.WriteInt32BigEndian(payload, contextLength);
+        Encoding.UTF8.GetBytes(context, payload.AsSpan(sizeof(int), contextLength));
+        Encoding.UTF8.GetBytes(value, payload.AsSpan(sizeof(int) + contextLength, valueLength));
+
         var digest = new byte[DigestSizeInBytes];
         try
         {
-            HMACSHA256.HashData(_keyRing.GetHmacKey(_keyRing.ActiveKeyId), payload, digest);
+            HMACSHA256.HashData(_keyRing.GetKey(keyId), payload, digest);
         }
         finally
         {

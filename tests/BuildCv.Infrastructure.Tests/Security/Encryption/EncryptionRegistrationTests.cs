@@ -9,18 +9,12 @@ namespace BuildCv.Infrastructure.Tests.Security.Encryption;
 public class EncryptionRegistrationTests
 {
     private const string Aes = "Z6h2YbISQC6Wo2Xbs2xQr1PistFWXwHrenrptzxtc6o=";
-    private const string Hmac = "plvayg6COUHk/ZPifZ4984Ps7ytigDoGldjSe+SVKsA=";
+    private const string BlindIndexKey = "Xw273xuvdyoZuGb8kJo1vYXumxFtiHqIZkntZaZLegs=";
 
     [Fact]
     public void AddInfrastructure_WithConfiguredKeys_ResolvesASingleFieldEncryptorAndBlindIndex()
     {
-        using var provider = BuildProvider(new Dictionary<string, string?>
-        {
-            ["Jwt:SigningKey"] = "test-signing-key-min-32-characters-long-0123456789",
-            ["Encryption:ActiveKeyId"] = "v1",
-            ["Encryption:Keys:v1:Aes"] = Aes,
-            ["Encryption:Keys:v1:Hmac"] = Hmac
-        });
+        using var provider = BuildProvider(Complete());
 
         var encryptor = provider.GetRequiredService<IFieldEncryptor>();
         var blindIndex = provider.GetRequiredService<IBlindIndex>();
@@ -29,6 +23,21 @@ public class EncryptionRegistrationTests
         blindIndex.Should().BeSameAs(provider.GetRequiredService<IBlindIndex>());
         encryptor.Decrypt(encryptor.Encrypt("candidate@example.com", "Account.Email"), "Account.Email")
             .Should().Be("candidate@example.com");
+        blindIndex.Compute("candidate@example.com", "Account.Email")
+            .Should().HaveCount(HmacBlindIndex.DigestSizeInBytes);
+    }
+
+    [Fact]
+    public void AddInfrastructure_BindsTheTwoRotationPointersIndependently()
+    {
+        var settings = Complete();
+        settings["Encryption:ActiveKeyId"] = "v2";
+        settings["Encryption:Keys:v2:Aes"] = "SUcLJu1U3OAVv8dS5Hnm+WVpjSi4jEiFsNgIMr6B+wI=";
+
+        using var provider = BuildProvider(settings);
+
+        provider.GetRequiredService<EncryptionKeyRing>().ActiveKeyId.Should().Be("v2");
+        provider.GetRequiredService<BlindIndexKeyRing>().ActiveKeyId.Should().Be("b1");
     }
 
     [Fact]
@@ -48,21 +57,44 @@ public class EncryptionRegistrationTests
     }
 
     [Fact]
+    public void AddInfrastructure_WithoutABlindIndexSection_FailsWhenTheOptionsAreRealized()
+    {
+        // A host that can encrypt but cannot compute a lookup digest is just as unusable, and far
+        // harder to diagnose once it is already serving traffic.
+        var settings = Complete();
+        settings.Remove("Encryption:BlindIndex:ActiveKeyId");
+        settings.Remove("Encryption:BlindIndex:Keys:b1");
+
+        using var provider = BuildProvider(settings);
+
+        var act = () => provider.GetRequiredService<IFieldEncryptor>();
+
+        act.Should().Throw<OptionsValidationException>()
+            .WithMessage("*Encryption:BlindIndex:Keys must contain at least one key*");
+    }
+
+    [Fact]
     public void AddInfrastructure_WithMalformedKeyMaterial_FailsNamingTheOffendingKey()
     {
-        using var provider = BuildProvider(new Dictionary<string, string?>
-        {
-            ["Jwt:SigningKey"] = "test-signing-key-min-32-characters-long-0123456789",
-            ["Encryption:ActiveKeyId"] = "v1",
-            ["Encryption:Keys:v1:Aes"] = "not-base64!!",
-            ["Encryption:Keys:v1:Hmac"] = Hmac
-        });
+        var settings = Complete();
+        settings["Encryption:Keys:v1:Aes"] = "not-base64!!";
+
+        using var provider = BuildProvider(settings);
 
         var act = () => provider.GetRequiredService<IFieldEncryptor>();
 
         act.Should().Throw<OptionsValidationException>()
             .WithMessage("*Encryption:Keys:v1:Aes*");
     }
+
+    private static Dictionary<string, string?> Complete() => new()
+    {
+        ["Jwt:SigningKey"] = "test-signing-key-min-32-characters-long-0123456789",
+        ["Encryption:ActiveKeyId"] = "v1",
+        ["Encryption:Keys:v1:Aes"] = Aes,
+        ["Encryption:BlindIndex:ActiveKeyId"] = "b1",
+        ["Encryption:BlindIndex:Keys:b1"] = BlindIndexKey
+    };
 
     private static ServiceProvider BuildProvider(Dictionary<string, string?> settings)
     {

@@ -42,6 +42,8 @@ public static class DependencyInjection
 
         services.AddSingleton(provider =>
             new EncryptionKeyRing(provider.GetRequiredService<IOptions<EncryptionSettings>>().Value));
+        services.AddSingleton(provider =>
+            new BlindIndexKeyRing(provider.GetRequiredService<IOptions<EncryptionSettings>>().Value));
         services.AddSingleton<IFieldEncryptor, AesGcmFieldEncryptor>();
         services.AddSingleton<IBlindIndex, HmacBlindIndex>();
 

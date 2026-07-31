@@ -8,7 +8,7 @@ public class HmacBlindIndexTests
     private const string Context = "Account.Email";
     private const string Value = "candidate@example.com";
 
-    private readonly HmacBlindIndex _index = new(EncryptionTestKeys.SingleKeyRing());
+    private readonly HmacBlindIndex _index = new(EncryptionTestKeys.SingleBlindIndexRing());
 
     [Fact]
     public void Compute_ReturnsThirtyTwoBytes()
@@ -21,9 +21,25 @@ public class HmacBlindIndexTests
     {
         // The lookup index is written by one instance and queried by another, possibly in another
         // process. If this ever stops holding, every login by email breaks.
-        var other = new HmacBlindIndex(EncryptionTestKeys.SingleKeyRing());
+        var other = new HmacBlindIndex(EncryptionTestKeys.SingleBlindIndexRing());
 
         _index.Compute(Value, Context).Should().Equal(other.Compute(Value, Context));
+    }
+
+    [Fact]
+    public void Compute_IsUnaffectedByAesKeyRotation()
+    {
+        // THE regression test for the key-material split. When both secrets hung off one key id,
+        // repointing Encryption:ActiveKeyId silently rehashed every lookup: WHERE EmailHash = @x
+        // matched nothing, so login reported "account not found" AND re-registering an existing
+        // address succeeded, because the new digest did not collide with the old one under the
+        // unique index. Duplicate identities, and no exception anywhere.
+        var beforeRotation = new HmacBlindIndex(
+            new BlindIndexKeyRing(EncryptionTestKeys.Settings("v1", ["v1"], "b1", ["b1"])));
+        var afterRotation = new HmacBlindIndex(
+            new BlindIndexKeyRing(EncryptionTestKeys.Settings("v2", ["v1", "v2"], "b1", ["b1"])));
+
+        afterRotation.Compute(Value, Context).Should().Equal(beforeRotation.Compute(Value, Context));
     }
 
     [Fact]
@@ -41,29 +57,18 @@ public class HmacBlindIndexTests
     [Fact]
     public void Compute_ContextAndValueCannotRunTogetherIntoTheSameDigest()
     {
-        // Without a separator "Account.Ema" + "il@x" and "Account.Email" + "@x" would hash the same
-        // bytes and let a value in one column satisfy a lookup in another.
+        // The length prefix makes the split unambiguous by construction: without it,
+        // ("Account.Ema", "il@x") and ("Account.Email", "@x") hash the same bytes and a value in one
+        // column satisfies a lookup in another.
         _index.Compute("il@x", "Account.Ema").Should().NotEqual(_index.Compute("@x", "Account.Email"));
     }
 
     [Fact]
-    public void Compute_DifferentKeyRing_ProducesADifferentDigest()
+    public void Compute_DifferentBlindIndexKey_ProducesADifferentDigest()
     {
-        var otherRing = new HmacBlindIndex(EncryptionTestKeys.SingleKeyRing("other"));
+        var otherRing = new HmacBlindIndex(EncryptionTestKeys.SingleBlindIndexRing("other"));
 
         _index.Compute(Value, Context).Should().NotEqual(otherRing.Compute(Value, Context));
-    }
-
-    [Fact]
-    public void Compute_UsesTheActiveKey_SoRotatingTheHmacSecretInvalidatesStoredDigests()
-    {
-        // Documented consequence of a keyless 32-byte digest: rotating the HMAC secret requires
-        // recomputing every stored blind index. Rotate the AES secret on its own when only payload
-        // keys need to move.
-        var beforeRotation = new HmacBlindIndex(EncryptionTestKeys.Ring("v1", "v1", "v2"));
-        var afterRotation = new HmacBlindIndex(EncryptionTestKeys.Ring("v2", "v1", "v2"));
-
-        beforeRotation.Compute(Value, Context).Should().NotEqual(afterRotation.Compute(Value, Context));
     }
 
     [Fact]
@@ -72,6 +77,52 @@ public class HmacBlindIndexTests
         // Email lower-cases in its own factory; a second normalization here would let this type and
         // the Domain disagree about what equality means.
         _index.Compute("Candidate@Example.com", Context).Should().NotEqual(_index.Compute(Value, Context));
+    }
+
+    [Fact]
+    public void ComputeCandidates_SingleKey_ReturnsJustTheActiveDigest()
+    {
+        _index.ComputeCandidates(Value, Context).Should().ContainSingle()
+            .Which.Should().Equal(_index.Compute(Value, Context));
+    }
+
+    [Fact]
+    public void ComputeCandidates_ReturnsOneDigestPerConfiguredKeyActiveFirst()
+    {
+        var duringRotation = new HmacBlindIndex(EncryptionTestKeys.BlindIndexRing("b2", "b1", "b2"));
+
+        var candidates = duringRotation.ComputeCandidates(Value, Context);
+
+        candidates.Should().HaveCount(2);
+        candidates[0].Should().Equal(duringRotation.Compute(Value, Context));
+        candidates[1].Should().NotEqual(candidates[0]);
+    }
+
+    [Fact]
+    public void ComputeCandidates_DuringRotation_StillMatchesDigestsWrittenUnderThePreviousKey()
+    {
+        // Rotation window: add b2 -> deploy (write b2, read matches b2 or b1) -> backfill -> drop b1.
+        var beforeRotation = new HmacBlindIndex(EncryptionTestKeys.SingleBlindIndexRing("b1"));
+        var stored = beforeRotation.Compute(Value, Context);
+
+        var duringRotation = new HmacBlindIndex(EncryptionTestKeys.BlindIndexRing("b2", "b1", "b2"));
+
+        duringRotation.Compute(Value, Context).Should().NotEqual(stored, "new writes must use b2");
+        duringRotation.ComputeCandidates(Value, Context)
+            .Should().ContainSingle(candidate => candidate.SequenceEqual(stored),
+                "a lookup must still find rows written under b1");
+    }
+
+    [Fact]
+    public void ComputeCandidates_OnceTheOldKeyIsDropped_NoLongerMatchesItsDigests()
+    {
+        // The backfill has to finish before b1 leaves the ring; this is what going too fast costs.
+        var stored = new HmacBlindIndex(EncryptionTestKeys.SingleBlindIndexRing("b1")).Compute(Value, Context);
+
+        var afterDrop = new HmacBlindIndex(EncryptionTestKeys.SingleBlindIndexRing("b2"));
+
+        afterDrop.ComputeCandidates(Value, Context)
+            .Should().NotContain(candidate => candidate.SequenceEqual(stored));
     }
 
     [Fact]
@@ -91,6 +142,14 @@ public class HmacBlindIndexTests
         var act = () => _index.Compute(Value, context!);
 
         act.Should().Throw<ArgumentException>();
+    }
+
+    [Fact]
+    public void ComputeCandidates_NullValue_Throws()
+    {
+        var act = () => _index.ComputeCandidates(null!, Context);
+
+        act.Should().Throw<ArgumentNullException>();
     }
 
     [Fact]
