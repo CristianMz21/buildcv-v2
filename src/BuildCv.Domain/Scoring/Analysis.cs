@@ -12,7 +12,7 @@ public sealed record Analysis(
         < 40 => ScoreBand.Low,
         < 60 => ScoreBand.Medium,
         < 80 => ScoreBand.Good,
-        _    => ScoreBand.Strong
+        _ => ScoreBand.Strong
     };
 
     public IReadOnlyList<string> Recommendations { get; init; } = [];
