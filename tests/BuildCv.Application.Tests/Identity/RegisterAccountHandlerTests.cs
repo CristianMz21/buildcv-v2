@@ -51,4 +51,39 @@ public class RegisterAccountHandlerTests
         result.IsSuccess.Should().BeFalse();
         result.Error.Should().NotBeNullOrEmpty();
     }
+
+    [Theory]
+    [InlineData(Role.Candidate)]
+    [InlineData(Role.Recruiter)]
+    public async Task Register_self_assignable_role_succeeds(Role role)
+    {
+        var result = await _handler.Handle(
+            new RegisterAccountCommand($"{role}@example.com", "super-secret-password", role));
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value!.Role.Should().Be(role.ToString());
+    }
+
+    [Fact]
+    public async Task Register_admin_role_fails_and_persists_nothing()
+    {
+        var result = await _handler.Handle(
+            new RegisterAccountCommand("escalate@example.com", "super-secret-password", Role.Admin));
+
+        result.IsSuccess.Should().BeFalse();
+        result.Error.Should().Be("Role is not available for self-registration.");
+        (await _accounts.GetByEmailAsync(Email.Create("escalate@example.com"))).Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Register_undefined_role_value_fails()
+    {
+        // Enum.TryParse at the edge happily produces out-of-range values from numeric input,
+        // so the handler must reject anything outside the self-assignable allowlist.
+        var result = await _handler.Handle(
+            new RegisterAccountCommand("weird@example.com", "super-secret-password", (Role)99));
+
+        result.IsSuccess.Should().BeFalse();
+        result.Error.Should().Be("Role is not available for self-registration.");
+    }
 }

@@ -29,6 +29,42 @@ public sealed class AuthFlowTests
             .And.ContainEquivalentOf("Path=/auth/refresh");
     }
 
+    // Anonymous callers must not be able to name a privileged role at registration. Each case gets
+    // its own factory so the shared 5/min auth rate limit never masks a failure.
+    [Theory]
+    [InlineData("Admin")]
+    [InlineData("admin")]
+    [InlineData("ADMIN")]
+    [InlineData("aDmIn")]
+    [InlineData("2")]
+    public async Task Register_WithAdminRole_IsRejectedAndCreatesNoAccount(string role)
+    {
+        using var factory = new ApiTestFactory();
+        using var client = factory.CreateClient();
+
+        var register = await client.RegisterAsync("escalate@example.com", role);
+
+        register.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        register.Content.Headers.ContentType!.MediaType.Should().Be("application/problem+json");
+
+        var login = await client.LoginAsync("escalate@example.com");
+        login.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Theory]
+    [InlineData("Candidate")]
+    [InlineData("Recruiter")]
+    [InlineData("recruiter")]
+    public async Task Register_WithSelfAssignableRole_Succeeds(string role)
+    {
+        using var factory = new ApiTestFactory();
+        using var client = factory.CreateClient();
+
+        var register = await client.RegisterAsync(TestHelpers.CandidateEmail, role);
+
+        register.StatusCode.Should().Be(HttpStatusCode.Created);
+    }
+
     [Fact]
     public async Task Login_WithWrongPassword_ReturnsGenericError()
     {
