@@ -4,4 +4,8 @@ public sealed record Analysis(
     ScoreBreakdown Breakdown,
     int OverallScore,
     ScoreBand Band,
-    IReadOnlyList<string> Recommendations);
+    string CandidateName,
+    string JobTitle)
+{
+    public IReadOnlyList<string> Recommendations { get; init; } = [];
+}

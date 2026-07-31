@@ -1,3 +1,4 @@
+using BuildCv.Domain.Common.ValueObjects;
 using BuildCv.Domain.Resumes;
 using FluentAssertions;
 
@@ -8,31 +9,13 @@ public class ResumeTests
     [Fact]
     public void Resume_with_minimal_data_can_be_created()
     {
-        var basics = new Basics(
-            FullName: "Cristian Arellano",
-            Email: "cristian@example.com",
-            PhoneNumber: null,
-            Location: null,
-            Website: null,
-            Summary: null,
-            PersonalInformation: null,
-            Profiles: []);
+        var contact = new ContactInformation(
+            FullName: PersonName.Create("Cristian Arellano"),
+            Email: Email.Create("cristian@example.com"));
 
-        var resume = new Resume(
-            Basics: basics,
-            WorkExperiences: [],
-            Educations: [],
-            Skills: [],
-            Projects: [],
-            Certificates: [],
-            Languages: [],
-            Awards: [],
-            Publications: [],
-            VolunteerExperiences: [],
-            Interests: [],
-            References: []);
+        var resume = Resume.Create(contact);
 
-        resume.Basics.FullName.Should().Be("Cristian Arellano");
+        resume.ContactInformation.FullName.Value.Should().Be("Cristian Arellano");
         resume.WorkExperiences.Should().BeEmpty();
         resume.Skills.Should().BeEmpty();
     }
@@ -40,36 +23,25 @@ public class ResumeTests
     [Fact]
     public void Resume_with_work_experiences_can_be_created()
     {
-        var basics = new Basics(
-            FullName: "Cristian Arellano",
-            Email: "cristian@example.com",
-            PhoneNumber: "+57 300 1234567",
+        var contact = new ContactInformation(
+            FullName: PersonName.Create("Cristian Arellano"),
+            Email: Email.Create("cristian@example.com"),
+            PhoneNumber: PhoneNumber.Create("+573001234567"),
             Location: "Bogotá, Colombia",
-            Website: null,
-            Summary: "Senior .NET Developer",
-            PersonalInformation: null,
-            Profiles: []);
+            Summary: "Senior .NET Developer");
 
         var work = new WorkExperience(
             Company: "TechCorp",
             Position: "Senior .NET Developer",
-            Period: new DateRange(Start: "2022-01", End: null),
-            Summary: "Led backend team",
-            Highlights: ["Improved performance by 40%", "Mentored 3 junior devs"]);
+            Period: new DateRange(DateOnly.Parse("2022-01-01"), null),
+            Summary: "Led backend team")
+        {
+            Highlights = ["Improved performance by 40%", "Mentored 3 junior devs"]
+        };
 
-        var resume = new Resume(
-            Basics: basics,
-            WorkExperiences: [work],
-            Educations: [],
-            Skills: [new Skill("C#", "Expert", [])],
-            Projects: [],
-            Certificates: [],
-            Languages: [],
-            Awards: [],
-            Publications: [],
-            VolunteerExperiences: [],
-            Interests: [],
-            References: []);
+        var resume = Resume.Create(contact);
+        resume.AddWorkExperience(work);
+        resume.AddSkill(new Skill("C#", "Expert"));
 
         resume.WorkExperiences.Should().HaveCount(1);
         resume.WorkExperiences[0].Company.Should().Be("TechCorp");
@@ -79,36 +51,18 @@ public class ResumeTests
     [Fact]
     public void Resume_is_immutable()
     {
-        var basics = new Basics(
-            FullName: "Cristian Arellano",
-            Email: "cristian@example.com",
-            PhoneNumber: null,
-            Location: null,
-            Website: null,
-            Summary: null,
-            PersonalInformation: null,
-            Profiles: []);
+        var contact1 = new ContactInformation(
+            FullName: PersonName.Create("Cristian Arellano"),
+            Email: Email.Create("cristian@example.com"));
 
-        var resume1 = new Resume(
-            Basics: basics,
-            WorkExperiences: [],
-            Educations: [],
-            Skills: [],
-            Projects: [],
-            Certificates: [],
-            Languages: [],
-            Awards: [],
-            Publications: [],
-            VolunteerExperiences: [],
-            Interests: [],
-            References: []);
+        var contact2 = new ContactInformation(
+            FullName: PersonName.Create("Cristian Arellano Muñoz"),
+            Email: Email.Create("cristian@example.com"));
 
-        var resume2 = resume1 with
-        {
-            Basics = basics with { FullName = "Cristian Arellano Muñoz" }
-        };
+        var resume1 = Resume.Create(contact1);
+        var resume2 = Resume.Create(contact2);
 
-        resume1.Basics.FullName.Should().Be("Cristian Arellano");
-        resume2.Basics.FullName.Should().Be("Cristian Arellano Muñoz");
+        resume1.ContactInformation.FullName.Value.Should().Be("Cristian Arellano");
+        resume2.ContactInformation.FullName.Value.Should().Be("Cristian Arellano Muñoz");
     }
 }
