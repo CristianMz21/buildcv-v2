@@ -25,7 +25,13 @@ public sealed class ApiTestFactory(string? environment = null) : WebApplicationF
                 ["Jwt:Issuer"] = "buildcv-api",
                 ["Jwt:Audience"] = "buildcv-bff",
                 ["Jwt:AccessTokenMinutes"] = "15",
-                ["Jwt:RefreshTokenDays"] = "30"
+                ["Jwt:RefreshTokenDays"] = "30",
+                // AddInfrastructure requires a usable Encryption key ring and validates it on start,
+                // so every host the tests build needs one. Test-only material, distinct from the
+                // committed development keys.
+                ["Encryption:ActiveKeyId"] = "test-v1",
+                ["Encryption:Keys:test-v1:Aes"] = "Z6h2YbISQC6Wo2Xbs2xQr1PistFWXwHrenrptzxtc6o=",
+                ["Encryption:Keys:test-v1:Hmac"] = "plvayg6COUHk/ZPifZ4984Ps7ytigDoGldjSe+SVKsA="
             });
         });
     }

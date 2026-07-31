@@ -14,8 +14,10 @@ using BuildCv.Domain.Resumes;
 using BuildCv.Domain.Scoring;
 using BuildCv.Infrastructure.Persistence;
 using BuildCv.Infrastructure.Security;
+using BuildCv.Infrastructure.Security.Encryption;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 
 namespace BuildCv.Infrastructure;
 
@@ -28,6 +30,20 @@ public static class DependencyInjection
             .Validate(s => s.SigningKey is not null && s.SigningKey.Length >= 32,
                 "Jwt:SigningKey must be at least 32 characters.")
             .ValidateOnStart();
+
+        // Field encryption keys are required, exactly like the JWT signing key: a host with no
+        // usable key ring must refuse to start rather than discover the problem on the first write.
+        // EncryptionSettingsValidator reports which key id is wrong, which a single Validate
+        // predicate cannot do.
+        services.AddOptions<EncryptionSettings>()
+            .Bind(configuration.GetSection(EncryptionSettings.SectionName))
+            .ValidateOnStart();
+        services.AddSingleton<IValidateOptions<EncryptionSettings>, EncryptionSettingsValidator>();
+
+        services.AddSingleton(provider =>
+            new EncryptionKeyRing(provider.GetRequiredService<IOptions<EncryptionSettings>>().Value));
+        services.AddSingleton<IFieldEncryptor, AesGcmFieldEncryptor>();
+        services.AddSingleton<IBlindIndex, HmacBlindIndex>();
 
         services.AddSingleton(TimeProvider.System);
         services.AddSingleton<IPasswordHasher, PasswordHasher>();
