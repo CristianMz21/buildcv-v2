@@ -123,4 +123,15 @@ public class OrganizationTests
         org.Equals(org).Should().BeTrue();
         Build().Equals(org).Should().BeFalse();
     }
+
+    [Fact]
+    public void Organization_members_view_reflects_subsequent_additions()
+    {
+        var org = Build();
+        var view = org.Members;
+
+        org.AddMember(AccountId.New());
+
+        view.Should().HaveCount(2);
+    }
 }
