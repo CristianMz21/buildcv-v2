@@ -183,6 +183,136 @@ public class ScoringEngineTests
     }
 
     [Fact]
+    public void Education_with_degree_returns_one()
+    {
+        var resume = BuildResume();
+        resume.AddEducation(new Education(
+            OrganizationName.Create("MIT"), "BSc", "Computer Science",
+            DateRange.Create(ReferenceDate.AddYears(-6), ReferenceDate.AddYears(-2)), null));
+
+        var result = _engine.Score(resume, BuildJobPosting(), ReferenceDate);
+
+        result.EducationScore.Should().Be(1.0);
+    }
+
+    [Fact]
+    public void Education_without_degree_returns_point_seven()
+    {
+        var resume = BuildResume();
+        resume.AddEducation(new Education(
+            OrganizationName.Create("MIT"), null, null,
+            DateRange.Create(ReferenceDate.AddYears(-6), ReferenceDate.AddYears(-2)), null));
+
+        var result = _engine.Score(resume, BuildJobPosting(), ReferenceDate);
+
+        result.EducationScore.Should().Be(0.7);
+    }
+
+    [Fact]
+    public void Certifications_valid_without_validity_period_counts()
+    {
+        var resume = BuildResume();
+        resume.AddCertificate(new Certificate(
+            "AWS Solutions Architect", OrganizationName.Create("Amazon"), null, null, null));
+
+        var result = _engine.Score(resume, BuildJobPosting(), ReferenceDate);
+
+        result.CertificationsScore.Should().BeApproximately(1.0 / 3.0, 0.0001);
+    }
+
+    [Fact]
+    public void Certifications_three_valid_returns_one()
+    {
+        var resume = BuildResume();
+        resume.AddCertificate(new Certificate("Cert A", OrganizationName.Create("Amazon"), null, null, null));
+        resume.AddCertificate(new Certificate("Cert B", OrganizationName.Create("Microsoft"), null, null,
+            DateRange.Create(ReferenceDate.AddYears(-1))));
+        resume.AddCertificate(new Certificate("Cert C", OrganizationName.Create("Google"), null, null,
+            DateRange.Create(ReferenceDate.AddYears(-2), ReferenceDate.AddDays(30))));
+
+        var result = _engine.Score(resume, BuildJobPosting(), ReferenceDate);
+
+        result.CertificationsScore.Should().Be(1.0);
+    }
+
+    [Fact]
+    public void Certifications_expired_is_excluded()
+    {
+        var resume = BuildResume();
+        resume.AddCertificate(new Certificate(
+            "Expired Cert", OrganizationName.Create("Amazon"), null, null,
+            DateRange.Create(ReferenceDate.AddYears(-2), ReferenceDate.AddDays(-1))));
+
+        var result = _engine.Score(resume, BuildJobPosting(), ReferenceDate);
+
+        result.CertificationsScore.Should().Be(0.0);
+    }
+
+    [Fact]
+    public void Certifications_current_counts()
+    {
+        var resume = BuildResume();
+        resume.AddCertificate(new Certificate(
+            "Current Cert", OrganizationName.Create("Amazon"), null, null,
+            DateRange.Create(ReferenceDate.AddYears(-1))));
+
+        var result = _engine.Score(resume, BuildJobPosting(), ReferenceDate);
+
+        result.CertificationsScore.Should().BeApproximately(1.0 / 3.0, 0.0001);
+    }
+
+    [Fact]
+    public void Projects_with_technologies_counts()
+    {
+        var resume = BuildResume();
+        resume.AddProject(new Project("Side project", DateRange.Create(ReferenceDate.AddYears(-1)))
+        {
+            Technologies = [Technology.Create("dotnet")],
+        });
+
+        var result = _engine.Score(resume, BuildJobPosting(), ReferenceDate);
+
+        result.ProjectsScore.Should().BeApproximately(1.0 / 3.0, 0.0001);
+    }
+
+    [Fact]
+    public void Skills_requirement_matches_project_technologies()
+    {
+        var resume = BuildResume();
+        resume.AddProject(new Project("Side project", DateRange.Create(ReferenceDate.AddYears(-1)))
+        {
+            Technologies = [Technology.Create("dotnet")],
+        });
+        var jobPosting = BuildJobPosting(("dotnet", RequirementPriority.MustHave));
+
+        var result = _engine.Score(resume, jobPosting, ReferenceDate);
+
+        result.SkillsScore.Should().Be(1.0);
+    }
+
+    [Fact]
+    public void Projects_three_qualifying_returns_one()
+    {
+        var resume = BuildResume();
+        resume.AddProject(new Project("Project A", DateRange.Create(ReferenceDate.AddYears(-3)))
+        {
+            Technologies = [Technology.Create("dotnet")],
+        });
+        resume.AddProject(new Project("Project B", DateRange.Create(ReferenceDate.AddYears(-2)))
+        {
+            Technologies = [Technology.Create("postgres")],
+        });
+        resume.AddProject(new Project("Project C", DateRange.Create(ReferenceDate.AddYears(-1)))
+        {
+            Highlights = ["10k monthly active users"],
+        });
+
+        var result = _engine.Score(resume, BuildJobPosting(), ReferenceDate);
+
+        result.ProjectsScore.Should().Be(1.0);
+    }
+
+    [Fact]
     public void Weighted_total_combines_all_sub_scores()
     {
         var resume = BuildResume("C#");
