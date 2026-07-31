@@ -89,13 +89,71 @@ public class AnalysisTests
     }
 
     [Fact]
+    public void Analysis_null_breakdown_throws()
+    {
+        var act = () => Analysis.Create(
+            id: AnalysisId.New(),
+            breakdown: null!,
+            resumeId: ResumeId.New(),
+            jobPostingId: JobPostingId.New(),
+            scoredAt: DateTimeOffset.Now);
+
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    [Fact]
+    public void Analysis_null_resume_id_throws()
+    {
+        var act = () => Analysis.Create(
+            id: AnalysisId.New(),
+            breakdown: ScoreBreakdown.Create(0.5, 0.5, 0.5, 0.5, 0.5, DefaultWeights),
+            resumeId: null!,
+            jobPostingId: JobPostingId.New(),
+            scoredAt: DateTimeOffset.Now);
+
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    [Fact]
+    public void Analysis_null_job_posting_id_throws()
+    {
+        var act = () => Analysis.Create(
+            id: AnalysisId.New(),
+            breakdown: ScoreBreakdown.Create(0.5, 0.5, 0.5, 0.5, 0.5, DefaultWeights),
+            resumeId: ResumeId.New(),
+            jobPostingId: null!,
+            scoredAt: DateTimeOffset.Now);
+
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    [Fact]
+    public void Analysis_recommendations_are_defensively_copied()
+    {
+        var source = new List<string> { "Add more skills" };
+        var analysis = Analysis.Create(
+            id: AnalysisId.New(),
+            breakdown: ScoreBreakdown.Create(0.5, 0.5, 0.5, 0.5, 0.5, DefaultWeights),
+            resumeId: ResumeId.New(),
+            jobPostingId: JobPostingId.New(),
+            scoredAt: DateTimeOffset.Now,
+            recommendations: source);
+
+        source.Add("Improve summary");
+
+        analysis.Recommendations.Should().HaveCount(1);
+    }
+
+    [Fact]
     public void Analysis_equality_by_id()
     {
         var breakdown = ScoreBreakdown.Create(0.5, 0.5, 0.5, 0.5, 0.5, DefaultWeights);
         var id = AnalysisId.New();
         var a1 = Analysis.Create(id, breakdown, ResumeId.New(), JobPostingId.New(), DateTimeOffset.Now);
         var a2 = Analysis.Create(id, breakdown, ResumeId.New(), JobPostingId.New(), DateTimeOffset.Now);
+        var a3 = Analysis.Create(AnalysisId.New(), breakdown, ResumeId.New(), JobPostingId.New(), DateTimeOffset.Now);
 
         a1.Should().Be(a2);
+        a1.Should().NotBe(a3);
     }
 }

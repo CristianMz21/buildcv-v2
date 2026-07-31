@@ -37,6 +37,10 @@ public sealed class Analysis
         Recommendations = recommendations;
     }
 
+#pragma warning disable CS8618 // EF Core assigns every mapped member immediately after construction.
+    private Analysis() { }
+#pragma warning restore CS8618
+
     public static Analysis Create(
         AnalysisId id,
         ScoreBreakdown breakdown,
@@ -49,7 +53,7 @@ public sealed class Analysis
         ArgumentNullException.ThrowIfNull(breakdown);
         ArgumentNullException.ThrowIfNull(resumeId);
         ArgumentNullException.ThrowIfNull(jobPostingId);
-        return new Analysis(id, breakdown, resumeId, jobPostingId, scoredAt, recommendations ?? []);
+        return new Analysis(id, breakdown, resumeId, jobPostingId, scoredAt, recommendations is null ? [] : [.. recommendations]);
     }
 
     public override bool Equals(object? obj) => obj is Analysis other && Id.Equals(other.Id);
