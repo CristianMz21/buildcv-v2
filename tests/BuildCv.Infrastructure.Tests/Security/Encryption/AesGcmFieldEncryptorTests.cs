@@ -139,6 +139,93 @@ public class AesGcmFieldEncryptorTests
     }
 
     [Fact]
+    public void Decrypt_EnvelopeReattributedToAnotherKeyIdWithIdenticalMaterial_Throws()
+    {
+        // Two key ids, one secret. Without the envelope header in the AAD the swap would decrypt
+        // cleanly, because the key bytes are identical — proving the header itself is authenticated,
+        // not just the key it happens to select. That is what closes the version-downgrade path once
+        // a 0x02 envelope exists alongside 0x01.
+        var shared = EncryptionTestKeys.Secret("shared:aes");
+        var encryptor = new AesGcmFieldEncryptor(new EncryptionKeyRing(new EncryptionSettings
+        {
+            ActiveKeyId = "va",
+            Keys = new Dictionary<string, EncryptionKeyMaterial>(StringComparer.Ordinal)
+            {
+                ["va"] = new() { Aes = shared },
+                ["vb"] = new() { Aes = shared }
+            }
+        }));
+        var envelope = encryptor.Encrypt("candidate@example.com", Context);
+
+        // "va" -> "vb": same length, same key bytes, different key id.
+        envelope[AesGcmFieldEncryptor.HeaderSizeInBytes + 1] = (byte)'b';
+
+        var act = () => encryptor.Decrypt(envelope, Context);
+
+        act.Should().Throw<FieldDecryptionException>()
+            .WithMessage("*Authentication failed*");
+    }
+
+    [Fact]
+    public void Decrypt_KeyIdLengthLongerThanTheEnvelope_Throws()
+    {
+        var envelope = _encryptor.Encrypt("candidate@example.com", Context);
+        envelope[1] = 255;
+
+        var act = () => _encryptor.Decrypt(envelope, Context);
+
+        act.Should().Throw<FieldDecryptionException>()
+            .WithMessage("*not a well-formed encryption envelope*");
+    }
+
+    [Fact]
+    public void Decrypt_EnvelopeOfExactlyTheFixedOverheadWithAGarbageTag_Throws()
+    {
+        // An empty plaintext leaves zero ciphertext bytes, so this is the shortest envelope that can
+        // legitimately exist — the boundary where a length check and a tag check meet.
+        var envelope = _encryptor.Encrypt(string.Empty, Context);
+        envelope.Should().HaveCount(
+            AesGcmFieldEncryptor.HeaderSizeInBytes + 2
+            + AesGcmFieldEncryptor.NonceSizeInBytes
+            + AesGcmFieldEncryptor.TagSizeInBytes);
+
+        envelope.AsSpan(envelope.Length - AesGcmFieldEncryptor.TagSizeInBytes).Fill(0xAB);
+
+        var act = () => _encryptor.Decrypt(envelope, Context);
+
+        act.Should().Throw<FieldDecryptionException>()
+            .WithMessage("*Authentication failed*");
+    }
+
+    [Fact]
+    public void Decrypt_KeyIdCarryingANonAsciiByte_Throws()
+    {
+        // Encoding.ASCII maps anything >= 0x80 to '?', which would fold distinct key ids together;
+        // the raw bytes are rejected before they are ever decoded.
+        var envelope = _encryptor.Encrypt("candidate@example.com", Context);
+        envelope[AesGcmFieldEncryptor.HeaderSizeInBytes] = 0xE9;
+
+        var act = () => _encryptor.Decrypt(envelope, Context);
+
+        act.Should().Throw<FieldDecryptionException>()
+            .WithMessage("*not a well-formed encryption envelope*");
+    }
+
+    [Fact]
+    public void Encrypt_CountsOperationsSoTheNonceBudgetIsCheckable()
+    {
+        // Random 96-bit nonces bound one key to ~2^32 encryptions. The bound is not a practical risk
+        // at this volume, but the volume is an assumption — so it is counted, not asserted.
+        var encryptor = new AesGcmFieldEncryptor(EncryptionTestKeys.SingleKeyRing("noncebudget"));
+        var before = encryptor.EncryptionCount;
+
+        encryptor.Encrypt("first", Context);
+        encryptor.Encrypt("second", Context);
+
+        encryptor.EncryptionCount.Should().Be(before + 2);
+    }
+
+    [Fact]
     public void Decrypt_ZeroLengthKeyId_Throws()
     {
         var envelope = _encryptor.Encrypt("candidate@example.com", Context);
