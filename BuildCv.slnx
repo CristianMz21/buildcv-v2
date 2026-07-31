@@ -9,5 +9,6 @@
     <Project Path="tests/BuildCv.Api.Tests/BuildCv.Api.Tests.csproj" />
     <Project Path="tests/BuildCv.Application.Tests/BuildCv.Application.Tests.csproj" />
     <Project Path="tests/BuildCv.Domain.Tests/BuildCv.Domain.Tests.csproj" />
+    <Project Path="tests/BuildCv.Infrastructure.Tests/BuildCv.Infrastructure.Tests.csproj" />
   </Folder>
 </Solution>
