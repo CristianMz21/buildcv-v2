@@ -1,10 +1,14 @@
+using BuildCv.Domain.Common.ValueObjects;
+
 namespace BuildCv.Domain.Resumes;
 
 public sealed record Project(
     string Name,
-    string? Description,
     DateRange Period,
-    IReadOnlyList<string> Technologies,
-    IReadOnlyList<string> Highlights,
-    string? RepositoryUrl,
-    string? LiveDemoUrl);
+    string? Description = null,
+    Url? RepositoryUrl = null,
+    Url? LiveDemoUrl = null)
+{
+    public IReadOnlyList<string> Technologies { get; init; } = [];
+    public IReadOnlyList<string> Highlights { get; init; } = [];
+}

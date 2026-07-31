@@ -8,9 +8,9 @@ public sealed record ScoreBreakdown(
     double LengthScore)
 {
     public double WeightedTotal =>
-        0.45 * MatchScore +
-        0.20 * StructureScore +
-        0.20 * AchievementsScore +
-        0.10 * FormatScore +
-        0.05 * LengthScore;
+        ScoringWeights.Skills * MatchScore +
+        ScoringWeights.Experience * StructureScore +
+        ScoringWeights.Education * AchievementsScore +
+        ScoringWeights.Certifications * FormatScore +
+        ScoringWeights.Projects * LengthScore;
 }

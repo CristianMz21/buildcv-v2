@@ -11,13 +11,15 @@ public class JobPostingTests
         var job = new JobPosting(
             Title: "Senior .NET Developer",
             Company: "TechCorp",
-            Requirements:
+            Description: "Seeking experienced .NET developer")
+        {
+            Requirements =
             [
                 new JobRequirement("C#", RequirementPriority.MustHave, 2.0),
                 new JobRequirement("SQL Server", RequirementPriority.MustHave, 1.5),
                 new JobRequirement("Docker", RequirementPriority.NiceToHave, 1.0)
-            ],
-            Description: "Seeking experienced .NET developer");
+            ]
+        };
 
         job.Title.Should().Be("Senior .NET Developer");
         job.Requirements.Should().HaveCount(3);
@@ -25,13 +27,22 @@ public class JobPostingTests
     }
 
     [Fact]
+    public void JobPosting_with_defaults_can_be_created()
+    {
+        var job = new JobPosting(
+            Title: "Junior .NET Developer",
+            Company: "TechCorp");
+
+        job.Requirements.Should().BeEmpty();
+        job.Description.Should().BeNull();
+    }
+
+    [Fact]
     public void JobPosting_is_immutable()
     {
         var job1 = new JobPosting(
             Title: "Junior .NET Developer",
-            Company: "TechCorp",
-            Requirements: [],
-            Description: null);
+            Company: "TechCorp");
 
         var job2 = job1 with { Title = "Senior .NET Developer" };
 

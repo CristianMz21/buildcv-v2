@@ -2,8 +2,8 @@ namespace BuildCv.Domain.Scoring;
 
 public enum ScoreBand
 {
-    Bajo,
-    Medio,
-    Bueno,
-    Fuerte
+    Low,
+    Medium,
+    Good,
+    Strong
 }

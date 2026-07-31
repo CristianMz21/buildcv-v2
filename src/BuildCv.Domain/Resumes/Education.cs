@@ -1,3 +1,5 @@
+using BuildCv.Domain.Common.ValueObjects;
+
 namespace BuildCv.Domain.Resumes;
 
 public sealed record Education(

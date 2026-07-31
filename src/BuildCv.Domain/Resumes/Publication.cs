@@ -1,8 +1,10 @@
+using BuildCv.Domain.Common.ValueObjects;
+
 namespace BuildCv.Domain.Resumes;
 
 public sealed record Publication(
     string Title,
     string? Publisher,
-    string? Url,
-    string? ReleaseDate,
+    Url? Url,
+    DateOnly? ReleaseDate,
     string? Summary);
