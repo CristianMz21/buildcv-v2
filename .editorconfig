@@ -27,5 +27,10 @@ csharp_style_prefer_pattern_matching = true:suggestion
 csharp_style_prefer_not_pattern = true:suggestion
 csharp_style_use_deprecated_analyzer_api = true:suggestion
 
+# EF scaffolds these and rewrites them on every `migrations add`. Formatting or analyzing them is
+# arguing with a code generator, and CI runs `dotnet format --verify-no-changes`.
+[src/BuildCv.Infrastructure/Persistence/Migrations/**.cs]
+generated_code = true
+
 [*.md]
 trim_trailing_whitespace = false

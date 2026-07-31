@@ -1,0 +1,42 @@
+
+# Local SQL Server for development and for `dotnet ef database update`.
+#
+#   cp .env.example .env && docker compose up -d
+#
+# The integration tests do NOT use this instance — they start their own throwaway container through
+# Testcontainers, so a test run can never touch data you were looking at.
+
+services:
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: buildcv-sqlserver
+    environment:
+      ACCEPT_EULA: "Y"
+      # Read from .env, which is gitignored. No default: a missing password must fail the compose
+      # command, not silently start a database on a value published in this file.
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD:?set MSSQL_SA_PASSWORD in .env}
+      MSSQL_PID: Developer
+    ports:
+      # Bound to the loopback interface only. Plain "1433:1433" listens on every interface, which on
+      # a laptop means the coffee-shop wifi can reach a database whose password is in a file called
+      # .env.example.
+      - "127.0.0.1:1433:1433"
+    volumes:
+      - buildcv-sqlserver-data:/var/opt/mssql
+    healthcheck:
+      # Actually runs a query rather than probing the port: SQL Server accepts TCP connections for a
+      # while before it will answer, so a port check reports healthy too early and the first
+      # migration of a fresh machine fails.
+      test:
+        [
+          "CMD-SHELL",
+          "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -C -Q 'SELECT 1' || exit 1",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+volumes:
+  buildcv-sqlserver-data:
