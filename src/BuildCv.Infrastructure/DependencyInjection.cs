@@ -42,8 +42,10 @@ public static class DependencyInjection
 
         services.AddSingleton(provider =>
             new EncryptionKeyRing(provider.GetRequiredService<IOptions<EncryptionSettings>>().Value));
+        // Narrowed here, deliberately: the ring never sees Encryption:ActiveKeyId, so the two
+        // rotation pointers cannot be re-coupled by a one-line fallback inside it.
         services.AddSingleton(provider =>
-            new BlindIndexKeyRing(provider.GetRequiredService<IOptions<EncryptionSettings>>().Value));
+            new BlindIndexKeyRing(provider.GetRequiredService<IOptions<EncryptionSettings>>().Value.BlindIndex));
         services.AddSingleton<IFieldEncryptor, AesGcmFieldEncryptor>();
         services.AddSingleton<IBlindIndex, HmacBlindIndex>();
 

@@ -15,7 +15,7 @@ internal sealed class EncryptionSettingsValidator : IValidateOptions<EncryptionS
 
         // Both rings, because a host that can encrypt but cannot compute a lookup digest is just as
         // unusable as one that cannot start at all — and far harder to diagnose in production.
-        var error = EncryptionKeyRing.Validate(options) ?? BlindIndexKeyRing.Validate(options);
+        var error = EncryptionKeyRing.Validate(options) ?? BlindIndexKeyRing.Validate(options.BlindIndex);
         return error is null ? ValidateOptionsResult.Success : ValidateOptionsResult.Fail(error);
     }
 }

@@ -34,7 +34,7 @@ internal static class EncryptionTestKeys
     public static EncryptionKeyRing SingleKeyRing(string keyId = "v1") => Ring(keyId, keyId);
 
     public static BlindIndexKeyRing BlindIndexRing(string activeKeyId, params string[] keyIds) =>
-        new(Settings("v1", ["v1"], activeKeyId, keyIds));
+        new(Settings("v1", ["v1"], activeKeyId, keyIds).BlindIndex);
 
     public static BlindIndexKeyRing SingleBlindIndexRing(string keyId = "b1") => BlindIndexRing(keyId, keyId);
 

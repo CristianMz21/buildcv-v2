@@ -42,6 +42,10 @@ public sealed class AesGcmFieldEncryptor : IFieldEncryptor
     // volume that is on the order of a century — but "realistic volume" is an assumption, not a
     // fact, so it is counted rather than asserted. Operational rule: rotate Encryption:ActiveKeyId
     // annually, and alert if any single key id approaches 2^32.
+    //
+    // The count below is per PROCESS and resets on every deploy, so it is not the number the budget
+    // is about. The alert must fire on the backend-aggregated series — summed across replicas and
+    // across process lifetimes, grouped by key_id. Alerting on this local value would never fire.
     private static readonly Meter Meter = new("BuildCv.Infrastructure.Encryption");
     private static readonly ConcurrentDictionary<string, StrongBox<long>> EncryptionCounts = new(StringComparer.Ordinal);
 
@@ -60,8 +64,8 @@ public sealed class AesGcmFieldEncryptor : IFieldEncryptor
         _keyRing = keyRing;
     }
 
-    // Process-wide count of encryptions performed under this ring's active key. Backs the nonce
-    // budget above; the same number is published through the meter for whatever scrapes it.
+    // Encryptions performed under this ring's active key SINCE THIS PROCESS STARTED. The same number
+    // is published through the meter; the budget is evaluated on the aggregated series, not on this.
     public long EncryptionCount =>
         EncryptionCounts.TryGetValue(_keyRing.ActiveKeyId, out var count) ? Interlocked.Read(ref count.Value) : 0;
 

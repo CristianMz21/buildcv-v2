@@ -8,6 +8,9 @@ public class HmacBlindIndexTests
     private const string Context = "Account.Email";
     private const string Value = "candidate@example.com";
 
+    // The byte the previous implementation used to separate context from value.
+    private const char UnitSeparator = (char)0x1F;
+
     private readonly HmacBlindIndex _index = new(EncryptionTestKeys.SingleBlindIndexRing());
 
     [Fact]
@@ -34,10 +37,16 @@ public class HmacBlindIndexTests
         // matched nothing, so login reported "account not found" AND re-registering an existing
         // address succeeded, because the new digest did not collide with the old one under the
         // unique index. Duplicate identities, and no exception anywhere.
+        //
+        // BlindIndexKeyRing now takes BlindIndexSettings, so the AES section cannot reach it and
+        // this holds by construction. Kept as the statement of the invariant; the assertion that
+        // still discriminates end-to-end is
+        // EncryptionRegistrationTests.AddInfrastructure_BindsTheTwoRotationPointersIndependently,
+        // which drives both pointers through configuration and DI.
         var beforeRotation = new HmacBlindIndex(
-            new BlindIndexKeyRing(EncryptionTestKeys.Settings("v1", ["v1"], "b1", ["b1"])));
+            new BlindIndexKeyRing(EncryptionTestKeys.Settings("v1", ["v1"], "b1", ["b1"]).BlindIndex));
         var afterRotation = new HmacBlindIndex(
-            new BlindIndexKeyRing(EncryptionTestKeys.Settings("v2", ["v1", "v2"], "b1", ["b1"])));
+            new BlindIndexKeyRing(EncryptionTestKeys.Settings("v2", ["v1", "v2"], "b1", ["b1"]).BlindIndex));
 
         afterRotation.Compute(Value, Context).Should().Equal(beforeRotation.Compute(Value, Context));
     }
@@ -57,10 +66,18 @@ public class HmacBlindIndexTests
     [Fact]
     public void Compute_ContextAndValueCannotRunTogetherIntoTheSameDigest()
     {
-        // The length prefix makes the split unambiguous by construction: without it,
-        // ("Account.Ema", "il@x") and ("Account.Email", "@x") hash the same bytes and a value in one
-        // column satisfies a lookup in another.
+        // Plain concatenation collides here: ("Account.Ema", "il@x") and ("Account.Email", "@x")
+        // hash the same bytes, so a value in one column satisfies a lookup in another.
         _index.Compute("il@x", "Account.Ema").Should().NotEqual(_index.Compute("@x", "Account.Email"));
+
+        // A separator byte fixes that, but only while no input contains the separator. Under
+        // `context || US || value` both of these produce "A" US US "B". The length prefix is
+        // unambiguous by construction instead of by assumption, and this is the pair that tells the
+        // two implementations apart.
+        _index.Compute("B", $"A{UnitSeparator}")
+            .Should().NotEqual(
+                _index.Compute($"{UnitSeparator}B", "A"),
+                "an input carrying the separator byte must not imitate the split it marks");
     }
 
     [Fact]

@@ -7,16 +7,25 @@ namespace BuildCv.Infrastructure.Security.Encryption;
 // first: writes use the active key, reads must try them all. Rotation is therefore a four-step
 // window — add b2, deploy (writes b2, reads match b2 or b1), backfill, drop b1 — and never a single
 // configuration flip.
+//
+// This type takes BlindIndexSettings, not EncryptionSettings, so the AES rotation pointer is not
+// even in scope here. Nothing inside the ring can fall back to it, which is how the pointers stay
+// independent structurally rather than by convention.
 public sealed class BlindIndexKeyRing
 {
     public const int KeySizeInBytes = KeyRingValidation.KeySizeInBytes;
+
+    // Two keys is exactly one rotation in flight. A third means the previous rotation never
+    // finished, and every extra live key is another secret that can satisfy a uniqueness lookup —
+    // the same duplicate-identity surface the shared-pointer bug opened, just arriving slower.
+    public const int MaxKeys = 2;
 
     private const string SectionPath = $"{EncryptionSettings.SectionName}:BlindIndex";
     private const string KeysPath = $"{SectionPath}:Keys";
 
     private readonly Dictionary<string, byte[]> _keys;
 
-    public BlindIndexKeyRing(EncryptionSettings settings)
+    public BlindIndexKeyRing(BlindIndexSettings settings)
     {
         ArgumentNullException.ThrowIfNull(settings);
 
@@ -24,17 +33,16 @@ public sealed class BlindIndexKeyRing
         if (error is not null)
             throw new EncryptionConfigurationException(error);
 
-        var blindIndex = settings.BlindIndex;
-        _keys = blindIndex.Keys.ToDictionary(
+        _keys = settings.Keys.ToDictionary(
             entry => entry.Key,
             entry => Convert.FromBase64String(entry.Value),
             StringComparer.Ordinal);
 
-        ActiveKeyId = blindIndex.ActiveKeyId;
+        ActiveKeyId = settings.ActiveKeyId;
 
         // Active first: a lookup that matches on the first candidate is the common case, and the
         // ordering keeps ComputeCandidates cheap to reason about.
-        KeyIds = [ActiveKeyId, .. blindIndex.Keys.Keys.Where(keyId => keyId != ActiveKeyId).Order(StringComparer.Ordinal)];
+        KeyIds = [ActiveKeyId, .. settings.Keys.Keys.Where(keyId => keyId != ActiveKeyId).Order(StringComparer.Ordinal)];
     }
 
     // Writes use this key.
@@ -54,18 +62,22 @@ public sealed class BlindIndexKeyRing
     }
 
     // Returns the first configuration problem found, or null when the settings can build a ring.
-    internal static string? Validate(EncryptionSettings settings)
+    internal static string? Validate(BlindIndexSettings? settings)
     {
-        ArgumentNullException.ThrowIfNull(settings);
-
-        var blindIndex = settings.BlindIndex;
-        if (blindIndex is null || blindIndex.Keys is null || blindIndex.Keys.Count == 0)
+        if (settings is null || settings.Keys is null || settings.Keys.Count == 0)
             return $"{KeysPath} must contain at least one key.";
 
-        if (string.IsNullOrWhiteSpace(blindIndex.ActiveKeyId))
+        if (string.IsNullOrWhiteSpace(settings.ActiveKeyId))
             return $"{SectionPath}:ActiveKeyId must be configured.";
 
-        foreach (var (keyId, secret) in blindIndex.Keys)
+        // Enforced at startup rather than warned about: an unenforced warning about an unenforced
+        // operational step is the same gap one layer down. The deploy after a completed rotation is
+        // exactly when this should fail.
+        if (settings.Keys.Count > MaxKeys)
+            return $"{KeysPath} holds {settings.Keys.Count} keys ({string.Join(", ", settings.Keys.Keys.Order(StringComparer.Ordinal))}) " +
+                $"but at most {MaxKeys} may be live at once. Finish the backfill for the retired key and remove it from {KeysPath}.";
+
+        foreach (var (keyId, secret) in settings.Keys)
         {
             var error = KeyRingValidation.ValidateKeyId(KeysPath, keyId)
                 ?? KeyRingValidation.ValidateSecret($"{KeysPath}:{keyId}", secret);
@@ -73,8 +85,8 @@ public sealed class BlindIndexKeyRing
                 return error;
         }
 
-        return blindIndex.Keys.ContainsKey(blindIndex.ActiveKeyId)
+        return settings.Keys.ContainsKey(settings.ActiveKeyId)
             ? null
-            : $"{SectionPath}:ActiveKeyId '{blindIndex.ActiveKeyId}' is not present in {KeysPath}.";
+            : $"{SectionPath}:ActiveKeyId '{settings.ActiveKeyId}' is not present in {KeysPath}.";
     }
 }
