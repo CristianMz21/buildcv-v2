@@ -70,7 +70,7 @@ public sealed class Resume
         ArgumentNullException.ThrowIfNull(experience);
         var list = Experiences.ToList();
         if (!list.Remove(experience))
-            throw new InvalidOperationException("Experience not found in resume.");
+            throw new EntryNotFoundException("Experience not found in resume.");
         Experiences = list;
         Touch();
     }
@@ -99,9 +99,154 @@ public sealed class Resume
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(skillName);
         var skill = Skills.FirstOrDefault(s => s.Name.Name.Equals(skillName, StringComparison.OrdinalIgnoreCase))
-            ?? throw new InvalidOperationException($"Skill '{skillName}' not found.");
+            ?? throw new EntryNotFoundException($"Skill '{skillName}' not found.");
 
         Skills = Skills.Where(s => s != skill).ToList();
+        Touch();
+    }
+
+    public void AddEducation(Education education)
+    {
+        ArgumentNullException.ThrowIfNull(education);
+        Educations = [.. Educations, education];
+        Touch();
+    }
+
+    public void RemoveEducation(Education education)
+    {
+        ArgumentNullException.ThrowIfNull(education);
+        var list = Educations.ToList();
+        if (!list.Remove(education))
+            throw new EntryNotFoundException("Education not found in resume.");
+        Educations = list;
+        Touch();
+    }
+
+    public void AddProject(Project project)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        Projects = [.. Projects, project];
+        Touch();
+    }
+
+    public void RemoveProject(Project project)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        var list = Projects.ToList();
+        if (!list.Remove(project))
+            throw new EntryNotFoundException("Project not found in resume.");
+        Projects = list;
+        Touch();
+    }
+
+    public void AddCertificate(Certificate certificate)
+    {
+        ArgumentNullException.ThrowIfNull(certificate);
+        if (Certificates.Any(c => c.Name.Equals(certificate.Name, StringComparison.OrdinalIgnoreCase)))
+            throw new DuplicateEntryException($"Certificate '{certificate.Name}' already exists.");
+
+        Certificates = [.. Certificates, certificate];
+        Touch();
+    }
+
+    public void RemoveCertificate(Certificate certificate)
+    {
+        ArgumentNullException.ThrowIfNull(certificate);
+        var list = Certificates.ToList();
+        if (!list.Remove(certificate))
+            throw new EntryNotFoundException("Certificate not found in resume.");
+        Certificates = list;
+        Touch();
+    }
+
+    public void AddLanguage(Language language)
+    {
+        ArgumentNullException.ThrowIfNull(language);
+        if (Languages.Any(l => l.Name.Equals(language.Name, StringComparison.OrdinalIgnoreCase)))
+            throw new DuplicateEntryException($"Language '{language.Name}' already exists.");
+
+        Languages = [.. Languages, language];
+        Touch();
+    }
+
+    public void RemoveLanguage(Language language)
+    {
+        ArgumentNullException.ThrowIfNull(language);
+        var list = Languages.ToList();
+        if (!list.Remove(language))
+            throw new EntryNotFoundException("Language not found in resume.");
+        Languages = list;
+        Touch();
+    }
+
+    public void AddAward(Award award)
+    {
+        ArgumentNullException.ThrowIfNull(award);
+        Awards = [.. Awards, award];
+        Touch();
+    }
+
+    public void RemoveAward(Award award)
+    {
+        ArgumentNullException.ThrowIfNull(award);
+        var list = Awards.ToList();
+        if (!list.Remove(award))
+            throw new EntryNotFoundException("Award not found in resume.");
+        Awards = list;
+        Touch();
+    }
+
+    public void AddPublication(Publication publication)
+    {
+        ArgumentNullException.ThrowIfNull(publication);
+        Publications = [.. Publications, publication];
+        Touch();
+    }
+
+    public void RemovePublication(Publication publication)
+    {
+        ArgumentNullException.ThrowIfNull(publication);
+        var list = Publications.ToList();
+        if (!list.Remove(publication))
+            throw new EntryNotFoundException("Publication not found in resume.");
+        Publications = list;
+        Touch();
+    }
+
+    public void AddInterest(Interest interest)
+    {
+        ArgumentNullException.ThrowIfNull(interest);
+        if (Interests.Any(i => i.Name.Equals(interest.Name, StringComparison.OrdinalIgnoreCase)))
+            throw new DuplicateEntryException($"Interest '{interest.Name}' already exists.");
+
+        Interests = [.. Interests, interest];
+        Touch();
+    }
+
+    public void RemoveInterest(Interest interest)
+    {
+        ArgumentNullException.ThrowIfNull(interest);
+        var list = Interests.ToList();
+        if (!list.Remove(interest))
+            throw new EntryNotFoundException("Interest not found in resume.");
+        Interests = list;
+        Touch();
+    }
+
+    public void AddReference(Reference reference)
+    {
+        ArgumentNullException.ThrowIfNull(reference);
+        References = [.. References, reference];
+        Touch();
+    }
+
+    public void RemoveReference(Reference reference)
+    {
+        ArgumentNullException.ThrowIfNull(reference);
+        var list = References.ToList();
+        if (!list.Remove(reference))
+            throw new EntryNotFoundException("Reference not found in resume.");
+        References = list;
         Touch();
     }
 

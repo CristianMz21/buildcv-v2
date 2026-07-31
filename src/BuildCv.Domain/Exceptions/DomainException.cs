@@ -64,3 +64,13 @@ public sealed class DuplicateSkillException : DomainException
 {
     public DuplicateSkillException(string message) : base(message) { }
 }
+
+public sealed class DuplicateEntryException : DomainException
+{
+    public DuplicateEntryException(string message) : base(message) { }
+}
+
+public sealed class EntryNotFoundException : DomainException
+{
+    public EntryNotFoundException(string message) : base(message) { }
+}
