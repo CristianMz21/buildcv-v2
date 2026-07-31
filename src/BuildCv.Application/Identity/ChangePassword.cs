@@ -23,10 +23,21 @@ public sealed class ChangePasswordHandler(
             if (account is null)
                 return Result<AccountDto>.Failure("Account not found.");
 
+            // Verifying the current password makes this a credential check, so it runs through the
+            // same lockout path as LoginHandler. Without it the endpoint is a password oracle that
+            // accepts unlimited guesses against an already-stolen session.
+            if (account.IsLocked)
+                return Result<AccountDto>.Failure("Account is temporarily locked. Try again later.");
+
             if (!passwordHasher.Verify(command.CurrentPassword, account.Password.Hash))
+            {
+                account.RecordFailedLogin();
+                await accountRepository.UpdateAsync(account, cancellationToken);
                 return Result<AccountDto>.Failure("Current password is incorrect.");
+            }
 
             account.ChangePassword(Password.Create(passwordHasher.Hash(command.NewPassword)));
+            account.ResetLockout();
             await accountRepository.UpdateAsync(account, cancellationToken);
 
             return Result<AccountDto>.Success(AccountDto.From(account));

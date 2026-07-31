@@ -115,7 +115,8 @@ public static class AuthEndpoints
                 AuditLog.Log(logger, "password_changed", new AccountId(result.Value!.Id), httpContext);
 
             return result.ToHttpResult();
-        });
+        })
+        .RequireRateLimiting(RateLimitPolicies.Auth);
 
         group.MapGet("/me", async (
             HttpContext httpContext,
