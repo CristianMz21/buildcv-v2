@@ -18,9 +18,8 @@ public sealed class SqlServerFixture : IAsyncLifetime
     // Pinned rather than floating on 2022-latest: that tag gets repointed, and one such repoint moved
     // sqlcmd out of /opt/mssql-tools/bin, breaking the health-check wait strategy for everyone at once.
     // Keep this in step with the image in docker-compose.yml.
-    private readonly MsSqlContainer _container = new MsSqlBuilder()
-        .WithImage("mcr.microsoft.com/mssql/server:2022-CU26-ubuntu-22.04")
-        .Build();
+    private readonly MsSqlContainer _container =
+        new MsSqlBuilder("mcr.microsoft.com/mssql/server:2022-CU26-ubuntu-22.04").Build();
 
     public string ConnectionString => _container.GetConnectionString();
 

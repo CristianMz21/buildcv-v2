@@ -25,6 +25,14 @@ namespace BuildCv.Infrastructure.Persistence.Interceptors;
 // a tombstone — it is a smaller resume — and that row must still really go. Because a removed child is
 // no longer in the backing collection, the traversal below cannot reach it, and it stays Deleted even
 // when the same SaveChanges also tombstones its root.
+//
+// CONSTRAINT FOR WHOEVER ADDS THE NEXT RELATIONSHIP: the traversal only restores OWNED dependents. A
+// non-owned dependent reached by DeleteBehavior.Cascade is not restored, so tombstoning its principal
+// would hard-delete it. Exactly one such relationship exists today — RefreshToken -> Account — and it
+// is safe only by coincidence: RefreshToken is itself an aggregate root, carries its own DeletedAt,
+// and is therefore tombstoned independently by this same interceptor. The first cascade dependent
+// added WITHOUT HasSoftDelete() will be silently destroyed, and nothing here would catch it. Give it
+// soft delete, or change DeleteBehavior, or widen this traversal — deliberately, not by default.
 public sealed class AuditSaveChangesInterceptor : SaveChangesInterceptor
 {
     private readonly ICurrentUser _currentUser;
@@ -62,15 +70,16 @@ public sealed class AuditSaveChangesInterceptor : SaveChangesInterceptor
         var now = _timeProvider.GetUtcNow();
         var principal = _currentUser.AccountId?.Value;
 
-        // Reference identity, not value equality. Several owned types are records — two Memberships
-        // with the same account and role are Equals to each other — so a value-keyed lookup would
-        // collapse distinct rows onto one entry.
-        var tracked = context.ChangeTracker.Entries()
-            .ToDictionary(entry => (object)entry.Entity, entry => entry, ReferenceEqualityComparer.Instance);
-
         // ToList: converting a Deleted entry to Modified mutates the change tracker, and enumerating
         // Entries() lazily while doing so is undefined.
-        foreach (var entry in context.ChangeTracker.Entries().ToList())
+        var entries = context.ChangeTracker.Entries().ToList();
+
+        // Built on the first tombstone and not before. Every other path through this method — which
+        // is to say every ordinary insert and update — never needs it, and on a resume write the
+        // dictionary would allocate one entry per row in the whole owned graph for nothing.
+        Dictionary<object, EntityEntry>? tracked = null;
+
+        foreach (var entry in entries)
         {
             switch (entry.State)
             {
@@ -92,6 +101,14 @@ public sealed class AuditSaveChangesInterceptor : SaveChangesInterceptor
                     // The root is un-deleted before its children so that returning a dependent to
                     // Unchanged cannot be undone by a re-cascade from a principal still marked Deleted.
                     entry.State = EntityState.Unchanged;
+
+                    // Reference identity, not value equality. Several owned types are records, and
+                    // the dictionary spans the WHOLE tracker: two resumes each holding
+                    // new Language("English", "Native") are Equals to one another, so a value-keyed
+                    // ToDictionary would throw on the duplicate key — on every SaveChanges, not just
+                    // on a lookup that happened to collide.
+                    tracked ??= entries.ToDictionary(
+                        tracked => (object)tracked.Entity, tracked => tracked, ReferenceEqualityComparer.Instance);
                     RestoreCascadedDependents(entry, tracked);
 
                     entry.Property(ShadowColumns.DeletedAt).CurrentValue = now;
@@ -128,11 +145,17 @@ public sealed class AuditSaveChangesInterceptor : SaveChangesInterceptor
         }
     }
 
+    // What makes a removed child unreachable is that it is no longer IN the collection — not the
+    // access mode. `Skills => _skills.AsReadOnly()` is a live view over the same List, so the getter
+    // and the backing field agree about the removal; reading either one omits it. The access mode
+    // matters for EF's writes, not for this read, and changing it would not affect the scoping.
+    //
+    // The `_` arm covers owned REFERENCE navigations — Resume.ContactInformation and
+    // Analysis.Breakdown — which are table-split into their principal's row and whose columns are
+    // NOT NULL. Missing them is what made a cascaded delete unwritable rather than merely wrong.
     private static IEnumerable<object> Targets(NavigationEntry navigation) =>
         navigation switch
         {
-            // CurrentValue honours the configured PropertyAccessMode, so this reads the backing List
-            // rather than the read-only wrapper the getter returns.
             CollectionEntry collection => collection.CurrentValue?.Cast<object>() ?? [],
             _ => navigation.CurrentValue is { } target ? [target] : [],
         };

@@ -421,11 +421,12 @@ public sealed class SchemaRoundTripTests
         tombstoned.Responsibilities.Should().ContainSingle();
     }
 
-    // The worst case of the three. Resume owns ten child tables plus a TABLE-SPLIT ContactInformation
+    // The worst case of the four. Resume owns ten child tables plus a TABLE-SPLIT ContactInformation
     // whose Contact_* columns are NOT NULL — a cascaded delete of that owned reference against a
-    // merely-modified principal cannot even be written.
+    // merely-modified principal cannot even be written. All ten collections are populated, so the
+    // name does not claim more than the body checks.
     [Fact]
-    public async Task SoftDeletingAResume_KeepsEveryChildCollectionAndItsContactInformation()
+    public async Task SoftDeletingAResume_KeepsAllTenChildCollectionsAndItsContactInformation()
     {
         var contact = new ContactInformation(
             PersonName.Create("Grace Hopper"), Email.Create(UniqueEmail("tombstone")));
@@ -434,8 +435,18 @@ public sealed class SchemaRoundTripTests
 
         resume.AddExperience(new Experience(
             ExperienceType.Professional, OrganizationName.Create("Navy"), "Rear Admiral", period));
+        resume.AddEducation(new Education(
+            OrganizationName.Create("Yale"), "PhD", "Mathematics", period, "Summa"));
         resume.AddSkill(Skill.Create(Technology.Create("COBOL"), SkillLevel.Expert, 30));
+        resume.AddProject(new Project("A-0 Compiler", period, "The first compiler."));
+        resume.AddCertificate(new Certificate(
+            "Naval Reserve", OrganizationName.Create("US Navy"), "NR-1", null, period));
         resume.AddLanguage(new Language("English", "Native"));
+        resume.AddAward(new Award("Medal of Technology", OrganizationName.Create("USA"), new DateOnly(1991, 1, 1), null));
+        resume.AddPublication(new Publication(
+            "Compiling Routines", OrganizationName.Create("ACM"), null, new DateOnly(1952, 1, 1), null));
+        resume.AddInterest(new Interest("Teaching") { Keywords = ["compilers"] });
+        resume.AddReference(new Reference("Howard Aiken", "Professor", null, null, null, "Recommended."));
 
         await SaveThenSoftDelete(resume, (context, id) => context.Resumes.SingleAsync(e => e.Id == id), resume.Id);
 
@@ -443,14 +454,56 @@ public sealed class SchemaRoundTripTests
         var tombstoned = await reader.Resumes
             .IgnoreQueryFilters()
             .Include(entity => entity.Experiences)
+            .Include(entity => entity.Educations)
             .Include(entity => entity.Skills)
+            .Include(entity => entity.Projects)
+            .Include(entity => entity.Certificates)
             .Include(entity => entity.Languages)
+            .Include(entity => entity.Awards)
+            .Include(entity => entity.Publications)
+            .Include(entity => entity.Interests)
+            .Include(entity => entity.References)
             .SingleAsync(entity => entity.Id == resume.Id);
 
+        // The table-split owned reference: NOT NULL columns on the principal's own row.
         tombstoned.ContactInformation.FullName.Value.Should().Be("Grace Hopper");
+
         tombstoned.Experiences.Should().ContainSingle();
+        tombstoned.Educations.Should().ContainSingle();
         tombstoned.Skills.Should().ContainSingle();
+        tombstoned.Projects.Should().ContainSingle();
+        tombstoned.Certificates.Should().ContainSingle();
         tombstoned.Languages.Should().ContainSingle();
+        tombstoned.Awards.Should().ContainSingle();
+        tombstoned.Publications.Should().ContainSingle();
+        tombstoned.Interests.Should().ContainSingle();
+        tombstoned.References.Should().ContainSingle();
+    }
+
+    // The fifth root, and the second table-split owned reference in the model. ScoreBreakdown's five
+    // score columns and its Weights column are all IsRequired(), and Navigation(a => a.Breakdown) is
+    // required too — the identical shape that produced the Contact_Email NOT NULL crash. Nothing
+    // pinned it until now.
+    [Fact]
+    public async Task SoftDeletingAnAnalysis_KeepsItsScoreBreakdown()
+    {
+        var analysis = Analysis.Create(
+            AnalysisId.New(),
+            ScoreBreakdown.Create(0.9, 0.8, 0.7, 0.6, 0.5, ScoringWeightsSnapshot.Default()),
+            ResumeId.New(),
+            JobPostingId.New(),
+            DateTimeOffset.UtcNow,
+            ["Add more C# projects."]);
+
+        await SaveThenSoftDelete(analysis, (context, id) => context.Analyses.SingleAsync(e => e.Id == id), analysis.Id);
+
+        await using var reader = _fixture.NewContext();
+        var tombstoned = await reader.Analyses
+            .IgnoreQueryFilters()
+            .SingleAsync(entity => entity.Id == analysis.Id);
+
+        tombstoned.Breakdown.Should().Be(analysis.Breakdown);
+        tombstoned.Recommendations.Should().Equal(analysis.Recommendations);
     }
 
     // The other side of the same rule, and the reason the fix has to be scoped to the root being
@@ -488,8 +541,59 @@ public sealed class SchemaRoundTripTests
         remaining.Should().Be(1);
     }
 
-    private async Task SaveThenSoftDelete<TRoot>(
-        TRoot root, Func<Infrastructure.Persistence.BuildCvDbContext, object, Task<TRoot>> load, object id)
+    // THE test for the scoping decision, and the only one that actually runs that code path with
+    // something to discriminate on. The three tombstone tests above only prove children survive; the
+    // hard-delete test above only proves a child dies while its root LIVES. Neither puts a root into
+    // Deleted alongside a genuinely removed child, so neither can tell the navigation traversal apart
+    // from a blanket "restore every Deleted owned entry" scan — which would resurrect the removed row.
+    //
+    // Verified by swapping the implementation for that blanket scan: this test fails, the other four
+    // still pass.
+    [Fact]
+    public async Task SoftDeletingARootWhileRemovingOneChild_TombstonesTheRootAndStillDropsThatChild()
+    {
+        var resume = Resume.Create(AccountId.New(), MinimalContact("combined"));
+        resume.AddSkill(Skill.Create(Technology.Create("Fortran"), SkillLevel.Advanced, 5));
+        resume.AddSkill(Skill.Create(Technology.Create("Ada"), SkillLevel.Beginner, 1));
+        resume.AddSkill(Skill.Create(Technology.Create("Lisp"), SkillLevel.Intermediate, 3));
+
+        await using (var context = _fixture.NewContext())
+        {
+            context.Resumes.Add(resume);
+            await context.SaveChangesAsync();
+        }
+
+        // One unit of work: drop a skill, then tombstone the resume that owned it.
+        await using (var mutator = _fixture.NewContext())
+        {
+            var tracked = await mutator.Resumes.Include(entity => entity.Skills)
+                .SingleAsync(entity => entity.Id == resume.Id);
+
+            tracked.RemoveSkill("Fortran");
+            mutator.Resumes.Remove(tracked);
+            await mutator.SaveChangesAsync();
+        }
+
+        await using var reader = _fixture.NewContext();
+
+        // The root is tombstoned, not gone.
+        (await reader.Resumes.AnyAsync(entity => entity.Id == resume.Id)).Should().BeFalse();
+        (await reader.Resumes.IgnoreQueryFilters().AnyAsync(entity => entity.Id == resume.Id)).Should().BeTrue();
+
+        // Raw SQL, because child rows have no DeletedAt and no query filter to see through: the two
+        // survivors are really on disk, and the removed one is really not.
+        var surviving = await reader.Database
+            .SqlQuery<string>(
+                $"SELECT [Name] AS [Value] FROM [resumes].[Skills] WHERE [ResumeId] = {resume.Id.Value}")
+            .ToListAsync();
+
+        surviving.Should().BeEquivalentTo(["Ada", "Lisp"],
+            "the cascade on the tombstoned root must be undone for the children it still owns, "
+            + "and NOT for the one that was deliberately removed from it");
+    }
+
+    private async Task SaveThenSoftDelete<TRoot, TId>(
+        TRoot root, Func<Infrastructure.Persistence.BuildCvDbContext, TId, Task<TRoot>> load, TId id)
         where TRoot : class
     {
         await using (var context = _fixture.NewContext())
