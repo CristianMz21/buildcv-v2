@@ -211,6 +211,14 @@ public static class ResumeEndpoints
         // It must stay IsDefined rather than "reject numeric input": GET returns level as a NUMBER
         // (no JsonStringEnumConverter is configured), so a read-modify-write client legitimately POSTs
         // 4 back. Valid numbers keep working; only undefined ones do not.
+        //
+        // What this does NOT do is narrow the input space to the enum's own names. TryParse
+        // OR-combines COMMA-SEPARATED members whether or not the type is [Flags], and the result is
+        // usually still a defined member: measured, "Conversational,Professional" parses to 1|2 = 3 and
+        // comes back as Fluent — higher than either name sent — with IsDefined returning true. The
+        // guard bounds it (the stored value is always a real member, so PR 3 can never read "above
+        // Native", which was the actual danger) but does not close it. It exists identically on the
+        // four pre-existing parse sites and belongs in the same follow-up.
         group.MapPost("/{id:guid}/languages", async Task<IResult> (
             Guid id,
             AddLanguageRequest request,
