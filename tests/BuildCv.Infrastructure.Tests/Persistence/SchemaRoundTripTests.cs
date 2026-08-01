@@ -305,6 +305,21 @@ public sealed class SchemaRoundTripTests
             .ToListAsync();
 
         demanding.Should().Contain(posting.Id);
+
+        // The null direction, through EF rather than only through the Domain. The nullable column
+        // makes this safe today, so it is coverage rather than a defect — but "stated, then
+        // withdrawn" is the direction that silently degrades to 0 if a signature ever stops being
+        // nullable, and 0 reads as HighSchool: a requirement the posting no longer makes.
+        await using (var editor = _fixture.NewContext())
+        {
+            var tracked = await editor.JobPostings.SingleAsync(entity => entity.Id == posting.Id);
+            tracked.SetEducationLevel(null);
+            await editor.SaveChangesAsync();
+        }
+
+        await using var afterClearing = _fixture.NewContext();
+        (await afterClearing.JobPostings.SingleAsync(entity => entity.Id == posting.Id))
+            .EducationLevel.Should().BeNull();
     }
 
     [Fact]
