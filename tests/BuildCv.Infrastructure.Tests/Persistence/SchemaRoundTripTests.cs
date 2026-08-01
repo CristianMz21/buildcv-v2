@@ -320,7 +320,8 @@ public sealed class SchemaRoundTripTests
 
         reloaded.Breakdown.Should().Be(analysis.Breakdown);
         reloaded.Breakdown.LanguagesScore.Should().Be(0.4, "the sixth section has a column of its own");
-        reloaded.Breakdown.Weights.Languages.Should().Be(0.10, "the weights snapshot carries six members now");
+        reloaded.Breakdown.Weights.Should().Be(ScoringWeightsSnapshot.Default(),
+            "the six-member snapshot has to survive the JSON column intact");
 
         // BeEquivalentTo rather than Equal: Recommendations is a SET on disk with a surrogate key and
         // no stored position, so the reload order is the server's to choose.

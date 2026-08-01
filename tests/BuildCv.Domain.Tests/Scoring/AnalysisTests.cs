@@ -21,9 +21,12 @@ public class AnalysisTests
             scoredAt: DateTimeOffset.Now,
             recommendations: [Advice("Add more skills"), Advice("Improve summary")]);
 
-        // 0.45*0.3 + 0.20*0.4 + 0.10*0.2 + 0.10*0.5 + 0.05*0.8 + 0.10*0.25, under the six-section
-        // weights. It was 34 while Education carried 0.20 and there was no Languages term.
-        analysis.OverallScore.Should().Be(35);
+        // 0.45*0.3 + 0.20*0.4 + 0.20*0.2 + 0.10*0.5 + 0.05*0.8 + 0.00*0.25 = 0.345.
+        //
+        // Still 34, and that is the point of this PR rather than a coincidence: Languages ships at
+        // weight 0.0, so the sixth section cannot move a score that already existed. The 0.25 handed
+        // to it here is deliberately non-zero and deliberately makes no difference.
+        analysis.OverallScore.Should().Be(34);
         analysis.Band.Should().Be(ScoreBand.Low);
         analysis.Recommendations.Should().HaveCount(2);
     }

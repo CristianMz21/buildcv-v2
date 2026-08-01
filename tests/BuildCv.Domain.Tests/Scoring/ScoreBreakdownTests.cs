@@ -21,21 +21,39 @@ public class ScoreBreakdownTests
 
         var total = breakdown.WeightedTotal;
 
-        var expected = 0.45 * 0.9 + 0.20 * 0.8 + 0.10 * 0.7 + 0.10 * 0.6 + 0.05 * 1.0 + 0.10 * 0.3;
+        var expected = 0.45 * 0.9 + 0.20 * 0.8 + 0.20 * 0.7 + 0.10 * 0.6 + 0.05 * 1.0 + 0.00 * 0.3;
         total.Should().BeApproximately(expected, 0.001);
     }
 
-    // The sixth term, on its own. Every other total test moves five scores and Languages together, so
-    // a WeightedTotal that simply forgot the Languages term would still satisfy them whenever the
-    // other five happened to account for the difference. Here nothing else is non-zero: the answer is
-    // the Languages weight or it is zero.
+    // The sixth term, on its own, under weights that can actually see it.
+    //
+    // NOT DefaultWeights: this PR ships Languages at weight 0.0, so the shipped weights cannot tell a
+    // counted Languages term from a dropped one — both read zero. The arithmetic of WeightedTotal is
+    // what is under test here, and it has to be right before PR 3 gives the section any weight.
     [Fact]
-    public void WeightedTotal_countsLanguages_evenWhenEveryOtherSectionScoresZero()
+    public void WeightedTotal_countsLanguages_whenTheWeightsGiveItAny()
     {
-        var breakdown = ScoreBreakdown.Create(0.0, 0.0, 0.0, 0.0, 0.0, 1.0, DefaultWeights);
+        var weighted = ScoringWeightsSnapshot.Create(0.40, 0.20, 0.20, 0.10, 0.05, 0.05);
+        var breakdown = ScoreBreakdown.Create(0.0, 0.0, 0.0, 0.0, 0.0, 1.0, weighted);
 
-        breakdown.WeightedTotal.Should().BeApproximately(DefaultWeights.Languages, 0.0001);
+        breakdown.WeightedTotal.Should().BeApproximately(0.05, 0.0001);
         breakdown.WeightedTotal.Should().BeGreaterThan(0.0, "a dropped Languages term reads as a flat zero");
+    }
+
+    // The other half: under the weights this PR actually ships, a Languages score cannot move the
+    // total at all. That is the property that makes adding the section behaviour-neutral, and it is
+    // asserted rather than assumed because it is the whole justification for the PR being safe.
+    [Theory]
+    [InlineData(0.0)]
+    [InlineData(0.5)]
+    [InlineData(1.0)]
+    public void WeightedTotal_underTheShippedWeights_isUnmovedByAnyLanguagesScore(double languagesScore)
+    {
+        var breakdown = ScoreBreakdown.Create(0.9, 0.8, 0.7, 0.6, 1.0, languagesScore, DefaultWeights);
+
+        var withoutLanguages = 0.45 * 0.9 + 0.20 * 0.8 + 0.20 * 0.7 + 0.10 * 0.6 + 0.05 * 1.0;
+
+        breakdown.WeightedTotal.Should().Be(withoutLanguages);
     }
 
     [Fact]
@@ -111,11 +129,25 @@ public class ScoreBreakdownTests
     {
         DefaultWeights.Skills.Should().Be(0.45);
         DefaultWeights.Experience.Should().Be(0.20);
-        DefaultWeights.Education.Should().Be(0.10);
+        DefaultWeights.Education.Should().Be(0.20, "moving this to 0.10 costs every educated candidate points");
         DefaultWeights.Certifications.Should().Be(0.10);
         DefaultWeights.Projects.Should().Be(0.05);
-        DefaultWeights.Languages.Should().Be(0.10);
-        DefaultWeights.SchemaVersion.Should().Be(2);
+        DefaultWeights.Languages.Should().Be(0.00, "the section is shaped but not yet computed");
+        DefaultWeights.SchemaVersion.Should().Be(1, "no scoring model changed, so no version did");
+    }
+
+    // The five weights that were already in production, unmoved. Stated as its own assertion because
+    // the failure mode it guards is silent: redistributing any of them lowers live scores and puts a
+    // discontinuity in every candidate's history, and no other test in this file would say so.
+    [Fact]
+    public void ScoringWeightsSnapshot_default_leaves_the_five_scored_sections_exactly_as_they_were()
+    {
+        var scored =
+            DefaultWeights.Skills + DefaultWeights.Experience + DefaultWeights.Education
+            + DefaultWeights.Certifications + DefaultWeights.Projects;
+
+        scored.Should().BeApproximately(1.0, 0.0001,
+            "the sections that actually get scored still carry the whole weight, so the maximum is 1.00");
     }
 
     // The invariant everything downstream leans on. WeightedTotal is only a 0..1 number because the
@@ -185,10 +217,10 @@ public class ScoreBreakdownTests
         breakdown.Sections.Should().Equal(
             SectionScore.Create(SectionType.Skills, 0.1, 0.45),
             SectionScore.Create(SectionType.Experience, 0.2, 0.20),
-            SectionScore.Create(SectionType.Education, 0.3, 0.10),
+            SectionScore.Create(SectionType.Education, 0.3, 0.20),
             SectionScore.Create(SectionType.Certifications, 0.4, 0.10),
             SectionScore.Create(SectionType.Projects, 0.5, 0.05),
-            SectionScore.Create(SectionType.Languages, 0.6, 0.10));
+            SectionScore.Create(SectionType.Languages, 0.6, 0.00));
     }
 
     // The projection is only worth anything if it agrees with the number the candidate is shown.

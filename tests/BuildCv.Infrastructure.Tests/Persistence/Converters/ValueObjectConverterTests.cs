@@ -101,6 +101,8 @@ public class ValueObjectConverterTests
 
         var weights = ScoringWeightsSnapshotConverter.FromJson(v1);
 
+        v1.Should().NotContain("Languages", "this has to be the shape that is really on disk");
+
         weights.Languages.Should().Be(0.0, "a v1 payload never carried a sixth weight");
         weights.SchemaVersion.Should().Be(1, "the row must keep saying which model explained it");
         weights.Skills.Should().Be(0.45);
@@ -109,6 +111,10 @@ public class ValueObjectConverterTests
         // The whole point: a v1 breakdown still produces the total it always produced.
         var breakdown = ScoreBreakdown.Create(1.0, 1.0, 1.0, 1.0, 1.0, 0.0, weights);
         breakdown.WeightedTotal.Should().BeApproximately(1.0, 0.0001);
+
+        // And it is arithmetically what this PR ships, which is the claim that makes the change
+        // behaviour-neutral: every row already on disk reads back as today's weighting exactly.
+        weights.Should().Be(ScoringWeightsSnapshot.Default());
     }
 
     [Fact]
@@ -118,9 +124,38 @@ public class ValueObjectConverterTests
 
         var json = ScoringWeightsSnapshotConverter.ToJson(weights);
 
-        json.Should().Contain("\"Languages\":0.1");
+        json.Should().Contain("\"Languages\"", "the written shape carries the member even at weight zero");
+        ScoringWeightsSnapshotConverter.FromJson(json).Should().Be(weights);
+    }
+
+    // The column-width guard, on a payload that can actually fail it.
+    //
+    // Default() serializes to roughly 120 characters against a 256 cap, so measuring THAT would pass
+    // against almost any regression — including one that added two more members. These weights come
+    // out of division rather than literals, so every one of them serializes at full round-trip
+    // precision, which is the widest a weights payload can legitimately get.
+    [Fact]
+    public void ScoringWeights_AFullPrecisionPayloadStillFitsTheDeclaredColumnWidth()
+    {
+        var skills = 1.0 / 3.0;
+        var experience = 1.0 / 7.0;
+        var education = 1.0 / 9.0;
+        var certifications = 1.0 / 11.0;
+        var projects = 1.0 / 13.0;
+        var languages = 1.0 - (skills + experience + education + certifications + projects);
+
+        var weights = ScoringWeightsSnapshot.Create(
+            skills, experience, education, certifications, projects, languages);
+
+        var json = ScoringWeightsSnapshotConverter.ToJson(weights);
+
+        json.Length.Should().BeGreaterThan(180,
+            "a payload that does not approach the cap cannot be evidence the cap is wide enough");
         json.Length.Should().BeLessThanOrEqualTo(ScoringWeightsSnapshotConverter.MaxLength,
             "a payload wider than the column truncates, and a truncated snapshot cannot be parsed back");
+
+        // Truncation is not the only failure: a value that lost precision on the way out would come
+        // back as a different snapshot, and the 1.0-sum check would not necessarily catch it.
         ScoringWeightsSnapshotConverter.FromJson(json).Should().Be(weights);
     }
 

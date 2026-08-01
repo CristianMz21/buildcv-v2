@@ -2,9 +2,16 @@ namespace BuildCv.Domain.Scoring;
 
 public sealed record ScoringWeightsSnapshot
 {
-    // The version the six-weight model is stored under. Bumped from 1 when Languages was added, so an
-    // analysis scored before the change still says which model explained it.
-    public const int CurrentSchemaVersion = 2;
+    // Which WEIGHTING produced a set of numbers — not which shape they serialize in.
+    //
+    // It stays at 1 while Languages carries weight 0.0, because the arithmetic is bit-for-bit the
+    // five-section arithmetic that has always run: a score explained by these weights is explained by
+    // the v1 weights. Bumping it here would claim a scoring model changed when none did, and would
+    // put a discontinuity in every candidate's history for a serialization detail.
+    //
+    // It moves to 2 in the same commit that redistributes Education to Languages and starts computing
+    // a real Languages score — the commit where the numbers genuinely change.
+    public const int CurrentSchemaVersion = 1;
 
     public double Skills { get; }
     public double Experience { get; }
@@ -59,7 +66,15 @@ public sealed record ScoringWeightsSnapshot
             skills, experience, education, certifications, projects, languages, schemaVersion);
     }
 
-    public static ScoringWeightsSnapshot Default() => Create(0.45, 0.20, 0.10, 0.10, 0.05, 0.10);
+    // Languages ships SHAPED BUT UNWEIGHTED, and that is what makes adding it behaviour-neutral.
+    //
+    // Its weight is 0.0 and the engine hands it a 0.0 score, so it contributes nothing twice over and
+    // the other five weights are untouched — every candidate's score is the number it was yesterday,
+    // and no history shows a discontinuity. Weighting Languages before anything computes it would
+    // have moved Education from 0.20 to 0.10 against a hard-coded zero: a maximum of 0.90 instead of
+    // 1.00, and up to ten points off every candidate with an education. The redistribution belongs in
+    // the commit that starts computing the score, so the weight and the score arrive together.
+    public static ScoringWeightsSnapshot Default() => Create(0.45, 0.20, 0.20, 0.10, 0.05, 0.00);
 
     public double WeightFor(SectionType section) => section switch
     {
