@@ -12,6 +12,12 @@ namespace BuildCv.Api.Tests;
 // different environment name to exercise the production-shaped configuration.
 public sealed class ApiTestFactory(string? environment = null) : WebApplicationFactory<Program>
 {
+    // Exposed so tests can mint tokens the API will accept — an expired one, or one signed with
+    // the wrong key — to prove what each authentication scheme does and does not accept.
+    public const string SigningKey = "test-signing-key-min-32-characters-long-0123456789";
+    public const string Issuer = "buildcv-api";
+    public const string Audience = "buildcv-bff";
+
     private readonly string _environment = environment ?? Environments.Development;
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -36,9 +42,9 @@ public sealed class ApiTestFactory(string? environment = null) : WebApplicationF
         {
             config.AddInMemoryCollection(new Dictionary<string, string?>
             {
-                ["Jwt:SigningKey"] = "test-signing-key-min-32-characters-long-0123456789",
-                ["Jwt:Issuer"] = "buildcv-api",
-                ["Jwt:Audience"] = "buildcv-bff",
+                ["Jwt:SigningKey"] = SigningKey,
+                ["Jwt:Issuer"] = Issuer,
+                ["Jwt:Audience"] = Audience,
                 ["Jwt:AccessTokenMinutes"] = "15",
                 ["Jwt:RefreshTokenDays"] = "30",
                 // AddInfrastructure requires a usable Encryption key ring and validates it on start,

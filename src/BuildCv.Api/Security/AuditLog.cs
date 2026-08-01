@@ -17,7 +17,10 @@ public static class AuditLog
             "Auth event {Event} account {AccountId} ip {Ip} emailHash {EmailHash} at {Timestamp}",
             eventName,
             accountId?.Value,
-            context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            // Same normalization the rate limiters use, so an audit line and the 429 it explains
+            // spell the client the same way. Full precision on purpose: the limiter charges the
+            // whole IPv6 /64, forensics wants the exact address inside it.
+            ClientAddress.Describe(context),
             emailHash,
             DateTimeOffset.UtcNow);
     }

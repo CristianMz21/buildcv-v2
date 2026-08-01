@@ -20,17 +20,26 @@ public static class AuthCookies
     private static bool IsSecure(HttpContext context) =>
         !context.RequestServices.GetRequiredService<IHostEnvironment>().IsDevelopment();
 
-    public static void SetTokens(HttpContext context, AuthResult auth, JwtSettings settings)
+    public static void SetTokens(HttpContext context, AuthResult auth)
     {
+        ArgumentNullException.ThrowIfNull(auth);
+
         var secure = IsSecure(context);
 
+        // Both cookies live for the session, i.e. until the refresh token expires. The access
+        // cookie used to expire with the JWT it carries, which meant the browser silently deleted
+        // the only credential naming the account roughly the moment the token went stale — so an
+        // idle user pressing "log out" arrived anonymous and nothing got revoked. The JWT's own
+        // `exp` is the security control and is still enforced server side on every scheme except
+        // the logout-only one; the cookie's Expires is just client-side housekeeping, and tying it
+        // to `exp` bought nothing while breaking session termination.
         context.Response.Cookies.Append(AccessTokenCookie, auth.AccessToken, new CookieOptions
         {
             HttpOnly = true,
             Secure = secure,
             SameSite = SameSiteMode.Strict,
             Path = "/",
-            Expires = DateTimeOffset.UtcNow.AddMinutes(settings.AccessTokenMinutes)
+            Expires = auth.RefreshToken.ExpiresAt
         });
 
         context.Response.Cookies.Append(RefreshTokenCookie, auth.RefreshToken.Token, new CookieOptions

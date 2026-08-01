@@ -7,6 +7,7 @@ using BuildCv.Domain.Common.ValueObjects;
 using BuildCv.Domain.Identity;
 using BuildCv.Infrastructure.Security;
 using Microsoft.AspNetCore.Antiforgery;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.Extensions.Options;
 
 namespace BuildCv.Api.Endpoints;
@@ -58,7 +59,7 @@ public static class AuthEndpoints
                 return result.ToHttpResult();
             }
 
-            AuthCookies.SetTokens(httpContext, result.Value!, jwt.Value);
+            AuthCookies.SetTokens(httpContext, result.Value!);
             AuditLog.Log(logger, "login_success", result.Value!.AccountId, httpContext, request.Email);
             return Results.Ok(new TokenResponse(result.Value!.AccessToken, jwt.Value.AccessTokenMinutes * 60));
         })
@@ -86,7 +87,7 @@ public static class AuthEndpoints
                 return result.ToHttpResult();
             }
 
-            AuthCookies.SetTokens(httpContext, result.Value!, jwt.Value);
+            AuthCookies.SetTokens(httpContext, result.Value!);
             AuditLog.Log(logger, "refresh_success", result.Value!.AccountId, httpContext);
             return Results.Ok(new TokenResponse(result.Value!.AccessToken, jwt.Value.AccessTokenMinutes * 60));
         })
@@ -97,31 +98,47 @@ public static class AuthEndpoints
         // moment the access token expired, which is precisely when a user wants out — and a 401
         // leaves both cookies in the browser with the refresh token still live in the store, so
         // requiring authentication makes the security action unavailable exactly when it matters.
-        // Authentication middleware still runs, so a caller presenting a valid token is
-        // identified and every refresh token on that account is revoked. Cookies are cleared
-        // unconditionally and the answer is always 204: an anonymous logout is a no-op that leaks
-        // nothing. CsrfGuardMiddleware still covers this route (it is not in ExemptPaths), so a
-        // cross-site request cannot force-revoke a victim's sessions.
+        // Cookies are cleared unconditionally: a logout that cannot identify anyone is still a
+        // valid request to drop this browser's credentials, and it leaks nothing.
+        // CsrfGuardMiddleware still covers this route (it is not in ExemptPaths), so a cross-site
+        // request cannot force-revoke a victim's sessions.
         group.MapPost("/logout", async Task<IResult> (
             HttpContext httpContext,
             ICommandHandler<RevokeSessionsCommand, Result> handler,
             ILogger<Program> logger,
             CancellationToken cancellationToken) =>
         {
-            var accountId = httpContext.User.GetAccountIdOrNull();
+            // Authenticated explicitly against the lifetime-ignoring scheme rather than read off
+            // httpContext.User, because the common logout is "idle tab, token already expired".
+            // Signature, issuer and audience are still validated there, so this still requires a
+            // token this API issued for this account.
+            var authentication =
+                await httpContext.AuthenticateAsync(AuthenticationSchemes.ExpiredAccessTokenAllowed);
+            var accountId = authentication.Principal?.GetAccountIdOrNull();
+
             var revoked = accountId is null
-                ? null
+                ? Result.Success()
                 : await handler.Handle(new RevokeSessionsCommand(accountId), cancellationToken);
 
             AuthCookies.ClearTokens(httpContext);
-            AuditLog.Log(
-                logger,
-                revoked is { IsSuccess: false } ? "logout_revoke_failure" : "logout",
-                accountId,
-                httpContext);
+
+            // The cookies are gone by now, so the browser is safe either way — but answering 204
+            // after a failed revocation would tell the client the session ended when the refresh
+            // token is still live in the store. Unreachable with the in-memory repository; the
+            // moment a real store sits behind the port it stops being unreachable.
+            if (!revoked.IsSuccess)
+            {
+                AuditLog.Log(logger, "logout_revoke_failure", accountId, httpContext);
+                return Results.Problem(
+                    detail: "Sessions could not be revoked.",
+                    statusCode: StatusCodes.Status500InternalServerError);
+            }
+
+            AuditLog.Log(logger, "logout", accountId, httpContext);
             return Results.NoContent();
         })
-        .AllowAnonymous();
+        .AllowAnonymous()
+        .RequireRateLimiting(RateLimitPolicies.Logout);
 
         // Throttled per account instead of through the per-IP auth window: see
         // PasswordChangeRateLimiter for why sharing that window was both unfair and useless here.

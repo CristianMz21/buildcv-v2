@@ -33,7 +33,9 @@ builder.Services.AddScoped<ICurrentUser, HttpContextCurrentUser>();
 
 builder.Services.AddSingleton<PasswordChangeRateLimiter>();
 
-builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer();
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer()
+    .AddJwtBearer(AuthenticationSchemes.ExpiredAccessTokenAllowed);
 
 // Bearer validation is configured through the options system so it resolves the very same
 // JwtSettings instance that TokenService signs with. Reading configuration eagerly off the
@@ -42,54 +44,14 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJw
 // signing key and rejecting every token issued by this API.
 builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme)
     .Configure<IOptions<JwtSettings>>((options, jwtOptions) =>
-    {
-        var jwtSettings = jwtOptions.Value;
-        options.MapInboundClaims = false;
-        options.TokenValidationParameters = new TokenValidationParameters
-        {
-            ValidateIssuer = true,
-            ValidIssuer = jwtSettings.Issuer,
-            ValidateAudience = true,
-            ValidAudience = jwtSettings.Audience,
-            ValidateIssuerSigningKey = true,
-            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSettings.SigningKey)),
-            ValidateLifetime = true,
-            RequireExpirationTime = true,
-            ClockSkew = TimeSpan.FromSeconds(30),
-            NameClaimType = "sub",
-            RoleClaimType = "role"
-        };
-        options.Events = new JwtBearerEvents
-        {
-            OnMessageReceived = context =>
-            {
-                var authorization = context.Request.Headers.Authorization.ToString();
-                if (string.IsNullOrWhiteSpace(authorization)
-                    && context.Request.Cookies.TryGetValue(AuthCookies.AccessTokenCookie, out var cookieToken))
-                {
-                    context.Token = cookieToken;
-                }
-                return Task.CompletedTask;
-            },
-            OnAuthenticationFailed = context =>
-            {
-                context.NoResult();
-                return Task.CompletedTask;
-            },
-            OnChallenge = async context =>
-            {
-                context.HandleResponse();
-                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-                context.Response.ContentType = "application/problem+json";
-                await context.Response.WriteAsJsonAsync(new
-                {
-                    type = "about:blank",
-                    title = "Unauthorized",
-                    status = StatusCodes.Status401Unauthorized
-                });
-            }
-        };
-    });
+        JwtBearerConfiguration.Configure(options, jwtOptions.Value, validateLifetime: true));
+
+// Reachable only through an explicit AuthenticateAsync call in /auth/logout — it is not the
+// default scheme and no authorization policy names it, so no protected endpoint can be entered
+// with an expired token. See AuthenticationSchemes.ExpiredAccessTokenAllowed for the rationale.
+builder.Services.AddOptions<JwtBearerOptions>(AuthenticationSchemes.ExpiredAccessTokenAllowed)
+    .Configure<IOptions<JwtSettings>>((options, jwtOptions) =>
+        JwtBearerConfiguration.Configure(options, jwtOptions.Value, validateLifetime: false));
 
 builder.Services.AddAuthorizationBuilder()
     .AddPolicy(AuthorizationPolicies.Candidate, policy => policy.RequireRole("Candidate", "Recruiter", "Admin"))
@@ -112,6 +74,17 @@ builder.Services.AddRateLimiter(options =>
         _ => new FixedWindowRateLimiterOptions
         {
             PermitLimit = 5,
+            Window = TimeSpan.FromMinutes(1),
+            QueueLimit = 0
+        }));
+    // /auth/logout is anonymous and state-changing, and each authenticated hit scans the token
+    // store, so it needs its own ceiling — separate from the brute-force window because it tests
+    // no secret and a logout button must not compete with logins for the same 5/min budget.
+    options.AddPolicy(RateLimitPolicies.Logout, httpContext => RateLimitPartition.GetFixedWindowLimiter(
+        RateLimitPartitions.ClientKey(httpContext),
+        _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 20,
             Window = TimeSpan.FromMinutes(1),
             QueueLimit = 0
         }));

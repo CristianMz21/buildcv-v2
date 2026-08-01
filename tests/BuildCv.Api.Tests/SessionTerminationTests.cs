@@ -1,9 +1,13 @@
+using System.Globalization;
 using System.Net;
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
 using FluentAssertions;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.IdentityModel.JsonWebTokens;
+using Microsoft.IdentityModel.Tokens;
 
 namespace BuildCv.Api.Tests;
 
@@ -47,6 +51,41 @@ public sealed class SessionTerminationTests
         var problem = await replay.Content.ReadFromJsonAsync<ProblemDetails>();
         problem!.Detail.Should().Be("Invalid refresh token.");
     }
+
+    // Rebuilds the caller's own token with an expiry in the past, which is what an idle browser
+    // actually presents. Signed with the real key unless `signingKey` says otherwise.
+    private static string StaleTokenFrom(string liveAccessToken, string signingKey = ApiTestFactory.SigningKey)
+    {
+        var handler = new JsonWebTokenHandler();
+        var live = handler.ReadJsonWebToken(liveAccessToken);
+        var now = DateTime.UtcNow;
+
+        return handler.CreateToken(new SecurityTokenDescriptor
+        {
+            Issuer = ApiTestFactory.Issuer,
+            Audience = ApiTestFactory.Audience,
+            IssuedAt = now.AddMinutes(-30),
+            NotBefore = now.AddMinutes(-30),
+            Expires = now.AddMinutes(-15),
+            SigningCredentials = new SigningCredentials(
+                new SymmetricSecurityKey(Encoding.UTF8.GetBytes(signingKey)), SecurityAlgorithms.HmacSha256),
+            Claims = new Dictionary<string, object>
+            {
+                ["sub"] = live.GetClaim("sub").Value,
+                ["email"] = live.GetClaim("email").Value,
+                ["role"] = live.GetClaim("role").Value,
+                ["jti"] = Guid.NewGuid().ToString()
+            }
+        });
+    }
+
+    private static DateTimeOffset ExpiresOf(HttpResponseMessage response, string cookieName) =>
+        DateTimeOffset.Parse(
+            TestHelpers.GetSetCookie(response, cookieName)
+                .Split(';')
+                .Select(attribute => attribute.Trim())
+                .First(attribute => attribute.StartsWith("expires=", StringComparison.OrdinalIgnoreCase))["expires=".Length..],
+            CultureInfo.InvariantCulture);
 
     private static HttpRequestMessage ChangePasswordRequest(string accessToken, string currentPassword) =>
         new HttpRequestMessage(HttpMethod.Post, "/auth/change-password")
@@ -123,9 +162,90 @@ public sealed class SessionTerminationTests
         replay.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
-    // Requiring authentication on logout would answer 401 as soon as the access token expired,
-    // stranding the user with cookies they cannot clear. An anonymous logout is a no-op that still
-    // clears them and always answers 204.
+    // THE scenario logout exists for: the tab sat idle, the access token expired, the user presses
+    // "log out". If the endpoint can only act on an unexpired token, this path revokes nothing and
+    // the captured refresh cookie stays live for the rest of its 30 days — the original bug,
+    // untouched. Two things have to hold for this to work: the access cookie has to outlive the
+    // JWT (see Login_AccessCookie... below) and logout has to authenticate against a scheme that
+    // ignores `exp` while still checking the signature.
+    [Fact]
+    public async Task Logout_WithExpiredAccessToken_StillRevokesTheCapturedRefreshToken()
+    {
+        using var factory = new ApiTestFactory();
+        using var client = CreateRawClient(factory);
+
+        var (accessToken, capturedRefreshCookie) =
+            await RegisterAndCaptureSessionAsync(client, TestHelpers.CandidateEmail);
+        var expiredToken = StaleTokenFrom(accessToken);
+
+        using var logoutRequest = new HttpRequestMessage(HttpMethod.Post, "/auth/logout").WithBearer(expiredToken);
+        var logout = await client.SendAsync(logoutRequest);
+        logout.StatusCode.Should().Be(HttpStatusCode.NoContent);
+
+        await AssertReplayRejectedAsync(client, capturedRefreshCookie);
+    }
+
+    // The lenient scheme is reachable from /auth/logout and nowhere else. If an expired token ever
+    // opened a protected endpoint, ignoring `exp` would have bought a session extension instead of
+    // a logout.
+    [Fact]
+    public async Task ExpiredAccessToken_IsStillRejectedByEveryOtherEndpoint()
+    {
+        using var factory = new ApiTestFactory();
+        using var client = CreateRawClient(factory);
+
+        var (accessToken, _) = await RegisterAndCaptureSessionAsync(client, TestHelpers.CandidateEmail);
+        var expiredToken = StaleTokenFrom(accessToken);
+
+        using var meRequest = new HttpRequestMessage(HttpMethod.Get, "/auth/me").WithBearer(expiredToken);
+        var me = await client.SendAsync(meRequest);
+
+        me.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    // Ignoring `exp` is not ignoring the signature. A token this API never issued must revoke
+    // nothing, or logout becomes a way to end any account's sessions from anywhere.
+    [Fact]
+    public async Task Logout_WithForgedToken_RevokesNothing()
+    {
+        using var factory = new ApiTestFactory();
+        using var client = CreateRawClient(factory);
+
+        var (accessToken, capturedRefreshCookie) =
+            await RegisterAndCaptureSessionAsync(client, TestHelpers.CandidateEmail);
+        var forgedToken = StaleTokenFrom(accessToken, signingKey: "attacker-signing-key-min-32-characters-long");
+
+        using var logoutRequest = new HttpRequestMessage(HttpMethod.Post, "/auth/logout").WithBearer(forgedToken);
+        (await client.SendAsync(logoutRequest)).StatusCode.Should().Be(HttpStatusCode.NoContent);
+
+        var replay = await ReplayRefreshTokenAsync(client, capturedRefreshCookie);
+        replay.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    // The access cookie used to carry Expires = now + AccessTokenMinutes, so the browser deleted
+    // the only credential naming the account at the same moment the JWT went stale. The JWT's own
+    // `exp` is the security control; the cookie lifetime is client-side housekeeping and belongs
+    // to the session.
+    [Fact]
+    public async Task Login_AccessCookieOutlivesTheAccessTokenAndMatchesTheSession()
+    {
+        using var factory = new ApiTestFactory();
+        using var client = CreateRawClient(factory);
+
+        (await client.RegisterAsync(TestHelpers.CandidateEmail)).EnsureSuccessStatusCode();
+        var login = await client.LoginAsync(TestHelpers.CandidateEmail);
+        login.EnsureSuccessStatusCode();
+
+        var accessExpires = ExpiresOf(login, "access_token");
+
+        accessExpires.Should().Be(ExpiresOf(login, "refresh_token"));
+        accessExpires.Should().BeAfter(DateTimeOffset.UtcNow.AddDays(1));
+    }
+
+    // With no credential at all there is nothing to identify, so nothing is revoked — but the
+    // cookies still get cleared and the answer is still 204. The idle-token case is handled by
+    // Logout_WithExpiredAccessToken_StillRevokesTheCapturedRefreshToken above; this is only the
+    // genuinely anonymous caller.
     [Fact]
     public async Task Logout_WithoutCredentials_ClearsCookiesAndReturns204()
     {

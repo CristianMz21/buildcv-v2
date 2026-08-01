@@ -15,7 +15,7 @@ namespace BuildCv.Api.Tests;
 public sealed class RateLimitPartitionTests
 {
     private const string ProxyAddress = "10.0.0.5";
-    private const string ClientAddress = "203.0.113.7";
+    private const string ClientIp = "203.0.113.7";
 
     private static ForwardedHeadersSettings TrustingProxy() => new()
     {
@@ -28,7 +28,7 @@ public sealed class RateLimitPartitionTests
         var context = new DefaultHttpContext();
         context.Connection.RemoteIpAddress = IPAddress.Parse(peer);
         context.Request.Scheme = "http";
-        context.Request.Headers["X-Forwarded-For"] = ClientAddress;
+        context.Request.Headers["X-Forwarded-For"] = ClientIp;
         context.Request.Headers["X-Forwarded-Proto"] = "https";
         return context;
     }
@@ -56,9 +56,9 @@ public sealed class RateLimitPartitionTests
     public void ClientKey_IPv4MappedToIPv6_MatchesThePlainIPv4Partition()
     {
         var mapped = RateLimitPartitions.ClientKey(IPAddress.Parse("::ffff:203.0.113.7"));
-        var plain = RateLimitPartitions.ClientKey(IPAddress.Parse(ClientAddress));
+        var plain = RateLimitPartitions.ClientKey(IPAddress.Parse(ClientIp));
 
-        mapped.Should().Be(plain).And.Be(ClientAddress);
+        mapped.Should().Be(plain).And.Be(ClientIp);
     }
 
     [Fact]
@@ -69,9 +69,57 @@ public sealed class RateLimitPartitionTests
     }
 
     [Fact]
-    public void ClientKey_IPv6Address_IsUsedVerbatim()
+    public void ClientKey_IPv4_KeepsFullAddressPrecision()
     {
-        RateLimitPartitions.ClientKey(IPAddress.Parse("2001:db8::1")).Should().Be("2001:db8::1");
+        RateLimitPartitions.ClientKey(IPAddress.Parse(ClientIp)).Should().Be(ClientIp);
+    }
+
+    // A residential line or a VPS is routinely delegated an entire IPv6 /64. Keying on the full
+    // /128 would let one party source 2^64 addresses, mint a fresh bucket per request, and walk
+    // through both the auth window and the global limiter with no proxy involved.
+    [Fact]
+    public void ClientKey_IPv6AddressesInTheSameSlashSixtyFour_SharePartition()
+    {
+        var low = RateLimitPartitions.ClientKey(IPAddress.Parse("2001:db8:1:2::1"));
+        var high = RateLimitPartitions.ClientKey(IPAddress.Parse("2001:db8:1:2:ffff:ffff:ffff:ffff"));
+
+        low.Should().Be(high);
+    }
+
+    [Fact]
+    public void ClientKey_IPv6AddressesInDifferentSlashSixtyFours_DoNotSharePartition()
+    {
+        var first = RateLimitPartitions.ClientKey(IPAddress.Parse("2001:db8:1:2::1"));
+        var second = RateLimitPartitions.ClientKey(IPAddress.Parse("2001:db8:1:3::1"));
+
+        first.Should().NotBe(second);
+    }
+
+    // The prefix key must not be spellable as an exact address, or a client sitting on the base
+    // address of its own /64 would collide with the truncated key of everyone else in it.
+    [Fact]
+    public void ClientKey_IPv6PartitionIsMarkedAsAPrefix()
+    {
+        RateLimitPartitions.ClientKey(IPAddress.Parse("2001:db8:1:2::5")).Should().Be("2001:db8:1:2::/64");
+    }
+
+    // Throttling charges the whole allocation; forensics needs the exact address inside it.
+    [Fact]
+    public void Describe_KeepsFullIPv6PrecisionForAuditTrails()
+    {
+        ClientAddress.Describe(IPAddress.Parse("2001:db8:1:2::5")).Should().Be("2001:db8:1:2::5");
+    }
+
+    [Fact]
+    public void Describe_NormalizesIPv4MappedIPv6LikeThePartitionKeyDoes()
+    {
+        ClientAddress.Describe(IPAddress.Parse("::ffff:203.0.113.7")).Should().Be(ClientIp);
+    }
+
+    [Fact]
+    public void Describe_WithoutAnAddress_ReadsUnknown()
+    {
+        ClientAddress.Describe((IPAddress?)null).Should().Be(RateLimitPartitions.UnknownClient);
     }
 
     [Fact]
@@ -79,7 +127,7 @@ public sealed class RateLimitPartitionTests
     {
         var context = await RunForwardedHeadersAsync(TrustingProxy(), ProxiedRequest(ProxyAddress));
 
-        RateLimitPartitions.ClientKey(context).Should().Be(ClientAddress);
+        RateLimitPartitions.ClientKey(context).Should().Be(ClientIp);
     }
 
     [Fact]
@@ -108,7 +156,7 @@ public sealed class RateLimitPartitionTests
 
         var context = await RunForwardedHeadersAsync(settings, ProxiedRequest(ProxyAddress));
 
-        RateLimitPartitions.ClientKey(context).Should().Be(ClientAddress);
+        RateLimitPartitions.ClientKey(context).Should().Be(ClientIp);
     }
 
     [Fact]
