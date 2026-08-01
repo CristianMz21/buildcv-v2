@@ -29,11 +29,15 @@ public class LevelVocabularyTests
     public void EducationLevel_members_keep_their_persisted_numbers(EducationLevel level, int expected) =>
         ((int)level).Should().Be(expected);
 
-    // The two below are DOCUMENTATION, not additional coverage: with all five numbers pinned above,
-    // Enum.GetValues' order is already determined, so nothing can reach these that the theories would
-    // not have caught first. They earn their place by stating the semantic contract the numbers only
-    // imply — the members ASCEND, which is what makes `held >= required` the whole comparison PR 3
-    // needs — in a form a reader does not have to reconstruct from five integers.
+    // With all five numbers pinned above, Enum.GetValues' ORDER is already determined, so these two add
+    // no ordering coverage. What they add is the member SET, and that is not redundant: both enums
+    // explicitly invite one change — "append at the end" — and appending a sixth member leaves every
+    // InlineData theory above green while these fail on length. Nothing else pins that the vocabulary
+    // is these five and no more.
+    //
+    // They also state the semantic contract the numbers only imply — the members ASCEND, which is what
+    // makes `held >= required` the whole comparison PR 3 needs — in a form a reader does not have to
+    // reconstruct from five integers.
     [Fact]
     public void LanguageProficiency_ascends_from_least_to_most_proficient() =>
         Enum.GetValues<LanguageProficiency>().Should().Equal(
