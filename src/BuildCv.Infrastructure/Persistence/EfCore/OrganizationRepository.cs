@@ -49,11 +49,8 @@ internal sealed class OrganizationRepository : IOrganizationRepository
     {
         ArgumentNullException.ThrowIfNull(organization);
 
-        var entry = _context.Entry(organization);
-
-        // See AccountRepository.UpdateAsync for why the detached path cannot verify a rowversion.
-        if (entry.State is EntityState.Detached)
-            entry = _context.Organizations.Update(organization);
+        // See TrackedAggregateExtensions for why a detached aggregate is refused rather than re-attached.
+        var entry = _context.RequireTracked(organization);
 
         // Organization.Delete() sets Status = Deleted and knows nothing about tombstones; this is the
         // other half of that delete. See TombstoneExtensions for why it is not routed through Remove().

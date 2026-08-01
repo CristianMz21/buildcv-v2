@@ -75,15 +75,10 @@ internal sealed class AccountRepository : IAccountRepository
     {
         ArgumentNullException.ThrowIfNull(account);
 
-        var entry = _context.Entry(account);
-
-        // The fallback exists for an aggregate that reached a handler from somewhere other than this
-        // repository. It cannot carry a rowversion — RowVersion is shadow state, and a detached instance
-        // has none — so the UPDATE compares against NULL, matches no row and surfaces as a
-        // ConcurrencyConflictException. That is the correct answer for an unverifiable write, but it
-        // means a handler must pass back the instance it loaded here, not a reconstructed one.
-        if (entry.State is EntityState.Detached)
-            entry = _context.Accounts.Update(account);
+        // Throws when the aggregate did not come from this repository. See TrackedAggregateExtensions:
+        // a detached root carries no rowversion, so writing it is not a slower path but an unverifiable
+        // one.
+        var entry = _context.RequireTracked(account);
 
         // The domain half of the delete already happened inside Account.Delete(); this is the other
         // half. Both land in the same UPDATE, so the row is never observable as "status Deleted but

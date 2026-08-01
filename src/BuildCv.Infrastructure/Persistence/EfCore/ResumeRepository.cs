@@ -55,10 +55,10 @@ internal sealed class ResumeRepository : IResumeRepository
     {
         ArgumentNullException.ThrowIfNull(resume);
 
-        // See AccountRepository.UpdateAsync: a detached root carries no rowversion, so this path reports
-        // a concurrency conflict rather than overwriting blind.
-        if (_context.Entry(resume).State is EntityState.Detached)
-            _context.Resumes.Update(resume);
+        // Refused rather than re-attached, and this is the aggregate where it matters most: Update() on a
+        // detached resume marks all ten owned collections Added, because their shadow keys are unset too.
+        // See TrackedAggregateExtensions.
+        _context.RequireTracked(resume);
 
         await _context.SaveTranslatingFailuresAsync(cancellationToken);
     }

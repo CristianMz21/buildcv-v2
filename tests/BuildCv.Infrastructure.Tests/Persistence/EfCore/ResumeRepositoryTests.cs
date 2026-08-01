@@ -45,14 +45,19 @@ public sealed class ResumeRepositoryTests
         reloaded.References.Should().ContainSingle();
     }
 
+    // Also the NO-TRACKING half of the owned-collection guarantee, which GetByIdAsync cannot cover: that
+    // one is AsTracking(), this one rides the context-wide NoTracking default, and NoTracking is exactly
+    // where EF's identity resolution behaves differently for owned types. So `second` is a fully
+    // populated resume rather than a bare one — otherwise the list path could return ten empty
+    // collections and nothing here would notice.
     [Fact]
-    public async Task GetByOwnerIdAsync_ReturnsOnlyThatOwnersResumes_NewestFirst()
+    public async Task GetByOwnerIdAsync_ReturnsOnlyThatOwnersResumes_NewestFirst_WithTheirOwnedCollections()
     {
         var owner = AccountId.New();
         var other = AccountId.New();
 
         var first = Minimal(owner, "first");
-        var second = Minimal(owner, "second");
+        var second = FullResume(owner);
 
         await using (var writer = _fixture.NewApplicationContext())
         {
@@ -66,6 +71,39 @@ public sealed class ResumeRepositoryTests
         var mine = await TestRepositories.Resumes(reader).GetByOwnerIdAsync(owner);
 
         mine.Select(resume => resume.Id).Should().Equal(second.Id, first.Id);
+
+        var populated = mine[0];
+        populated.ContactInformation.FullName.Value.Should().Be("Ada Lovelace");
+        populated.Experiences.Should().ContainSingle();
+        populated.Educations.Should().ContainSingle();
+        populated.Skills.Should().HaveCount(2);
+        populated.Projects.Should().ContainSingle();
+        populated.Certificates.Should().ContainSingle();
+        populated.Languages.Should().ContainSingle();
+        populated.Awards.Should().ContainSingle();
+        populated.Publications.Should().ContainSingle();
+        populated.Interests.Should().ContainSingle();
+        populated.References.Should().ContainSingle();
+
+        mine[1].Skills.Should().BeEmpty("the bare resume really has no children, so the assertion above discriminates");
+    }
+
+    [Fact]
+    public async Task UpdateAsync_WithAnAggregateThisRepositoryDidNotLoad_RefusesToWriteIt()
+    {
+        var resume = Minimal(AccountId.New(), "detached");
+
+        await using (var writer = _fixture.NewApplicationContext())
+            await TestRepositories.Resumes(writer).AddAsync(resume);
+
+        // A different context, so the instance is detached here: it carries no rowversion, and Update()
+        // would additionally mark all ten owned collections Added. Refused rather than attempted.
+        await using var other = _fixture.NewApplicationContext();
+
+        var act = async () => await TestRepositories.Resumes(other).UpdateAsync(resume);
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*instance returned by this repository*");
     }
 
     // The owned-collection diff case: EF has to work out that one child row is new and another is gone,

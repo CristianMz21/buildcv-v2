@@ -106,6 +106,25 @@ public sealed class AccountRepositoryTests
         reloaded!.FailedLoginCount.Should().Be(1);
     }
 
+    // A detached aggregate is refused, not re-attached. Update() on one compares a NULL rowversion, so it
+    // can only ever fail — and it would fail as a ConcurrencyConflictException, blaming a concurrent
+    // writer for what is really a caller passing the wrong object. See TrackedAggregateExtensions.
+    [Fact]
+    public async Task UpdateAsync_WithAnAggregateThisRepositoryDidNotLoad_RefusesToWriteIt()
+    {
+        var account = NewAccount(UniqueEmail("detached"));
+
+        await using (var writer = _fixture.NewApplicationContext())
+            await TestRepositories.Accounts(writer).AddAsync(account);
+
+        await using var other = _fixture.NewApplicationContext();
+
+        var act = async () => await TestRepositories.Accounts(other).UpdateAsync(account);
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*instance returned by this repository*");
+    }
+
     // The rowversion, surfaced through the port. Without the translation this arrives as a
     // DbUpdateConcurrencyException, which forces every caller that wants to react to it to reference EF.
     [Fact]

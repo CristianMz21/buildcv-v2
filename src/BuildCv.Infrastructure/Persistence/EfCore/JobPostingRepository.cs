@@ -63,9 +63,8 @@ internal sealed class JobPostingRepository : IJobPostingRepository
     {
         ArgumentNullException.ThrowIfNull(jobPosting);
 
-        // See AccountRepository.UpdateAsync for why the detached path cannot verify a rowversion.
-        if (_context.Entry(jobPosting).State is EntityState.Detached)
-            _context.JobPostings.Update(jobPosting);
+        // See TrackedAggregateExtensions for why a detached aggregate is refused rather than re-attached.
+        _context.RequireTracked(jobPosting);
 
         await _context.SaveTranslatingFailuresAsync(cancellationToken);
     }
