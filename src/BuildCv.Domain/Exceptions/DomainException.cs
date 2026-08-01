@@ -60,6 +60,11 @@ public sealed class InvalidJobPostingException : DomainException
     public InvalidJobPostingException(string message) : base(message) { }
 }
 
+public sealed class InvalidRecommendationException : DomainException
+{
+    public InvalidRecommendationException(string message) : base(message) { }
+}
+
 public sealed class DuplicateSkillException : DomainException
 {
     public DuplicateSkillException(string message) : base(message) { }
