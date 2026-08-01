@@ -21,7 +21,10 @@ public class AnalysisTests
             scoredAt: DateTimeOffset.Now,
             recommendations: [Advice("Add more skills"), Advice("Improve summary")]);
 
-        // 0.45*0.3 + 0.20*0.4 + 0.20*0.2 + 0.10*0.5 + 0.05*0.8 + 0.00*0.25 = 0.345.
+        // 0.45*0.3 + 0.20*0.4 + 0.20*0.2 + 0.10*0.5 + 0.05*0.8 + 0.00*0.25 = 0.345, which is EXACTLY
+        // 34.5 as a double — a rounding midpoint. It lands on 34 rather than 35 because Math.Round
+        // defaults to MidpointRounding.ToEven, not because the value is below the halfway point. That
+        // is deterministic, and it is the number this input produced before the sixth section existed.
         //
         // Still 34, and that is the point of this PR rather than a coincidence: Languages ships at
         // weight 0.0, so the sixth section cannot move a score that already existed. The 0.25 handed

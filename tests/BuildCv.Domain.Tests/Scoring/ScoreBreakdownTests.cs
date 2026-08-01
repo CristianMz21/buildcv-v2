@@ -153,6 +153,11 @@ public class ScoreBreakdownTests
     // The invariant everything downstream leans on. WeightedTotal is only a 0..1 number because the
     // six weights sum to one, and only then is Analysis.OverallScore a percentage and ScoreBand's
     // thresholds meaningful.
+    //
+    // NOT SUFFICIENT ON ITS OWN, and this is the test that proved it: the weights that quietly cost
+    // every educated candidate ten points summed to 1.0 too, so this stayed green throughout. Any
+    // redistribution satisfies it. The test above is the one that would have caught that, which is
+    // why the two live next to each other.
     [Fact]
     public void ScoringWeightsSnapshot_default_weights_still_sum_to_one_across_six_sections()
     {
@@ -224,6 +229,11 @@ public class ScoreBreakdownTests
     }
 
     // The projection is only worth anything if it agrees with the number the candidate is shown.
+    //
+    // Scoped precisely: both sides read the SAME weights, so this is self-consistent by construction
+    // and can never catch a weight regression — it catches Sections drifting from WeightedTotal, and
+    // nothing else. The weights themselves are pinned by
+    // ScoringWeightsSnapshot_default_leaves_the_five_scored_sections_exactly_as_they_were.
     [Fact]
     public void Sections_reproduce_the_weighted_total_when_summed()
     {

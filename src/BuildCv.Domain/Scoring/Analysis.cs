@@ -20,7 +20,11 @@ public sealed class Analysis
     // position, so a reloaded analysis hands these back in whatever order the server chose — which is
     // NOT the order they were added in, and is not stable between reads.
     //
-    // Anything presenting these to a candidate has to sort them explicitly (Priority, then Impact).
+    // Anything presenting these to a candidate has to sort them explicitly: Priority ASCENDING, then
+    // Impact DESCENDING. The directions differ and both are easy to get backwards — Critical is 0, so
+    // ascending Priority puts the urgent advice first, while Impact is "how much score this recovers",
+    // so the biggest wins come first within a priority.
+    //
     // Insertion order is the assumption to avoid; the reason there is no position column is that a
     // stored one is a lie the moment a rule is added or removed, the same argument ChildTable makes
     // about positional keys.

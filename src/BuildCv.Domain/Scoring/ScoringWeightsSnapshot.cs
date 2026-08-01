@@ -11,6 +11,13 @@ public sealed record ScoringWeightsSnapshot
     //
     // It moves to 2 in the same commit that redistributes Education to Languages and starts computing
     // a real Languages score — the commit where the numbers genuinely change.
+    //
+    // THAT COMMIT IS A ONE-WAY DOOR, and this one is not. Today's payload is rollback-safe: a reader
+    // built before Languages existed skips the unmapped member (System.Text.Json does that by
+    // default), sees the same five weights summing to 1.0, and works. Once the redistribution ships,
+    // the same old reader sees five weights summing to 0.90 and Create throws — every analysis row
+    // written after the bump becomes unreadable, not just differently explained. Deploy that release
+    // knowing there is no rolling back past the first write.
     public const int CurrentSchemaVersion = 1;
 
     public double Skills { get; }
