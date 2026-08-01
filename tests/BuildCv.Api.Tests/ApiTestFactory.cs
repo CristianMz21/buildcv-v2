@@ -3,14 +3,20 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
 namespace BuildCv.Api.Tests;
 
 // Defaults to Development because most tests rely on the relaxed local-http behavior; pass a
-// different environment name to exercise the production-shaped configuration.
-public sealed class ApiTestFactory(string? environment = null) : WebApplicationFactory<Program>
+// different environment name to exercise the production-shaped configuration. `configureServices`
+// runs after the app's own registrations, so a test can swap an adapter — the only way to reach
+// failure branches that the in-memory repositories never take.
+public sealed class ApiTestFactory(
+    string? environment = null,
+    Action<IServiceCollection>? configureServices = null) : WebApplicationFactory<Program>
 {
     // Exposed so tests can mint tokens the API will accept — an expired one, or one signed with
     // the wrong key — to prove what each authentication scheme does and does not accept.
@@ -56,6 +62,9 @@ public sealed class ApiTestFactory(string? environment = null) : WebApplicationF
                 ["Encryption:BlindIndex:Keys:test-b1"] = "Xw273xuvdyoZuGb8kJo1vYXumxFtiHqIZkntZaZLegs="
             });
         });
+
+        if (configureServices is not null)
+            builder.ConfigureTestServices(configureServices);
     }
 
     public HttpClient CreateCookieClient() =>
@@ -99,12 +108,23 @@ internal static class TestHelpers
 
     // The antiforgery request token is bound to the current principal, so callers must fetch it
     // after authenticating. See the /auth/antiforgery endpoint comment.
-    public static async Task<string> GetAntiforgeryTokenAsync(this HttpClient client)
+    public static async Task<string> GetAntiforgeryTokenAsync(this HttpClient client) =>
+        (await client.GetAntiforgeryTokenAndCookieAsync()).RequestToken;
+
+    // Both halves of the double-submit pair, for tests that drive cookies by hand. `authCookie`
+    // decides which principal the request token gets bound to: pass the caller's access-token
+    // cookie for an authenticated binding, omit it for an anonymous one.
+    public static async Task<(string RequestToken, string Cookie)> GetAntiforgeryTokenAndCookieAsync(
+        this HttpClient client, string? authCookie = null)
     {
-        var response = await client.GetAsync("/auth/antiforgery");
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/auth/antiforgery");
+        if (authCookie is not null)
+            request.Headers.Add("Cookie", authCookie);
+
+        var response = await client.SendAsync(request);
         response.EnsureSuccessStatusCode();
         var body = await response.Content.ReadFromJsonAsync<AntiforgeryBody>();
-        return body!.RequestToken;
+        return (body!.RequestToken, GetCookieValue(response, "XSRF-TOKEN"));
     }
 
     public static string GetSetCookie(HttpResponseMessage response, string name) =>

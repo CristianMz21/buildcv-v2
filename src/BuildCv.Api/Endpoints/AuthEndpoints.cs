@@ -127,8 +127,14 @@ public static class AuthEndpoints
             // away the credential needed to retry, leaving the live session unreachable until it
             // expires on its own. So: 500, cookies intact, retry possible. The trade-off is that a
             // failed logout leaves this browser armed — deliberate, because a store that cannot
-            // revoke is exactly when a false "you are logged out" is most dangerous. Unreachable
-            // with the in-memory repository; reachable the moment an EF store sits behind the port.
+            // revoke is exactly when a false "you are logged out" is most dangerous.
+            //
+            // Narrow by construction: this branch only sees what RevokeSessionsHandler converts,
+            // i.e. DomainException and ArgumentException. A DbUpdateException or SqlException from
+            // a real store escapes the handler entirely and GlobalExceptionHandler answers 500
+            // instead — which lands in the same place, because that throw also precedes
+            // ClearTokens. Unreachable with the in-memory repository; pinned by
+            // SessionTerminationTests.Logout_WhenRevocationFails_Returns500AndLeavesTheCookiesInPlace.
             if (!revoked.IsSuccess)
             {
                 AuditLog.Log(logger, "logout_revoke_failure", accountId, httpContext);
