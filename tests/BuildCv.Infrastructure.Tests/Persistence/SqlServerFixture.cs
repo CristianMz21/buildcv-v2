@@ -1,5 +1,6 @@
 using BuildCv.Application.Common.Services;
 using BuildCv.Infrastructure.Persistence;
+using BuildCv.Infrastructure.Security.Encryption;
 using Microsoft.EntityFrameworkCore;
 using Testcontainers.MsSql;
 
@@ -40,6 +41,14 @@ public sealed class SqlServerFixture : IAsyncLifetime
     // identity map, which proves nothing about what reached the database.
     public BuildCvDbContext NewContext(ICurrentUser? currentUser = null) =>
         PersistenceTestContext.Create(ConnectionString, TimeProvider.System, currentUser);
+
+    // Shaped exactly like the one AddInfrastructure registers: NoTracking by default. The repository
+    // tests use this one so the AsTracking() calls inside the repositories are the thing under test
+    // rather than a courtesy on top of an ambient default that would have tracked everything anyway.
+    public BuildCvDbContext NewApplicationContext(
+        ICurrentUser? currentUser = null, IBlindIndex? blindIndex = null) =>
+        PersistenceTestContext.Create(
+            ConnectionString, TimeProvider.System, currentUser, blindIndex, QueryTrackingBehavior.NoTracking);
 }
 
 [CollectionDefinition(Name)]

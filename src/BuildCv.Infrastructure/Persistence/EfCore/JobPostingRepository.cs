@@ -1,0 +1,72 @@
+using BuildCv.Application.Common.Repositories;
+using BuildCv.Domain.Identity;
+using BuildCv.Domain.Jobs;
+using BuildCv.Domain.Organizations;
+using BuildCv.Infrastructure.Persistence.Conventions;
+using Microsoft.EntityFrameworkCore;
+
+namespace BuildCv.Infrastructure.Persistence.EfCore;
+
+// Job postings, against SQL Server. Requirements and responsibilities are owned collections, so they
+// load with the posting without an Include.
+//
+// No tombstone translation here: JobPosting exposes Close() and Archive(), which are lifecycle states a
+// posting is meant to be readable in, not deletes. Adding a Delete() to the aggregate later means adding
+// the translation AccountRepository and OrganizationRepository carry.
+internal sealed class JobPostingRepository : IJobPostingRepository
+{
+    private readonly BuildCvDbContext _context;
+
+    public JobPostingRepository(BuildCvDbContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        _context = context;
+    }
+
+    public async Task<JobPosting?> GetByIdAsync(JobPostingId id, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(id);
+        return await _context.JobPostings.AsTracking()
+            .FirstOrDefaultAsync(posting => posting.Id == id, cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<JobPosting>> GetByOwnerIdAsync(
+        AccountId ownerId, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(ownerId);
+
+        return await _context.JobPostings
+            .Where(posting => posting.OwnerId == ownerId)
+            .OrderByDescending(posting => EF.Property<long>(posting, ShadowColumns.Seq))
+            .ToListAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<JobPosting>> GetByOrganizationIdAsync(
+        OrganizationId organizationId, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(organizationId);
+
+        return await _context.JobPostings
+            .Where(posting => posting.CompanyId == organizationId)
+            .OrderByDescending(posting => EF.Property<long>(posting, ShadowColumns.Seq))
+            .ToListAsync(cancellationToken);
+    }
+
+    public async Task AddAsync(JobPosting jobPosting, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(jobPosting);
+        _context.JobPostings.Add(jobPosting);
+        await _context.SaveTranslatingFailuresAsync(cancellationToken);
+    }
+
+    public async Task UpdateAsync(JobPosting jobPosting, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(jobPosting);
+
+        // See AccountRepository.UpdateAsync for why the detached path cannot verify a rowversion.
+        if (_context.Entry(jobPosting).State is EntityState.Detached)
+            _context.JobPostings.Update(jobPosting);
+
+        await _context.SaveTranslatingFailuresAsync(cancellationToken);
+    }
+}

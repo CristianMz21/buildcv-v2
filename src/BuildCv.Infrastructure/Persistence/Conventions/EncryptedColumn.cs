@@ -35,6 +35,8 @@ internal static class EncryptedColumn
     // PhoneNumber caps at 20 characters and the regex admits '+' and digits only.
     public const int PhoneNumber = 128;
 
-    // Technology caps at 100 characters.
-    public const int Technology = 512;
+    // Deliberately no Technology entry. A skill name is analytical data and is stored as plaintext —
+    // TechnologyConverter says so, and SchemaRoundTripTests proves it is queryable in SQL. A width
+    // sitting in a type called EncryptedColumn for a column that is not encrypted is the same
+    // misleading-name trap the EncryptedComparers -> ConvertedComparers rename existed to close.
 }

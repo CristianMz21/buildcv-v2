@@ -33,17 +33,32 @@ internal static class PersistenceTestContext
     public static IModel DesignTimeModel(BuildCvDbContext context) =>
         context.GetService<IDesignTimeModel>().Model;
 
+    // blindIndex is a parameter so a test can hand in a ROTATED key ring — a ring whose active key is
+    // new and which still carries the retired one. That is the only way to reproduce the window in which
+    // a lookup built on Compute() rather than ComputeCandidates() stops finding existing rows.
+    //
+    // trackingBehavior defaults to TrackAll, which is EF's default and what the model-shape and
+    // round-trip tests were written against. The repository tests pass NoTracking, because that is what
+    // AddInfrastructure configures and the repositories' explicit AsTracking() calls are only meaningful
+    // against it.
     public static BuildCvDbContext Create(
-        string connectionString, TimeProvider timeProvider, ICurrentUser? currentUser = null)
+        string connectionString,
+        TimeProvider timeProvider,
+        ICurrentUser? currentUser = null,
+        IBlindIndex? blindIndex = null,
+        QueryTrackingBehavior trackingBehavior = QueryTrackingBehavior.TrackAll)
     {
-        var blindIndex = BlindIndex();
+        var index = blindIndex ?? BlindIndex();
 
         var options = new DbContextOptionsBuilder<BuildCvDbContext>()
             .UseSqlServer(connectionString)
+            .UseQueryTrackingBehavior(trackingBehavior)
+            // Same order AddInfrastructure pins, for the same reason: the blind-index pass must not
+            // observe an entity state the audit pass rewrote.
             .AddInterceptors(
-                new AuditSaveChangesInterceptor(currentUser ?? new UnknownCurrentUser(), timeProvider),
                 new BlindIndexSaveChangesInterceptor(
-                    new AccountEmailIndex(blindIndex), new RefreshTokenIndex(blindIndex)))
+                    new AccountEmailIndex(index), new RefreshTokenIndex(index)),
+                new AuditSaveChangesInterceptor(currentUser ?? new UnknownCurrentUser(), timeProvider))
             // Stated rather than merely omitted. Sensitive-data logging writes parameter values into
             // the log, and the parameters here include blind-index digests and freshly built
             // envelopes. It must be off in every environment, including this one.

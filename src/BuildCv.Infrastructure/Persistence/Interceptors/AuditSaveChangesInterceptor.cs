@@ -90,6 +90,17 @@ public sealed class AuditSaveChangesInterceptor : SaveChangesInterceptor
 
                 case EntityState.Modified:
                     Set(entry, ShadowColumns.UpdatedBy, principal);
+
+                    // A repository can tombstone a root by writing DeletedAt directly instead of calling
+                    // Remove(), and that is how a DOMAIN delete is persisted: Account.Delete() and
+                    // Organization.Delete() also change Status, and the Deleted branch below clears every
+                    // modified flag before stamping, which would drop that change from the UPDATE. See
+                    // TombstoneExtensions.
+                    //
+                    // Stamping DeletedBy here keeps "who tombstoned this row" owned by one place no
+                    // matter which of the two paths wrote the timestamp.
+                    if (BecomingTombstoned(entry))
+                        Set(entry, ShadowColumns.DeletedBy, principal);
                     break;
 
                 case EntityState.Deleted when Has(entry, ShadowColumns.DeletedAt):
@@ -159,6 +170,18 @@ public sealed class AuditSaveChangesInterceptor : SaveChangesInterceptor
             CollectionEntry collection => collection.CurrentValue?.Cast<object>() ?? [],
             _ => navigation.CurrentValue is { } target ? [target] : [],
         };
+
+    // A row acquiring its tombstone in THIS unit of work, as opposed to one that was already tombstoned
+    // and is being written again for some other reason. The original/current comparison is what keeps
+    // DeletedBy from being re-stamped with whoever happened to touch the row afterwards.
+    private static bool BecomingTombstoned(EntityEntry entry)
+    {
+        if (!Has(entry, ShadowColumns.DeletedAt))
+            return false;
+
+        var deleted = entry.Property(ShadowColumns.DeletedAt);
+        return deleted.IsModified && deleted.CurrentValue is not null && deleted.OriginalValue is null;
+    }
 
     private static bool Has(EntityEntry entry, string propertyName) =>
         entry.Metadata.FindProperty(propertyName) is not null;
