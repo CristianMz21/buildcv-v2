@@ -52,6 +52,60 @@ public class InMemoryRepositoryTests
         (await repository.GetByIdAsync(AccountId.New())).Should().BeNull();
     }
 
+    // The in-memory store has to answer the port the way SQL Server does, or an Api test written against
+    // it certifies behavior that does not exist in production. Under EF a domain delete writes the
+    // DeletedAt tombstone alongside the status, so the account disappears from every lookup and the
+    // filtered unique index releases its address; a dictionary has neither, so the equivalence is stated
+    // in the repository and checked here.
+    [Fact]
+    public async Task Account_domain_delete_hides_it_and_frees_the_address()
+    {
+        var repository = new InMemoryAccountRepository();
+        var account = CreateAccount();
+        await repository.AddAsync(account);
+
+        account.Delete();
+        await repository.UpdateAsync(account);
+
+        (await repository.GetByIdAsync(account.Id)).Should().BeNull();
+        (await repository.GetByEmailAsync(account.Email)).Should().BeNull();
+        (await repository.ExistsByEmailAsync(account.Email)).Should().BeFalse();
+
+        var replacement = CreateAccount();
+        await repository.AddAsync(replacement);
+
+        (await repository.GetByEmailAsync(replacement.Email))!.Id.Should().Be(replacement.Id);
+    }
+
+    [Fact]
+    public async Task Account_suspend_leaves_it_visible()
+    {
+        var repository = new InMemoryAccountRepository();
+        var account = CreateAccount();
+        await repository.AddAsync(account);
+
+        account.Suspend();
+        await repository.UpdateAsync(account);
+
+        (await repository.GetByIdAsync(account.Id)).Should().Be(account,
+            "only Deleted is a tombstone; a suspended account still has to be findable to be restored");
+    }
+
+    [Fact]
+    public async Task Organization_domain_delete_hides_it_and_frees_the_slug()
+    {
+        var repository = new InMemoryOrganizationRepository();
+        var slug = Slug.Create("contoso");
+        var organization = Organization.Create(OrganizationName.Create("Contoso"), slug, AccountId.New());
+        await repository.AddAsync(organization);
+
+        organization.Delete();
+        await repository.UpdateAsync(organization);
+
+        (await repository.GetByIdAsync(organization.Id)).Should().BeNull();
+        (await repository.GetBySlugAsync(slug)).Should().BeNull();
+    }
+
     [Fact]
     public async Task RefreshToken_revoke_makes_get_by_token_return_null()
     {
