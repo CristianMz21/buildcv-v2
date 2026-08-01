@@ -98,10 +98,11 @@ public static class AuthEndpoints
         // moment the access token expired, which is precisely when a user wants out — and a 401
         // leaves both cookies in the browser with the refresh token still live in the store, so
         // requiring authentication makes the security action unavailable exactly when it matters.
-        // Cookies are cleared unconditionally: a logout that cannot identify anyone is still a
-        // valid request to drop this browser's credentials, and it leaks nothing.
-        // CsrfGuardMiddleware still covers this route (it is not in ExemptPaths), so a cross-site
-        // request cannot force-revoke a victim's sessions.
+        // Cookies are cleared whenever there is nothing left to revoke — including for a caller
+        // this API cannot identify at all, which is still a valid request to drop this browser's
+        // credentials and leaks nothing. The one exception is a revocation that actively failed;
+        // see below. CsrfGuardMiddleware still covers this route (it is not in ExemptPaths), so a
+        // cross-site request cannot force-revoke a victim's sessions.
         group.MapPost("/logout", async Task<IResult> (
             HttpContext httpContext,
             ICommandHandler<RevokeSessionsCommand, Result> handler,
@@ -120,12 +121,14 @@ public static class AuthEndpoints
                 ? Result.Success()
                 : await handler.Handle(new RevokeSessionsCommand(accountId), cancellationToken);
 
-            AuthCookies.ClearTokens(httpContext);
-
-            // The cookies are gone by now, so the browser is safe either way — but answering 204
-            // after a failed revocation would tell the client the session ended when the refresh
-            // token is still live in the store. Unreachable with the in-memory repository; the
-            // moment a real store sits behind the port it stops being unreachable.
+            // Cookies are cleared only once revocation actually succeeded. Answering 204 after a
+            // failed revocation would tell the client the session ended while the refresh token is
+            // still live in the store; clearing the cookies on the way out would additionally take
+            // away the credential needed to retry, leaving the live session unreachable until it
+            // expires on its own. So: 500, cookies intact, retry possible. The trade-off is that a
+            // failed logout leaves this browser armed — deliberate, because a store that cannot
+            // revoke is exactly when a false "you are logged out" is most dangerous. Unreachable
+            // with the in-memory repository; reachable the moment an EF store sits behind the port.
             if (!revoked.IsSuccess)
             {
                 AuditLog.Log(logger, "logout_revoke_failure", accountId, httpContext);
@@ -134,6 +137,7 @@ public static class AuthEndpoints
                     statusCode: StatusCodes.Status500InternalServerError);
             }
 
+            AuthCookies.ClearTokens(httpContext);
             AuditLog.Log(logger, "logout", accountId, httpContext);
             return Results.NoContent();
         })
@@ -188,15 +192,33 @@ public static class AuthEndpoints
             return result.ToHttpResult();
         });
 
-        // Client contract: fetch this token AFTER logging in, and re-fetch it after every login,
-        // logout, or account switch. ASP.NET Core binds the request token to the principal that
-        // was authenticated when the token was issued, so a token obtained while anonymous is
-        // rejected with 403 once the caller holds an auth cookie.
+        // Client contract: fetch this token AFTER logging in, and re-fetch it whenever the
+        // principal this API sees for your requests changes — login, logout, account switch, AND
+        // access-token expiry. ASP.NET Core binds the request token to the principal that was
+        // authenticated when the token was issued, so a mismatch is rejected with 403 in either
+        // direction: a token obtained while anonymous fails once the caller holds a valid auth
+        // cookie, and a token obtained while authenticated fails once the caller's access token
+        // has expired and it reads as anonymous again.
+        //
+        // Expiry is the trigger clients get wrong. The access-token cookie outlives the JWT it
+        // carries (see AuthCookies.SetTokens), so an idle client keeps sending a cookie that no
+        // longer authenticates. CsrfGuardMiddleware gates on cookie PRESENCE, so the next unsafe
+        // request enters antiforgery validation as anonymous holding an authenticated-bound token
+        // and gets 403 — not the 401 a "retry on 401" loop is waiting for. Refresh proactively off
+        // the `expiresIn` field returned by /auth/login and /auth/refresh, and re-fetch this token
+        // afterwards.
         group.MapGet("/antiforgery", (IAntiforgery antiforgery, HttpContext httpContext) =>
         {
             var tokens = antiforgery.GetAndStoreTokens(httpContext);
             return Results.Ok(new AntiforgeryTokenResponse(tokens.RequestToken!));
         })
+        .WithSummary("Issues a CSRF request token bound to the caller's current principal.")
+        .WithDescription(
+            "Re-fetch after every change of principal: login, logout, account switch, and access-token "
+            + "expiry. A token bound to a different principal than the one the request authenticates as "
+            + "is rejected with 403 in both directions. Because the access-token cookie outlives the JWT "
+            + "it carries, an idle client's next unsafe request answers 403 rather than 401 — refresh "
+            + "proactively off `expiresIn` instead of reacting to 401, then re-fetch this token.")
         .AllowAnonymous();
 
         return group;

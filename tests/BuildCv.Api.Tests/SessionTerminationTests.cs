@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
+using BuildCv.Api.Security;
 using FluentAssertions;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -162,12 +163,41 @@ public sealed class SessionTerminationTests
         replay.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
-    // THE scenario logout exists for: the tab sat idle, the access token expired, the user presses
-    // "log out". If the endpoint can only act on an unexpired token, this path revokes nothing and
-    // the captured refresh cookie stays live for the rest of its 30 days — the original bug,
-    // untouched. Two things have to hold for this to work: the access cookie has to outlive the
-    // JWT (see Login_AccessCookie... below) and logout has to authenticate against a scheme that
-    // ignores `exp` while still checking the signature.
+    // THE scenario logout exists for, end to end and over the cookie transport that actually
+    // reports it: idle tab, access token expired, user presses "log out". Every moving part is in
+    // play here — the access cookie outliving the JWT so the browser still sends something, the
+    // lifetime-ignoring scheme reading it, and the antiforgery token having to be re-fetched
+    // because the caller now reads as anonymous. The bearer variant below proves the scheme;
+    // this proves the scenario.
+    [Fact]
+    public async Task Logout_WithStaleAccessTokenCookie_RevokesTheCapturedRefreshToken()
+    {
+        using var factory = new ApiTestFactory();
+        using var client = CreateRawClient(factory);
+
+        var (accessToken, capturedRefreshCookie) =
+            await RegisterAndCaptureSessionAsync(client, TestHelpers.CandidateEmail);
+        var staleCookie = $"{AuthCookies.AccessTokenCookie}={StaleTokenFrom(accessToken)}";
+
+        // Fetched with no auth cookie attached, so the request token is bound to the anonymous
+        // principal the stale cookie will present. This is the client contract documented on
+        // /auth/antiforgery — an authenticated-bound token would be rejected with 403 here.
+        var antiforgery = await client.GetAsync("/auth/antiforgery");
+        antiforgery.EnsureSuccessStatusCode();
+        var requestToken = (await antiforgery.Content.ReadFromJsonAsync<AntiforgeryBody>())!.RequestToken;
+        var antiforgeryCookie = TestHelpers.GetCookieValue(antiforgery, "XSRF-TOKEN");
+
+        using var logoutRequest = new HttpRequestMessage(HttpMethod.Post, "/auth/logout");
+        logoutRequest.Headers.Add("Cookie", $"{staleCookie}; {antiforgeryCookie}");
+        logoutRequest.Headers.Add(CsrfGuardMiddleware.CsrfHeaderName, requestToken);
+        var logout = await client.SendAsync(logoutRequest);
+
+        logout.StatusCode.Should().Be(HttpStatusCode.NoContent);
+        await AssertReplayRejectedAsync(client, capturedRefreshCookie);
+    }
+
+    // Same fix over the bearer transport, which skips the CSRF guard entirely and so isolates the
+    // lifetime-ignoring scheme from the antiforgery interaction above.
     [Fact]
     public async Task Logout_WithExpiredAccessToken_StillRevokesTheCapturedRefreshToken()
     {
@@ -185,11 +215,45 @@ public sealed class SessionTerminationTests
         await AssertReplayRejectedAsync(client, capturedRefreshCookie);
     }
 
+    // Accepted regression, pinned so it is a contract rather than a surprise. The access cookie now
+    // outlives the JWT and CsrfGuardMiddleware gates on cookie PRESENCE, so an idle cookie client's
+    // next unsafe request to any non-exempt route answers 403 (anonymous principal, authenticated-
+    // bound antiforgery token) where it used to answer 401 with no cookie at all. This breaks the
+    // reactive "on 401, refresh and retry" loop repo-wide, not just on /auth/logout: clients must
+    // refresh proactively off `expiresIn`. A session cookie would not avoid it — an idle but open
+    // browser hits the same flip — so it is inherent to the cookie outliving the JWT, which is what
+    // makes logout able to revoke at all.
+    [Theory]
+    [InlineData("/resumes")]
+    [InlineData("/jobs")]
+    public async Task StaleAccessTokenCookie_OnAMutatingRoute_Returns403NotUnauthorized(string route)
+    {
+        using var factory = new ApiTestFactory();
+        using var client = CreateRawClient(factory);
+
+        var (accessToken, _) = await RegisterAndCaptureSessionAsync(client, TestHelpers.CandidateEmail);
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, route)
+        {
+            Content = JsonContent.Create(new { })
+        };
+        request.Headers.Add("Cookie", $"{AuthCookies.AccessTokenCookie}={StaleTokenFrom(accessToken)}");
+        var response = await client.SendAsync(request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemDetails>();
+        problem!.Detail.Should().Be("CSRF validation failed.");
+    }
+
     // The lenient scheme is reachable from /auth/logout and nowhere else. If an expired token ever
     // opened a protected endpoint, ignoring `exp` would have bought a session extension instead of
     // a logout.
-    [Fact]
-    public async Task ExpiredAccessToken_IsStillRejectedByEveryOtherEndpoint()
+    [Theory]
+    [InlineData("GET", "/auth/me")]
+    [InlineData("GET", "/resumes")]
+    [InlineData("POST", "/resumes")]
+    [InlineData("POST", "/jobs")]
+    public async Task ExpiredAccessToken_IsStillRejectedByEveryOtherEndpoint(string method, string route)
     {
         using var factory = new ApiTestFactory();
         using var client = CreateRawClient(factory);
@@ -197,11 +261,16 @@ public sealed class SessionTerminationTests
         var (accessToken, _) = await RegisterAndCaptureSessionAsync(client, TestHelpers.CandidateEmail);
         var expiredToken = StaleTokenFrom(accessToken);
 
-        using var meRequest = new HttpRequestMessage(HttpMethod.Get, "/auth/me").WithBearer(expiredToken);
-        var me = await client.SendAsync(meRequest);
+        using var request = new HttpRequestMessage(new HttpMethod(method), route)
+        {
+            Content = method == "POST" ? JsonContent.Create(new { }) : null
+        }.WithBearer(expiredToken);
+        var response = await client.SendAsync(request);
 
-        me.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
     }
+
+    private sealed record AntiforgeryBody(string RequestToken);
 
     // Ignoring `exp` is not ignoring the signature. A token this API never issued must revoke
     // nothing, or logout becomes a way to end any account's sessions from anywhere.
