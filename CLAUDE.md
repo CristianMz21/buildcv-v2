@@ -85,10 +85,30 @@ Auth is JWT in HttpOnly cookies (with `Authorization: Bearer` fallback — `OnMe
 - `CsrfGuardMiddleware`: double-submit-cookie CSRF check (`X-XSRF-TOKEN` header) for unsafe methods on cookie-authenticated requests only; bearer requests are exempt by design. "Bearer request" means a non-blank `Authorization` value — the same `string.IsNullOrWhiteSpace` test the JWT `OnMessageReceived` handler uses, so a blank header cannot disarm the guard while the cookie still authenticates.
 - **Antiforgery client contract**: the request token from `GET /auth/antiforgery` is bound to the principal it was issued for, so clients must fetch it *after* logging in and re-fetch it after every login, logout, or account switch. A token obtained while anonymous is rejected with 403 once the caller holds an auth cookie.
 - `SecurityHeadersMiddleware`: locked-down CSP and friends on every response.
-- Rate limiting: `"auth"` policy (5 req/min per IP) on register/login/refresh/change-password, plus a global 100 req/min limiter; 429 with `Retry-After`.
+- Rate limiting: `"auth"` policy (5 req/min per IP) on register/login/refresh, plus a global 100 req/min limiter; 429 with `Retry-After`. Partition keys come from `Security/RateLimitPartitions.ClientKey` (IPv4-mapped IPv6 is normalized; a missing peer address collapses to one shared `"unknown"` bucket on purpose, so it fails closed).
+- `/auth/change-password` is throttled **per account** by `Security/PasswordChangeRateLimiter`, acquired inside the endpoint rather than as a named policy — `UseRateLimiter` runs before `UseAuthentication`, so a policy partitioner has no principal to key on. Sharing the per-IP auth window let one client behind a NAT deny password rotation to everyone on that address, while buying nothing against an attacker who already holds an access token and can rotate source IPs.
 - Authorization: role policies in `Security/Policies.cs` plus a fallback policy requiring authentication — endpoints are secure by default; opt out explicitly with `AllowAnonymous`.
 
-Middleware order in `Program.cs` matters (SecurityHeaders → ExceptionHandler → HSTS/HTTPS → CORS → RateLimiter → AuthN → CsrfGuard → AuthZ); insert new middleware deliberately.
+Middleware order in `Program.cs` matters (ForwardedHeaders → SecurityHeaders → ExceptionHandler → HSTS/HTTPS → CORS → RateLimiter → AuthN → CsrfGuard → AuthZ); insert new middleware deliberately.
+
+### Deployment requirement — forwarded headers
+
+Rate limiting partitions on `Connection.RemoteIpAddress`. **Behind any reverse proxy, ingress, or CDN you must configure `Network:ForwardedHeaders`**, otherwise every client collapses into the proxy's single partition and the 5/min auth window becomes a global 5/min cap for the whole deployment — a self-inflicted denial of service that also throttles no individual attacker.
+
+It is **off by default and must stay that way for direct-exposure deployments**: `X-Forwarded-For` is client-controlled, so an unrestricted `UseForwardedHeaders` lets any caller claim a new source address per request and defeat rate limiting entirely — worse than the collapsed partition. Enabling it therefore requires naming the proxies; `ForwardedHeadersConfiguration.Build` throws at startup if the allowlist is empty, and only `X-Forwarded-For`/`X-Forwarded-Proto` are honoured (never `Host`).
+
+```json
+"Network": {
+  "ForwardedHeaders": {
+    "Enabled": true,
+    "KnownProxies": ["10.0.0.5"],
+    "KnownNetworks": ["10.0.0.0/8"],
+    "ForwardLimit": 1
+  }
+}
+```
+
+Keep `ForwardLimit` equal to the real hop count between the client and Kestrel.
 
 ## Testing
 

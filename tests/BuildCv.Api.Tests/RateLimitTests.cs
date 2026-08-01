@@ -7,6 +7,14 @@ namespace BuildCv.Api.Tests;
 
 public sealed class RateLimitTests
 {
+    private const string NewPassword = "An0ther!Password#2026";
+
+    private static HttpRequestMessage ChangePasswordRequest(string accessToken, string currentPassword) =>
+        new HttpRequestMessage(HttpMethod.Post, "/auth/change-password")
+        {
+            Content = JsonContent.Create(new { currentPassword, newPassword = NewPassword })
+        }.WithBearer(accessToken);
+
     [Fact]
     public async Task SixthLoginAttemptWithinWindow_Returns429WithRetryAfter()
     {
@@ -28,33 +36,72 @@ public sealed class RateLimitTests
         responses.Skip(4).First().Headers.Should().Contain(h => h.Key == "Retry-After");
     }
 
-    // /auth/change-password verifies the current password, so it shares the auth window with
-    // register/login/refresh instead of running at the global 100/min.
+    // X-Forwarded-For is client-controlled and is not trusted unless Network:ForwardedHeaders names
+    // the proxies allowed to set it. Without this, spoofing the header would hand every request its
+    // own partition and remove throttling altogether.
     [Fact]
-    public async Task RepeatedWrongCurrentPasswordChangeAttempts_Return429WithRetryAfter()
+    public async Task SpoofedForwardedForHeader_DoesNotBuyExtraAuthAttempts()
+    {
+        using var factory = new ApiTestFactory();
+        using var client = factory.CreateClient();
+
+        var responses = new List<HttpResponseMessage>();
+        for (var i = 0; i < 6; i++)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, "/auth/login")
+            {
+                Content = JsonContent.Create(new { email = "nobody@example.com", password = "wrong-password" })
+            };
+            request.Headers.Add("X-Forwarded-For", $"203.0.113.{i + 1}");
+            responses.Add(await client.SendAsync(request));
+        }
+
+        responses.Take(5).Should().OnlyContain(r => r.StatusCode == HttpStatusCode.BadRequest);
+        responses[5].StatusCode.Should().Be(HttpStatusCode.TooManyRequests);
+    }
+
+    // /auth/change-password is throttled per account, not through the per-IP auth window: register
+    // and login no longer eat into its budget, so all 5 attempts are available.
+    [Fact]
+    public async Task SixthWrongCurrentPasswordChangeAttempt_Returns429WithRetryAfter()
     {
         using var factory = new ApiTestFactory();
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
 
         var (_, token) = await client.RegisterAndLoginAsync(TestHelpers.CandidateEmail);
 
-        // Register and login already consumed 2 of the 5 auth-window slots for this partition.
         var responses = new List<HttpResponseMessage>();
-        for (var i = 0; i < 4; i++)
+        for (var i = 0; i < 6; i++)
         {
-            using var request = new HttpRequestMessage(HttpMethod.Post, "/auth/change-password")
-            {
-                Content = JsonContent.Create(new
-                {
-                    currentPassword = "wrong-password",
-                    newPassword = "An0ther!Password#2026"
-                })
-            }.WithBearer(token);
+            using var request = ChangePasswordRequest(token, "wrong-password");
             responses.Add(await client.SendAsync(request));
         }
 
-        responses.Take(3).Should().OnlyContain(r => r.StatusCode == HttpStatusCode.BadRequest);
-        responses[3].StatusCode.Should().Be(HttpStatusCode.TooManyRequests);
-        responses[3].Headers.Should().Contain(h => h.Key == "Retry-After");
+        responses.Take(5).Should().OnlyContain(r => r.StatusCode == HttpStatusCode.BadRequest);
+        responses[5].StatusCode.Should().Be(HttpStatusCode.TooManyRequests);
+        responses[5].Headers.Should().Contain(h => h.Key == "Retry-After");
+    }
+
+    // The NAT case: two accounts reaching the API from one address. Exhausting one account's
+    // password-change budget must not deny password rotation to the other.
+    [Fact]
+    public async Task ExhaustedPasswordChangeBudget_DoesNotBlockAnotherAccountOnTheSameAddress()
+    {
+        using var factory = new ApiTestFactory();
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+
+        var (_, noisyToken) = await client.RegisterAndLoginAsync(TestHelpers.CandidateEmail);
+        var (_, neighbourToken) = await client.RegisterAndLoginAsync(TestHelpers.RecruiterEmail, role: "Recruiter");
+
+        for (var i = 0; i < 6; i++)
+        {
+            using var request = ChangePasswordRequest(noisyToken, "wrong-password");
+            (await client.SendAsync(request)).Dispose();
+        }
+
+        using var neighbourRequest = ChangePasswordRequest(neighbourToken, TestHelpers.Password);
+        var neighbour = await client.SendAsync(neighbourRequest);
+
+        neighbour.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 }

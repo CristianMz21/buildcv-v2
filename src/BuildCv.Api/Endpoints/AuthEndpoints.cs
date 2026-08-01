@@ -123,15 +123,30 @@ public static class AuthEndpoints
         })
         .AllowAnonymous();
 
+        // Throttled per account instead of through the per-IP auth window: see
+        // PasswordChangeRateLimiter for why sharing that window was both unfair and useless here.
         group.MapPost("/change-password", async Task<IResult> (
             ChangePasswordRequest request,
             ICommandHandler<ChangePasswordCommand, Result<AccountDto>> handler,
+            PasswordChangeRateLimiter rateLimiter,
             ILogger<Program> logger,
             HttpContext httpContext,
             CancellationToken cancellationToken) =>
         {
+            var accountId = httpContext.User.GetAccountId();
+
+            using var lease = await rateLimiter.AcquireAsync(accountId, cancellationToken);
+            if (!lease.IsAcquired)
+            {
+                RateLimitResponse.SetRetryAfter(httpContext.Response, lease);
+                AuditLog.Log(logger, "password_change_throttled", accountId, httpContext);
+                return Results.Problem(
+                    detail: "Too many password change attempts.",
+                    statusCode: StatusCodes.Status429TooManyRequests);
+            }
+
             var result = await handler.Handle(
-                new ChangePasswordCommand(httpContext.User.GetAccountId(), request.CurrentPassword, request.NewPassword),
+                new ChangePasswordCommand(accountId, request.CurrentPassword, request.NewPassword),
                 cancellationToken);
 
             if (result.IsSuccess)
@@ -144,8 +159,7 @@ public static class AuthEndpoints
             }
 
             return result.ToHttpResult();
-        })
-        .RequireRateLimiting(RateLimitPolicies.Auth);
+        });
 
         group.MapGet("/me", async (
             HttpContext httpContext,

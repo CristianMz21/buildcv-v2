@@ -18,6 +18,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.WebHost.ConfigureKestrel(options => options.AddServerHeader = false);
 
 var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
+var forwardedHeaders = ForwardedHeadersConfiguration.Read(builder.Configuration);
 
 // The environment name goes in because the persistence provider is chosen there: the in-memory store is
 // allowed to be selected locally and must not be selectable on a deployed host by accident.
@@ -29,6 +30,8 @@ builder.Services.AddInfrastructure(builder.Configuration, builder.Environment.En
 // columns instead of NULL. Removing this line, or weakening it to TryAdd, silently reverts them.
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ICurrentUser, HttpContextCurrentUser>();
+
+builder.Services.AddSingleton<PasswordChangeRateLimiter>();
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer();
 
@@ -99,14 +102,13 @@ builder.Services.AddRateLimiter(options =>
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
     options.OnRejected = (context, _) =>
     {
-        context.HttpContext.Response.Headers.RetryAfter =
-            context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter)
-                ? ((int)Math.Ceiling(retryAfter.TotalSeconds)).ToString()
-                : "60";
+        RateLimitResponse.SetRetryAfter(context.HttpContext.Response, context.Lease);
         return ValueTask.CompletedTask;
     };
+    // Both limiters partition on the peer address, which is only the real client when the app is
+    // either directly exposed or running with Network:ForwardedHeaders configured for its proxies.
     options.AddPolicy(RateLimitPolicies.Auth, httpContext => RateLimitPartition.GetFixedWindowLimiter(
-        httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+        RateLimitPartitions.ClientKey(httpContext),
         _ => new FixedWindowRateLimiterOptions
         {
             PermitLimit = 5,
@@ -115,7 +117,7 @@ builder.Services.AddRateLimiter(options =>
         }));
     options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(httpContext =>
         RateLimitPartition.GetFixedWindowLimiter(
-            httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            RateLimitPartitions.ClientKey(httpContext),
             _ => new FixedWindowRateLimiterOptions
             {
                 PermitLimit = 100,
@@ -153,6 +155,9 @@ builder.Services.AddOpenApi();
 
 var app = builder.Build();
 
+// A startup action, not middleware: it runs to completion here, before the pipeline below is
+// composed, so it neither occupies nor competes for a slot in it.
+//
 // Development convenience only, and narrow on purpose. Applying migrations from inside the application
 // means the process that serves traffic also owns the schema; that is fine for a laptop and wrong for a
 // deployment, where the migration is a separate, reviewable step that runs once rather than once per
@@ -164,6 +169,14 @@ if (app.Environment.IsDevelopment()
     await using var migrationScope = app.Services.CreateAsyncScope();
     await migrationScope.ServiceProvider.GetRequiredService<BuildCvDbContext>().Database.MigrateAsync();
 }
+
+// First in the pipeline by design: every downstream decision that reads the peer address
+// (rate-limit partitioning, audit logging) or the scheme (HTTPS redirection, HSTS) has to see the
+// real client, not the proxy. Off unless Network:ForwardedHeaders names the proxies allowed to
+// speak for their clients — an unrestricted UseForwardedHeaders lets any caller spoof its address
+// and defeat rate limiting outright.
+if (forwardedHeaders.Enabled)
+    app.UseForwardedHeaders(ForwardedHeadersConfiguration.Build(forwardedHeaders));
 
 app.UseMiddleware<SecurityHeadersMiddleware>();
 app.UseExceptionHandler();
