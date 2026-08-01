@@ -2,11 +2,18 @@ using Microsoft.EntityFrameworkCore.ChangeTracking;
 
 namespace BuildCv.Infrastructure.Persistence.Converters;
 
-// Converted reference types need an explicit comparer. EF's default for a converted property falls
-// back to comparing the PROVIDER value, and an encrypted provider value is a fresh random-nonce
-// envelope on every conversion — every entity would look modified on every SaveChanges. These
-// comparers work on the model value instead.
-internal static class EncryptedComparers
+// Comparers for CONVERTED reference-typed properties, encrypted or not.
+//
+// EF's default for a converted property compares the PROVIDER value. For an encrypted column that is
+// catastrophic — the provider value is a fresh random-nonce envelope on every conversion, so every
+// tracked entity looks modified on every SaveChanges — and for a JSON list column it is merely
+// wasteful, since it serializes both sides to compare them. These work on the model value instead.
+//
+// Named for the conversion rather than the encryption on purpose: ForList is used by deliberately
+// PLAINTEXT columns too (Skill.Keywords, Project.Technologies, Analysis.Recommendations). A name
+// implying encryption would tell the next person auditing the data classification something false
+// about those three.
+internal static class ConvertedComparers
 {
     // For the immutable value objects and records the Domain exposes: value equality, no snapshot copy.
     public static ValueComparer<T> ForValueObject<T>()

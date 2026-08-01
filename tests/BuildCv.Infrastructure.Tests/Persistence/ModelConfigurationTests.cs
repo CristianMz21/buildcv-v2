@@ -89,7 +89,14 @@ public sealed class ModelConfigurationTests
 
     // The other half of the same requirement. Encrypting any of these would silently end a feature:
     // the scoring engine reads them, and internal analytics groups by them.
-    private static readonly string[] ExpectedPlaintextColumns =
+    //
+    // A deliberate SPOT-CHECK, not an exhaustive set — it names the highest-value analytical columns
+    // and omits the ones whose loss would be obvious or harmless (audit timestamps, the remaining
+    // ScoreBreakdown scores, Membership, the opaque Guid foreign keys). Completeness is not needed
+    // here because ExpectedEncryptedColumns is asserted with exact set equality in BOTH directions:
+    // nothing can gain encryption without being declared there, so nothing can slip out of this list
+    // unnoticed. This one exists to make the intent of the classification legible.
+    private static readonly string[] HighValueAnalyticalColumns =
     [
         "Skill.Name", "Skill.Level", "Skill.YearsOfExperience", "Skill.Keywords",
         "Language.Name", "Language.Fluency",
@@ -178,7 +185,7 @@ public sealed class ModelConfigurationTests
             .Select(entry => $"{Name(entry.EntityType)}.{entry.Property.Name}")
             .ToHashSet(StringComparer.Ordinal);
 
-        foreach (var path in ExpectedPlaintextColumns)
+        foreach (var path in HighValueAnalyticalColumns)
         {
             FindProperty(context.Model, path).Should().NotBeNull(
                 "{0} is expected to be a mapped, queryable column", path);

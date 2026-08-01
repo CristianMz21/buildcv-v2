@@ -183,7 +183,7 @@ internal sealed class ResumeConfiguration : IEntityTypeConfiguration<Resume>
             skill.Property(entry => entry.YearsOfExperience);
 
             skill.Property(entry => entry.Keywords)
-                .HasConversion<StringListConverter>(EncryptedComparers.ForList<string>())
+                .HasConversion<StringListConverter>(ConvertedComparers.ForList<string>())
                 .IsRequired();
 
             // The join every scoring run makes: find resumes whose skills match a posting's
@@ -222,7 +222,7 @@ internal sealed class ResumeConfiguration : IEntityTypeConfiguration<Resume>
             // PLAINTEXT: the technology list is scoring input, exactly like Skills. It says what was
             // used, not who used it.
             project.Property(entry => entry.Technologies)
-                .HasConversion<TechnologyListConverter>(EncryptedComparers.ForList<Domain.Common.ValueObjects.Technology>())
+                .HasConversion<TechnologyListConverter>(ConvertedComparers.ForList<Domain.Common.ValueObjects.Technology>())
                 .IsRequired();
 
             project.Property(entry => entry.Period).IsRequired();

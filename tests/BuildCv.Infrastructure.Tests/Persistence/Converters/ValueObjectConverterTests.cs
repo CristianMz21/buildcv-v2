@@ -120,7 +120,7 @@ public class ValueObjectConverterTests
     [Fact]
     public void ForValueObject_ComparesModelValuesNotProviderBytes()
     {
-        var comparer = EncryptedComparers.ForValueObject<Email>();
+        var comparer = ConvertedComparers.ForValueObject<Email>();
         var left = Email.Create("candidate@example.com");
         var right = Email.Create("CANDIDATE@example.com");
 
@@ -133,7 +133,7 @@ public class ValueObjectConverterTests
     [Fact]
     public void ForList_IsOrderSensitiveAndSnapshotsIndependently()
     {
-        var comparer = EncryptedComparers.ForList<string>();
+        var comparer = ConvertedComparers.ForList<string>();
         var source = new List<string> { "a", "b" };
 
         comparer.Equals(source, ["a", "b"]).Should().BeTrue();
@@ -148,7 +148,7 @@ public class ValueObjectConverterTests
     [Fact]
     public void ForList_EqualListsShareAHashCode()
     {
-        var comparer = EncryptedComparers.ForList<Technology>();
+        var comparer = ConvertedComparers.ForList<Technology>();
         IReadOnlyList<Technology> left = [Technology.Create("C#"), Technology.Create(".NET")];
         IReadOnlyList<Technology> right = [Technology.Create("C#"), Technology.Create(".NET")];
 

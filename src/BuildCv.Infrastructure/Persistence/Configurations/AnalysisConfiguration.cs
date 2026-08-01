@@ -37,7 +37,7 @@ internal sealed class AnalysisConfiguration : IEntityTypeConfiguration<Analysis>
         builder.Property(analysis => analysis.ScoredAt).IsRequired();
 
         builder.Property(analysis => analysis.Recommendations)
-            .HasConversion<StringListConverter>(EncryptedComparers.ForList<string>())
+            .HasConversion<StringListConverter>(ConvertedComparers.ForList<string>())
             .IsRequired();
 
         // "Score history for this resume", keyset paginated.

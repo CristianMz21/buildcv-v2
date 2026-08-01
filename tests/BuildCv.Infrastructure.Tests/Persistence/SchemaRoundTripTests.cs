@@ -10,6 +10,7 @@ using BuildCv.Infrastructure.Persistence.BlindIndexes;
 using BuildCv.Infrastructure.Persistence.Conventions;
 using BuildCv.Infrastructure.Security;
 using FluentAssertions;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 
 namespace BuildCv.Infrastructure.Tests.Persistence;
@@ -95,7 +96,15 @@ public sealed class SchemaRoundTripTests
 
         var act = async () => await second.SaveChangesAsync();
 
-        await act.Should().ThrowAsync<DbUpdateException>();
+        // Asserting bare DbUpdateException would pass for the wrong reason: it is the base type for
+        // ANY failed write, so a NOT NULL violation on EmailHash — which is what an unregistered
+        // blind-index interceptor produces — would satisfy it. That is a separate regression, and it
+        // must not be able to hide behind this test. 2627 is a unique CONSTRAINT violation, 2601 a
+        // unique INDEX violation; EmailHash is the latter.
+        var thrown = await act.Should().ThrowAsync<DbUpdateException>();
+
+        thrown.Which.InnerException.Should().BeOfType<SqlException>()
+            .Which.Number.Should().Be(2601, "the duplicate must be stopped by the unique index on EmailHash");
     }
 
     [Fact]
@@ -362,6 +371,136 @@ public sealed class SchemaRoundTripTests
 
         (await reader.Organizations.AnyAsync(e => e.Id == organization.Id)).Should().BeFalse();
         (await reader.Organizations.IgnoreQueryFilters().AnyAsync(e => e.Id == organization.Id)).Should().BeTrue();
+    }
+
+    // A tombstone must preserve the WHOLE aggregate, not just its root row.
+    //
+    // Owned navigations are eager-loaded, so loading a root always pulls its children into the change
+    // tracker, where marking the root Deleted cascade-marks every one of them Deleted too. Converting
+    // only the root back to a tombstone leaves those cascades standing, and SaveChanges then issues
+    // real DELETEs for the children — a "soft" delete that destroys the entire aggregate except its
+    // header. The test above passes happily while that happens, which is why these exist.
+    [Fact]
+    public async Task SoftDeletingAnOrganization_KeepsItsMemberships()
+    {
+        var founder = AccountId.New();
+        var organization = Organization.Create(
+            OrganizationName.Create("Fabrikam"), Slug.Create($"fabrikam-{Guid.NewGuid():N}"), founder);
+        organization.AddMember(AccountId.New(), MembershipRole.Admin);
+
+        await SaveThenSoftDelete(organization, (context, id) => context.Organizations.SingleAsync(e => e.Id == id), organization.Id);
+
+        await using var reader = _fixture.NewContext();
+        var tombstoned = await reader.Organizations
+            .IgnoreQueryFilters()
+            .Include(entity => entity.Members)
+            .SingleAsync(entity => entity.Id == organization.Id);
+
+        tombstoned.Members.Should().HaveCount(2, "a tombstoned organization still has to say who its owner was");
+        tombstoned.Members.Should().Contain(member => member.AccountId == founder);
+    }
+
+    [Fact]
+    public async Task SoftDeletingAJobPosting_KeepsItsRequirementsAndResponsibilities()
+    {
+        var posting = JobPosting.Create(
+            AccountId.New(), "Doomed Posting", OrganizationName.Create("Contoso"), "Will be tombstoned.");
+        posting.SetRequirements([JobRequirement.Create(Technology.Create("C#"), RequirementPriority.MustHave, 2)]);
+        posting.SetResponsibilities([Responsibility.Create("Ship features.")]);
+
+        await SaveThenSoftDelete(posting, (context, id) => context.JobPostings.SingleAsync(e => e.Id == id), posting.Id);
+
+        await using var reader = _fixture.NewContext();
+        var tombstoned = await reader.JobPostings
+            .IgnoreQueryFilters()
+            .Include(entity => entity.Requirements)
+            .Include(entity => entity.Responsibilities)
+            .SingleAsync(entity => entity.Id == posting.Id);
+
+        tombstoned.Requirements.Should().ContainSingle();
+        tombstoned.Responsibilities.Should().ContainSingle();
+    }
+
+    // The worst case of the three. Resume owns ten child tables plus a TABLE-SPLIT ContactInformation
+    // whose Contact_* columns are NOT NULL — a cascaded delete of that owned reference against a
+    // merely-modified principal cannot even be written.
+    [Fact]
+    public async Task SoftDeletingAResume_KeepsEveryChildCollectionAndItsContactInformation()
+    {
+        var contact = new ContactInformation(
+            PersonName.Create("Grace Hopper"), Email.Create(UniqueEmail("tombstone")));
+        var resume = Resume.Create(AccountId.New(), contact);
+        var period = DateRange.Create(new DateOnly(2021, 1, 1), null);
+
+        resume.AddExperience(new Experience(
+            ExperienceType.Professional, OrganizationName.Create("Navy"), "Rear Admiral", period));
+        resume.AddSkill(Skill.Create(Technology.Create("COBOL"), SkillLevel.Expert, 30));
+        resume.AddLanguage(new Language("English", "Native"));
+
+        await SaveThenSoftDelete(resume, (context, id) => context.Resumes.SingleAsync(e => e.Id == id), resume.Id);
+
+        await using var reader = _fixture.NewContext();
+        var tombstoned = await reader.Resumes
+            .IgnoreQueryFilters()
+            .Include(entity => entity.Experiences)
+            .Include(entity => entity.Skills)
+            .Include(entity => entity.Languages)
+            .SingleAsync(entity => entity.Id == resume.Id);
+
+        tombstoned.ContactInformation.FullName.Value.Should().Be("Grace Hopper");
+        tombstoned.Experiences.Should().ContainSingle();
+        tombstoned.Skills.Should().ContainSingle();
+        tombstoned.Languages.Should().ContainSingle();
+    }
+
+    // The other side of the same rule, and the reason the fix has to be scoped to the root being
+    // tombstoned rather than to every cascaded owned entry. Taking a skill off a LIVE resume is not a
+    // tombstone — it is a smaller resume, and that row must really go.
+    [Fact]
+    public async Task RemovingAChildFromALiveRoot_StillHardDeletesTheChildRow()
+    {
+        var resume = Resume.Create(AccountId.New(), MinimalContact("child-removal"));
+        resume.AddSkill(Skill.Create(Technology.Create("Fortran"), SkillLevel.Advanced, 5));
+        resume.AddSkill(Skill.Create(Technology.Create("Ada"), SkillLevel.Beginner, 1));
+
+        await using (var context = _fixture.NewContext())
+        {
+            context.Resumes.Add(resume);
+            await context.SaveChangesAsync();
+        }
+
+        await using (var mutator = _fixture.NewContext())
+        {
+            var tracked = await mutator.Resumes.Include(e => e.Skills).SingleAsync(e => e.Id == resume.Id);
+            tracked.RemoveSkill("Fortran");
+            await mutator.SaveChangesAsync();
+        }
+
+        await using var reader = _fixture.NewContext();
+        var reloaded = await reader.Resumes.Include(e => e.Skills).SingleAsync(e => e.Id == resume.Id);
+
+        reloaded.Skills.Should().ContainSingle().Which.Name.Name.Should().Be("Ada");
+
+        // Gone from the table entirely — child rows carry no DeletedAt to be hidden by.
+        var remaining = await reader.Database
+            .SqlQuery<int>($"SELECT COUNT(*) AS [Value] FROM [resumes].[Skills] WHERE [ResumeId] = {resume.Id.Value}")
+            .SingleAsync();
+        remaining.Should().Be(1);
+    }
+
+    private async Task SaveThenSoftDelete<TRoot>(
+        TRoot root, Func<Infrastructure.Persistence.BuildCvDbContext, object, Task<TRoot>> load, object id)
+        where TRoot : class
+    {
+        await using (var context = _fixture.NewContext())
+        {
+            context.Add(root);
+            await context.SaveChangesAsync();
+        }
+
+        await using var deleter = _fixture.NewContext();
+        deleter.Remove(await load(deleter, id));
+        await deleter.SaveChangesAsync();
     }
 
     // Exercises the concurrency token AND, incidentally, proves an ordinary UPDATE does not try to

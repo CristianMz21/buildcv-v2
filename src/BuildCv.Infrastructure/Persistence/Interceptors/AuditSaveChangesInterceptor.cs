@@ -14,8 +14,17 @@ namespace BuildCv.Infrastructure.Persistence.Interceptors;
 // nothing about that call site would look wrong.
 //
 // The conversion is scoped by the presence of the DeletedAt shadow property, which only aggregate
-// roots carry. Owned child rows removed from their parent collection still delete for real, which is
-// correct — a skill taken off a resume is not a tombstone, it is a smaller resume.
+// roots carry — but it cannot stop there. Owned navigations are eager-loaded, so loading a root pulls
+// every child into the change tracker, and marking the root Deleted cascade-marks all of them Deleted
+// with it. Converting only the root back to a tombstone would leave those cascades standing and
+// SaveChanges would issue real DELETEs for the children: a "soft" delete that destroys the whole
+// aggregate except its header. So the root's cascaded dependents are returned to Unchanged first.
+//
+// That restoration is deliberately scoped to the dependents still REACHABLE from the root's
+// navigations, not to every Deleted owned entry in the tracker. A skill taken off a live resume is not
+// a tombstone — it is a smaller resume — and that row must still really go. Because a removed child is
+// no longer in the backing collection, the traversal below cannot reach it, and it stays Deleted even
+// when the same SaveChanges also tombstones its root.
 public sealed class AuditSaveChangesInterceptor : SaveChangesInterceptor
 {
     private readonly ICurrentUser _currentUser;
@@ -53,6 +62,12 @@ public sealed class AuditSaveChangesInterceptor : SaveChangesInterceptor
         var now = _timeProvider.GetUtcNow();
         var principal = _currentUser.AccountId?.Value;
 
+        // Reference identity, not value equality. Several owned types are records — two Memberships
+        // with the same account and role are Equals to each other — so a value-keyed lookup would
+        // collapse distinct rows onto one entry.
+        var tracked = context.ChangeTracker.Entries()
+            .ToDictionary(entry => (object)entry.Entity, entry => entry, ReferenceEqualityComparer.Instance);
+
         // ToList: converting a Deleted entry to Modified mutates the change tracker, and enumerating
         // Entries() lazily while doing so is undefined.
         foreach (var entry in context.ChangeTracker.Entries().ToList())
@@ -73,7 +88,12 @@ public sealed class AuditSaveChangesInterceptor : SaveChangesInterceptor
                     // marks every property as modified, so the UPDATE would include Seq — an IDENTITY
                     // column SQL Server refuses to write. Going through Unchanged clears the flags,
                     // and assigning the three tombstone columns below re-marks exactly those.
+                    //
+                    // The root is un-deleted before its children so that returning a dependent to
+                    // Unchanged cannot be undone by a re-cascade from a principal still marked Deleted.
                     entry.State = EntityState.Unchanged;
+                    RestoreCascadedDependents(entry, tracked);
+
                     entry.Property(ShadowColumns.DeletedAt).CurrentValue = now;
                     Set(entry, ShadowColumns.DeletedBy, principal);
                     Set(entry, ShadowColumns.UpdatedBy, principal);
@@ -81,6 +101,41 @@ public sealed class AuditSaveChangesInterceptor : SaveChangesInterceptor
             }
         }
     }
+
+    // Walks the owned graph hanging off a root that is being tombstoned and returns everything the
+    // cascade marked Deleted back to Unchanged. Recursive because owned types can nest.
+    //
+    // Traversal goes through the NAVIGATIONS rather than scanning the tracker for Deleted owned
+    // entries, and that is what scopes it correctly: a child that was genuinely removed from its
+    // parent collection is no longer reachable here, so it keeps its Deleted state and is still hard
+    // deleted — even in a SaveChanges that also tombstones its root.
+    private static void RestoreCascadedDependents(
+        EntityEntry root, IReadOnlyDictionary<object, EntityEntry> tracked)
+    {
+        foreach (var navigation in root.Navigations)
+        {
+            if (!navigation.Metadata.TargetEntityType.IsOwned())
+                continue;
+
+            foreach (var dependent in Targets(navigation))
+            {
+                if (!tracked.TryGetValue(dependent, out var entry) || entry.State != EntityState.Deleted)
+                    continue;
+
+                entry.State = EntityState.Unchanged;
+                RestoreCascadedDependents(entry, tracked);
+            }
+        }
+    }
+
+    private static IEnumerable<object> Targets(NavigationEntry navigation) =>
+        navigation switch
+        {
+            // CurrentValue honours the configured PropertyAccessMode, so this reads the backing List
+            // rather than the read-only wrapper the getter returns.
+            CollectionEntry collection => collection.CurrentValue?.Cast<object>() ?? [],
+            _ => navigation.CurrentValue is { } target ? [target] : [],
+        };
 
     private static bool Has(EntityEntry entry, string propertyName) =>
         entry.Metadata.FindProperty(propertyName) is not null;

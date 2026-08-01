@@ -47,7 +47,7 @@ internal static class EncryptedPropertyBuilderExtensions
     public static PropertyBuilder IsEncryptedText(
         this PropertyBuilder builder, IFieldEncryptor encryptor, string context, int? maxLength = null) =>
         builder.IsEncrypted(
-            encryptor, context, text => text, text => text, EncryptedComparers.ForValueObject<string>(), maxLength);
+            encryptor, context, text => text, text => text, ConvertedComparers.ForValueObject<string>(), maxLength);
 
     public static PropertyBuilder IsEncryptedEmail(
         this PropertyBuilder builder, IFieldEncryptor encryptor, string context) =>
@@ -56,7 +56,7 @@ internal static class EncryptedPropertyBuilderExtensions
             context,
             email => email.Value,
             Email.Create,
-            EncryptedComparers.ForValueObject<Email>(),
+            ConvertedComparers.ForValueObject<Email>(),
             EncryptedColumn.Email);
 
     public static PropertyBuilder IsEncryptedPersonName(
@@ -66,7 +66,7 @@ internal static class EncryptedPropertyBuilderExtensions
             context,
             name => name.Value,
             PersonName.Create,
-            EncryptedComparers.ForValueObject<PersonName>(),
+            ConvertedComparers.ForValueObject<PersonName>(),
             EncryptedColumn.PersonName);
 
     public static PropertyBuilder IsEncryptedOrganizationName(
@@ -76,7 +76,7 @@ internal static class EncryptedPropertyBuilderExtensions
             context,
             name => name.Value,
             OrganizationName.Create,
-            EncryptedComparers.ForValueObject<OrganizationName>(),
+            ConvertedComparers.ForValueObject<OrganizationName>(),
             EncryptedColumn.OrganizationName);
 
     public static PropertyBuilder IsEncryptedPhoneNumber(
@@ -86,7 +86,7 @@ internal static class EncryptedPropertyBuilderExtensions
             context,
             phoneNumber => phoneNumber.Value,
             PhoneNumber.Create,
-            EncryptedComparers.ForValueObject<PhoneNumber>(),
+            ConvertedComparers.ForValueObject<PhoneNumber>(),
             EncryptedColumn.PhoneNumber);
 
     // Url is revalidated through its factory on the way back, so a stored value that no longer
@@ -98,7 +98,7 @@ internal static class EncryptedPropertyBuilderExtensions
             context,
             url => url.Value,
             Url.Create,
-            EncryptedComparers.ForValueObject<Url>(),
+            ConvertedComparers.ForValueObject<Url>(),
             maxLength: null);
 
     // JSON first, then the envelope: the list is serialized to text and the text is what gets
@@ -110,7 +110,7 @@ internal static class EncryptedPropertyBuilderExtensions
             context,
             values => JsonListCodec.ToJson(values),
             json => JsonListCodec.ToStringList(json),
-            EncryptedComparers.ForList<string>());
+            ConvertedComparers.ForList<string>());
 
     public static PropertyBuilder IsEncryptedProfileList(
         this PropertyBuilder builder, IFieldEncryptor encryptor, string context) =>
@@ -119,5 +119,5 @@ internal static class EncryptedPropertyBuilderExtensions
             context,
             values => JsonListCodec.ToJson(values),
             json => JsonListCodec.ToProfileList(json),
-            EncryptedComparers.ForList<Profile>());
+            ConvertedComparers.ForList<Profile>());
 }
