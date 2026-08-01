@@ -11,7 +11,8 @@ public sealed record AddLanguageCommand(
     AccountId RequesterId,
     ResumeId ResumeId,
     string Name,
-    string? Fluency) : ICommand<Result<Resume>>;
+    string? Fluency,
+    LanguageProficiency? Level) : ICommand<Result<Resume>>;
 
 public sealed class AddLanguageHandler(IResumeRepository resumeRepository)
     : ICommandHandler<AddLanguageCommand, Result<Resume>>
@@ -27,7 +28,7 @@ public sealed class AddLanguageHandler(IResumeRepository resumeRepository)
             if (resume.OwnerId != command.RequesterId)
                 return Result<Resume>.Failure("Forbidden.");
 
-            var language = new Language(command.Name, command.Fluency);
+            var language = new Language(command.Name, command.Fluency, command.Level);
             resume.AddLanguage(language);
             await resumeRepository.UpdateAsync(resume, cancellationToken);
 

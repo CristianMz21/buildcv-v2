@@ -124,13 +124,21 @@ public static class ResumeEndpoints
             return result.ToHttpResult();
         });
 
-        group.MapPost("/{id:guid}/educations", async (
+        group.MapPost("/{id:guid}/educations", async Task<IResult> (
             Guid id,
             AddEducationRequest request,
             HttpContext httpContext,
             ICommandHandler<AddEducationCommand, Result<Resume>> handler,
             CancellationToken cancellationToken) =>
         {
+            EducationLevel? level = null;
+            if (request.Level is not null)
+            {
+                if (!Enum.TryParse(request.Level, ignoreCase: true, out EducationLevel parsed))
+                    return Results.Problem(detail: "Invalid education level.", statusCode: StatusCodes.Status400BadRequest);
+                level = parsed;
+            }
+
             var result = await handler.Handle(new AddEducationCommand(
                 httpContext.User.GetAccountId(),
                 new ResumeId(id),
@@ -139,7 +147,8 @@ public static class ResumeEndpoints
                 request.FieldOfStudy,
                 request.Start,
                 request.End,
-                request.Grade), cancellationToken);
+                request.Grade,
+                level), cancellationToken);
             return result.ToHttpResult();
         });
 
@@ -183,18 +192,30 @@ public static class ResumeEndpoints
             return result.ToHttpResult();
         });
 
-        group.MapPost("/{id:guid}/languages", async (
+        // Level is parsed here and rejected with a 400 BEFORE the handler runs, matching how
+        // AddSkillRequest.Level is already handled. Fluency is passed straight through untouched:
+        // nothing in this pipeline may derive a Level from it.
+        group.MapPost("/{id:guid}/languages", async Task<IResult> (
             Guid id,
             AddLanguageRequest request,
             HttpContext httpContext,
             ICommandHandler<AddLanguageCommand, Result<Resume>> handler,
             CancellationToken cancellationToken) =>
         {
+            LanguageProficiency? level = null;
+            if (request.Level is not null)
+            {
+                if (!Enum.TryParse(request.Level, ignoreCase: true, out LanguageProficiency parsed))
+                    return Results.Problem(detail: "Invalid language proficiency.", statusCode: StatusCodes.Status400BadRequest);
+                level = parsed;
+            }
+
             var result = await handler.Handle(new AddLanguageCommand(
                 httpContext.User.GetAccountId(),
                 new ResumeId(id),
                 request.Name,
-                request.Fluency), cancellationToken);
+                request.Fluency,
+                level), cancellationToken);
             return result.ToHttpResult();
         });
 
