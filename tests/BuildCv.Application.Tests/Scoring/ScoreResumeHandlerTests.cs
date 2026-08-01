@@ -39,7 +39,18 @@ public class ScoreResumeHandlerTests
             DateRange.Create(start)));
     }
 
+    // Published by default. Scoring is published-or-owned, so a draft built by a stranger is the
+    // FORBIDDEN case and every test that is not about visibility has to opt out of it explicitly —
+    // otherwise the assertion under test never runs. Both score tests here used to build exactly that
+    // stranger's draft and get a 200, which is the hole the check closes.
     private static JobPosting BuildJobPosting(AccountId ownerId, params string[] mustHaveSkills)
+    {
+        var jobPosting = BuildDraftJobPosting(ownerId, mustHaveSkills);
+        jobPosting.Publish();
+        return jobPosting;
+    }
+
+    private static JobPosting BuildDraftJobPosting(AccountId ownerId, params string[] mustHaveSkills)
     {
         var jobPosting = JobPosting.Create(ownerId, "Backend Developer", OrganizationName.Create("Acme"));
         foreach (var skill in mustHaveSkills)
@@ -62,7 +73,10 @@ public class ScoreResumeHandlerTests
         result.IsSuccess.Should().BeTrue();
         result.Value!.Breakdown.SkillsScore.Should().Be(1.0);
         result.Value.Breakdown.ExperienceScore.Should().Be(1.0);
-        result.Value.OverallScore.Should().BeGreaterThanOrEqualTo(60);
+
+        // 0.45*1.0 (skills) + 0.20*1.0 (experience) + 0.10*0.5 (languages: the posting states no
+        // language requirement, so the section is neutral) = 0.70. Nothing else on this resume scores.
+        result.Value.OverallScore.Should().Be(70);
         (await _analyses.GetPageByResumeIdAsync(resume.Id, PageRequests.Of())).Items.Should().HaveCount(1);
     }
 
@@ -80,7 +94,9 @@ public class ScoreResumeHandlerTests
 
         result.IsSuccess.Should().BeTrue();
         result.Value!.Breakdown.SkillsScore.Should().Be(0.0);
-        result.Value.OverallScore.Should().BeLessThan(60);
+
+        // 0.20*1.0 (experience) + 0.10*0.5 (neutral languages) = 0.25.
+        result.Value.OverallScore.Should().Be(25);
     }
 
     [Fact]
@@ -107,6 +123,85 @@ public class ScoreResumeHandlerTests
         result.Error.Should().Be("Resume not found.");
     }
 
+    // The three corners of published-or-owned. The first is the normal candidate flow; the second is
+    // what "bring your own job offer" will look like once a candidate creates the posting themselves;
+    // the third is the hole this check closes.
+    [Fact]
+    public async Task Score_against_a_published_posting_owned_by_someone_else_succeeds()
+    {
+        var ownerId = AccountId.New();
+        var resume = BuildResume(ownerId, "C#");
+        await _resumes.AddAsync(resume);
+        var jobPosting = BuildJobPosting(AccountId.New(), "C#");
+        await _jobPostings.AddAsync(jobPosting);
+
+        var result = await _handler.Handle(new ScoreResumeCommand(ownerId, resume.Id, jobPosting.Id));
+
+        result.IsSuccess.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Score_against_an_unpublished_posting_the_requester_owns_succeeds()
+    {
+        var ownerId = AccountId.New();
+        var resume = BuildResume(ownerId, "C#");
+        await _resumes.AddAsync(resume);
+        var jobPosting = BuildDraftJobPosting(ownerId, "C#");
+        await _jobPostings.AddAsync(jobPosting);
+
+        jobPosting.Status.Should().Be(JobPostingStatus.Draft, "or this asserts nothing about ownership");
+
+        var result = await _handler.Handle(new ScoreResumeCommand(ownerId, resume.Id, jobPosting.Id));
+
+        result.IsSuccess.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Score_against_an_unpublished_posting_owned_by_someone_else_is_forbidden()
+    {
+        var ownerId = AccountId.New();
+        var resume = BuildResume(ownerId, "C#");
+        await _resumes.AddAsync(resume);
+        var jobPosting = BuildDraftJobPosting(AccountId.New(), "C#");
+        await _jobPostings.AddAsync(jobPosting);
+
+        var result = await _handler.Handle(new ScoreResumeCommand(ownerId, resume.Id, jobPosting.Id));
+
+        result.IsSuccess.Should().BeFalse();
+        result.Error.Should().Be("Forbidden.");
+        (await _analyses.GetPageByResumeIdAsync(resume.Id, PageRequests.Of())).Items.Should().BeEmpty(
+            "a refused score must not leave an analysis behind");
+    }
+
+    // Closed and Archived are both != Published, so archiving is a scoring kill switch for everyone but
+    // the owner. Pinned because it is a consequence of the check rather than something it was written
+    // for, and a reader would otherwise have to derive it from an inequality.
+    [Theory]
+    [InlineData(JobPostingStatus.Closed)]
+    [InlineData(JobPostingStatus.Archived)]
+    public async Task Score_against_a_posting_that_left_published_is_forbidden_for_a_non_owner(
+        JobPostingStatus status)
+    {
+        var ownerId = AccountId.New();
+        var resume = BuildResume(ownerId, "C#");
+        await _resumes.AddAsync(resume);
+        var jobPosting = BuildJobPosting(AccountId.New(), "C#");
+        if (status == JobPostingStatus.Closed)
+            jobPosting.Close();
+        else
+            jobPosting.Archive();
+        await _jobPostings.AddAsync(jobPosting);
+
+        jobPosting.Status.Should().Be(status);
+
+        var result = await _handler.Handle(new ScoreResumeCommand(ownerId, resume.Id, jobPosting.Id));
+
+        result.Error.Should().Be("Forbidden.");
+    }
+
+    // 404 before 403: a posting that does not exist is reported as missing rather than as forbidden,
+    // matching GetJobPostingHandler so the two endpoints leak the same bit of existence information
+    // rather than disagreeing about it.
     [Fact]
     public async Task Score_job_posting_not_found_fails()
     {
