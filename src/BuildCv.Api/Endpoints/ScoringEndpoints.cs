@@ -26,7 +26,12 @@ public static class ScoringEndpoints
                 httpContext.User.GetAccountId(),
                 new ResumeId(request.ResumeId),
                 new JobPostingId(request.JobPostingId)), cancellationToken);
-            return result.ToHttpResult();
+
+            // A pure mapping. The endpoint used to return the Analysis aggregate straight out, which
+            // put RecommendationKind and RecommendationPriority on the wire as raw integers — numbers
+            // this repo documents as an append-only persistence detail. AnalysisResponse states the
+            // contract instead, and the ordering the aggregate deliberately does not guarantee.
+            return result.ToHttpResult(analysis => Results.Ok(AnalysisResponse.From(analysis)));
         });
 
         return group;

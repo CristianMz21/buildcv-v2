@@ -12,11 +12,21 @@ using BuildCv.Domain.Scoring;
 // the same formulas to say what acting on a gap is worth.
 public sealed class ScoringEngine : IScoringEngine
 {
-    public ScoreBreakdown Score(Resume resume, JobPosting jobPosting, DateOnly referenceDate)
+    public ScoreResult Score(Resume resume, JobPosting jobPosting, DateOnly referenceDate)
     {
         ArgumentNullException.ThrowIfNull(resume);
         ArgumentNullException.ThrowIfNull(jobPosting);
 
+        var breakdown = BuildBreakdown(resume, jobPosting, referenceDate);
+
+        // The advice is derived from the breakdown that was just produced, not recomputed from the
+        // inputs, so an Impact can only ever describe the score this same call returns.
+        return ScoreResult.Create(
+            breakdown, RecommendationBuilder.Build(resume, jobPosting, breakdown, referenceDate));
+    }
+
+    private static ScoreBreakdown BuildBreakdown(Resume resume, JobPosting jobPosting, DateOnly referenceDate)
+    {
         var (matchedWeight, totalWeight) = ScoringRules.SkillWeights(resume, jobPosting);
 
         return ScoreBreakdown.Create(

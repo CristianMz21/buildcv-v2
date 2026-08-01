@@ -3,6 +3,7 @@ using BuildCv.Domain.Common.ValueObjects;
 using BuildCv.Domain.Identity;
 using BuildCv.Domain.Jobs;
 using BuildCv.Domain.Resumes;
+using BuildCv.Domain.Scoring;
 using FluentAssertions;
 
 namespace BuildCv.Application.Tests.Scoring;
@@ -12,6 +13,13 @@ public class ScoringEngineTests
     private static readonly DateOnly ReferenceDate = new(2025, 1, 1);
 
     private readonly ScoringEngine _engine = new();
+
+    // Score now returns a ScoreResult: the six numbers AND the advice derived from the same pass. Every
+    // test in this file is about the numbers, so they read through the breakdown and the advice has its
+    // own files — RecommendationBuilderTests for what is emitted, ActingOnARecommendationTests for the
+    // claim that each Impact is the exact score a candidate would gain.
+    private ScoreBreakdown ScoreBreakdownOf(Resume resume, JobPosting jobPosting, DateOnly referenceDate) =>
+        _engine.Score(resume, jobPosting, referenceDate).Breakdown;
 
     private static Resume BuildResume(params string[] skillNames)
     {
@@ -55,7 +63,7 @@ public class ScoringEngineTests
     [Fact]
     public void Skills_no_requirements_returns_neutral()
     {
-        var result = _engine.Score(BuildResume("C#"), BuildJobPosting(), ReferenceDate);
+        var result = ScoreBreakdownOf(BuildResume("C#"), BuildJobPosting(), ReferenceDate);
 
         result.SkillsScore.Should().Be(0.5);
     }
@@ -66,7 +74,7 @@ public class ScoringEngineTests
         var resume = BuildResume("C#", "dotnet");
         var jobPosting = BuildJobPosting(("C#", RequirementPriority.MustHave), ("dotnet", RequirementPriority.MustHave));
 
-        var result = _engine.Score(resume, jobPosting, ReferenceDate);
+        var result = ScoreBreakdownOf(resume, jobPosting, ReferenceDate);
 
         result.SkillsScore.Should().Be(1.0);
     }
@@ -77,7 +85,7 @@ public class ScoringEngineTests
         var resume = BuildResume("C#");
         var jobPosting = BuildJobPosting(("C#", RequirementPriority.MustHave), ("dotnet", RequirementPriority.MustHave));
 
-        var result = _engine.Score(resume, jobPosting, ReferenceDate);
+        var result = ScoreBreakdownOf(resume, jobPosting, ReferenceDate);
 
         result.SkillsScore.Should().Be(0.5);
     }
@@ -88,7 +96,7 @@ public class ScoringEngineTests
         var resume = BuildResume("java");
         var jobPosting = BuildJobPosting(("C#", RequirementPriority.MustHave), ("dotnet", RequirementPriority.MustHave));
 
-        var result = _engine.Score(resume, jobPosting, ReferenceDate);
+        var result = ScoreBreakdownOf(resume, jobPosting, ReferenceDate);
 
         result.SkillsScore.Should().Be(0.0);
     }
@@ -99,7 +107,7 @@ public class ScoringEngineTests
         var resume = BuildResume("python");
         var jobPosting = BuildJobPosting(("C#", RequirementPriority.MustHave), ("python", RequirementPriority.NiceToHave));
 
-        var result = _engine.Score(resume, jobPosting, ReferenceDate);
+        var result = ScoreBreakdownOf(resume, jobPosting, ReferenceDate);
 
         result.SkillsScore.Should().BeApproximately(0.5 / 1.5, 0.0001);
     }
@@ -110,7 +118,7 @@ public class ScoringEngineTests
         var resume = BuildResume("csharp");
         var jobPosting = BuildJobPosting(("CSHARP", RequirementPriority.MustHave));
 
-        var result = _engine.Score(resume, jobPosting, ReferenceDate);
+        var result = ScoreBreakdownOf(resume, jobPosting, ReferenceDate);
 
         result.SkillsScore.Should().Be(1.0);
     }
@@ -122,7 +130,7 @@ public class ScoringEngineTests
         resume.AddSkill(Skill.Create(Technology.Create("backend")) with { Keywords = ["dotnet"] });
         var jobPosting = BuildJobPosting(("dotnet", RequirementPriority.MustHave));
 
-        var result = _engine.Score(resume, jobPosting, ReferenceDate);
+        var result = ScoreBreakdownOf(resume, jobPosting, ReferenceDate);
 
         result.SkillsScore.Should().Be(1.0);
     }
@@ -137,7 +145,7 @@ public class ScoringEngineTests
             "Backend Developer",
             DateRange.Create(ReferenceDate.AddYears(-6))));
 
-        var result = _engine.Score(resume, BuildJobPosting(), ReferenceDate);
+        var result = ScoreBreakdownOf(resume, BuildJobPosting(), ReferenceDate);
 
         result.ExperienceScore.Should().Be(1.0);
     }
@@ -152,7 +160,7 @@ public class ScoringEngineTests
             "Backend Developer",
             DateRange.Create(ReferenceDate.AddDays(-912), ReferenceDate)));
 
-        var result = _engine.Score(resume, BuildJobPosting(), ReferenceDate);
+        var result = ScoreBreakdownOf(resume, BuildJobPosting(), ReferenceDate);
 
         result.ExperienceScore.Should().BeApproximately(0.5, 0.01);
     }
@@ -167,7 +175,7 @@ public class ScoringEngineTests
             "Mentor",
             DateRange.Create(ReferenceDate.AddYears(-10))));
 
-        var result = _engine.Score(resume, BuildJobPosting(), ReferenceDate);
+        var result = ScoreBreakdownOf(resume, BuildJobPosting(), ReferenceDate);
 
         result.ExperienceScore.Should().Be(0.0);
     }
@@ -175,7 +183,7 @@ public class ScoringEngineTests
     [Fact]
     public void Experience_none_returns_zero()
     {
-        var result = _engine.Score(BuildResume(), BuildJobPosting(), ReferenceDate);
+        var result = ScoreBreakdownOf(BuildResume(), BuildJobPosting(), ReferenceDate);
 
         result.ExperienceScore.Should().Be(0.0);
     }
@@ -183,7 +191,7 @@ public class ScoringEngineTests
     [Fact]
     public void Education_none_returns_zero()
     {
-        var result = _engine.Score(BuildResume(), BuildJobPosting(), ReferenceDate);
+        var result = ScoreBreakdownOf(BuildResume(), BuildJobPosting(), ReferenceDate);
 
         result.EducationScore.Should().Be(0.0);
     }
@@ -191,7 +199,7 @@ public class ScoringEngineTests
     [Fact]
     public void Certifications_none_returns_zero()
     {
-        var result = _engine.Score(BuildResume(), BuildJobPosting(), ReferenceDate);
+        var result = ScoreBreakdownOf(BuildResume(), BuildJobPosting(), ReferenceDate);
 
         result.CertificationsScore.Should().Be(0.0);
     }
@@ -199,7 +207,7 @@ public class ScoringEngineTests
     [Fact]
     public void Projects_none_returns_zero()
     {
-        var result = _engine.Score(BuildResume(), BuildJobPosting(), ReferenceDate);
+        var result = ScoreBreakdownOf(BuildResume(), BuildJobPosting(), ReferenceDate);
 
         result.ProjectsScore.Should().Be(0.0);
     }
@@ -212,7 +220,7 @@ public class ScoringEngineTests
             OrganizationName.Create("MIT"), "BSc", "Computer Science",
             DateRange.Create(ReferenceDate.AddYears(-6), ReferenceDate.AddYears(-2)), null));
 
-        var result = _engine.Score(resume, BuildJobPosting(), ReferenceDate);
+        var result = ScoreBreakdownOf(resume, BuildJobPosting(), ReferenceDate);
 
         result.EducationScore.Should().Be(1.0);
     }
@@ -225,7 +233,7 @@ public class ScoringEngineTests
             OrganizationName.Create("MIT"), null, null,
             DateRange.Create(ReferenceDate.AddYears(-6), ReferenceDate.AddYears(-2)), null));
 
-        var result = _engine.Score(resume, BuildJobPosting(), ReferenceDate);
+        var result = ScoreBreakdownOf(resume, BuildJobPosting(), ReferenceDate);
 
         result.EducationScore.Should().Be(0.7);
     }
@@ -237,7 +245,7 @@ public class ScoringEngineTests
         resume.AddCertificate(new Certificate(
             "AWS Solutions Architect", OrganizationName.Create("Amazon"), null, null, null));
 
-        var result = _engine.Score(resume, BuildJobPosting(), ReferenceDate);
+        var result = ScoreBreakdownOf(resume, BuildJobPosting(), ReferenceDate);
 
         result.CertificationsScore.Should().BeApproximately(1.0 / 3.0, 0.0001);
     }
@@ -252,7 +260,7 @@ public class ScoringEngineTests
         resume.AddCertificate(new Certificate("Cert C", OrganizationName.Create("Google"), null, null,
             DateRange.Create(ReferenceDate.AddYears(-2), ReferenceDate.AddDays(30))));
 
-        var result = _engine.Score(resume, BuildJobPosting(), ReferenceDate);
+        var result = ScoreBreakdownOf(resume, BuildJobPosting(), ReferenceDate);
 
         result.CertificationsScore.Should().Be(1.0);
     }
@@ -265,7 +273,7 @@ public class ScoringEngineTests
             "Expired Cert", OrganizationName.Create("Amazon"), null, null,
             DateRange.Create(ReferenceDate.AddYears(-2), ReferenceDate.AddDays(-1))));
 
-        var result = _engine.Score(resume, BuildJobPosting(), ReferenceDate);
+        var result = ScoreBreakdownOf(resume, BuildJobPosting(), ReferenceDate);
 
         result.CertificationsScore.Should().Be(0.0);
     }
@@ -278,7 +286,7 @@ public class ScoringEngineTests
             "Current Cert", OrganizationName.Create("Amazon"), null, null,
             DateRange.Create(ReferenceDate.AddYears(-1))));
 
-        var result = _engine.Score(resume, BuildJobPosting(), ReferenceDate);
+        var result = ScoreBreakdownOf(resume, BuildJobPosting(), ReferenceDate);
 
         result.CertificationsScore.Should().BeApproximately(1.0 / 3.0, 0.0001);
     }
@@ -292,7 +300,7 @@ public class ScoringEngineTests
             Technologies = [Technology.Create("dotnet")],
         });
 
-        var result = _engine.Score(resume, BuildJobPosting(), ReferenceDate);
+        var result = ScoreBreakdownOf(resume, BuildJobPosting(), ReferenceDate);
 
         result.ProjectsScore.Should().BeApproximately(1.0 / 3.0, 0.0001);
     }
@@ -307,7 +315,7 @@ public class ScoringEngineTests
         });
         var jobPosting = BuildJobPosting(("dotnet", RequirementPriority.MustHave));
 
-        var result = _engine.Score(resume, jobPosting, ReferenceDate);
+        var result = ScoreBreakdownOf(resume, jobPosting, ReferenceDate);
 
         result.SkillsScore.Should().Be(1.0);
     }
@@ -329,7 +337,7 @@ public class ScoringEngineTests
             Highlights = ["10k monthly active users"],
         });
 
-        var result = _engine.Score(resume, BuildJobPosting(), ReferenceDate);
+        var result = ScoreBreakdownOf(resume, BuildJobPosting(), ReferenceDate);
 
         result.ProjectsScore.Should().Be(1.0);
     }
@@ -345,7 +353,7 @@ public class ScoringEngineTests
             DateRange.Create(ReferenceDate.AddYears(-6))));
         var jobPosting = BuildJobPosting(("C#", RequirementPriority.MustHave));
 
-        var result = _engine.Score(resume, jobPosting, ReferenceDate);
+        var result = ScoreBreakdownOf(resume, jobPosting, ReferenceDate);
 
         // 0.45*1.0 (skills) + 0.20*1.0 (experience) + 0.10*0.5 (languages: the posting asks for none,
         // so the section returns the neutral 0.5) = 0.70. Everything else scores zero.
@@ -385,7 +393,7 @@ public class ScoringEngineTests
         });
         var jobPosting = BuildJobPosting(("C#", RequirementPriority.MustHave), ("SQL", RequirementPriority.NiceToHave));
 
-        var result = _engine.Score(resume, jobPosting, ReferenceDate);
+        var result = ScoreBreakdownOf(resume, jobPosting, ReferenceDate);
 
         var legacy =
             0.45 * result.SkillsScore +
@@ -437,7 +445,7 @@ public class ScoringEngineTests
             BuildJobPosting(("C#", RequirementPriority.MustHave)),
             ("English", LanguageProficiency.Professional));
 
-        var result = _engine.Score(resume, jobPosting, ReferenceDate);
+        var result = ScoreBreakdownOf(resume, jobPosting, ReferenceDate);
 
         result.WeightedTotal.Should().BeApproximately(1.0, 0.0001,
             "a section carrying weight that nothing can satisfy lowers the maximum achievable score");
@@ -456,7 +464,7 @@ public class ScoringEngineTests
         var resume = BuildPerfectResume();
         resume.AddLanguage(new Language("English", "Native speaker", LanguageProficiency.Native));
 
-        var result = _engine.Score(resume, BuildJobPosting(("C#", RequirementPriority.MustHave)), ReferenceDate);
+        var result = ScoreBreakdownOf(resume, BuildJobPosting(("C#", RequirementPriority.MustHave)), ReferenceDate);
 
         result.LanguagesScore.Should().Be(0.5, "no requirement means no opinion, in either direction");
         result.WeightedTotal.Should().BeApproximately(0.95, 0.0001,
@@ -478,7 +486,7 @@ public class ScoringEngineTests
             ("C#", RequirementPriority.MustHave, 10.0),
             ("Go", RequirementPriority.NiceToHave, 0.0));
 
-        var result = _engine.Score(resume, jobPosting, ReferenceDate);
+        var result = ScoreBreakdownOf(resume, jobPosting, ReferenceDate);
 
         result.SkillsScore.Should().Be(1.0, "the matched requirement carries all ten of the stated weight");
         result.SkillsScore.Should().NotBe(1.0 / 1.5, "that is the answer a priority-derived magnitude gives");
@@ -499,8 +507,8 @@ public class ScoringEngineTests
         derived.Requirements[1].Weight.Should().NotBe(stated.Requirements[1].Weight,
             "the two postings must really disagree about Weight, or this proves nothing");
 
-        var derivedScore = _engine.Score(resume, derived, ReferenceDate);
-        var statedScore = _engine.Score(resume, stated, ReferenceDate);
+        var derivedScore = ScoreBreakdownOf(resume, derived, ReferenceDate);
+        var statedScore = ScoreBreakdownOf(resume, stated, ReferenceDate);
 
         derivedScore.SkillsScore.Should().BeApproximately(1.0 / 1.5, 0.0001, "the weights are 1.0 and 0.5");
         statedScore.SkillsScore.Should().Be(0.5, "the weights are 1.0 and 1.0");
@@ -517,7 +525,7 @@ public class ScoringEngineTests
         var jobPosting = BuildWeightedJobPosting(
             ("C#", RequirementPriority.MustHave, 0.0), ("Go", RequirementPriority.NiceToHave, 0.0));
 
-        var result = _engine.Score(resume, jobPosting, ReferenceDate);
+        var result = ScoreBreakdownOf(resume, jobPosting, ReferenceDate);
 
         result.SkillsScore.Should().Be(0.5);
         double.IsNaN(result.WeightedTotal).Should().BeFalse("0/0 would poison the whole total");
@@ -529,7 +537,7 @@ public class ScoringEngineTests
         var resume = BuildResume();
         resume.AddLanguage(new Language("English", null, LanguageProficiency.Native));
 
-        var result = _engine.Score(resume, BuildJobPosting(), ReferenceDate);
+        var result = ScoreBreakdownOf(resume, BuildJobPosting(), ReferenceDate);
 
         result.LanguagesScore.Should().Be(0.5);
     }
@@ -541,7 +549,7 @@ public class ScoringEngineTests
         resume.AddLanguage(new Language("English", "Fluent", LanguageProficiency.Fluent));
         var jobPosting = WithLanguages(BuildJobPosting(), ("English", LanguageProficiency.Professional));
 
-        var result = _engine.Score(resume, jobPosting, ReferenceDate);
+        var result = ScoreBreakdownOf(resume, jobPosting, ReferenceDate);
 
         result.LanguagesScore.Should().Be(1.0);
     }
@@ -553,7 +561,7 @@ public class ScoringEngineTests
         resume.AddLanguage(new Language("English", null, LanguageProficiency.Professional));
         var jobPosting = WithLanguages(BuildJobPosting(), ("English", LanguageProficiency.Professional));
 
-        var result = _engine.Score(resume, jobPosting, ReferenceDate);
+        var result = ScoreBreakdownOf(resume, jobPosting, ReferenceDate);
 
         result.LanguagesScore.Should().Be(1.0, "the comparison is held >= required, not held > required");
     }
@@ -565,7 +573,7 @@ public class ScoringEngineTests
         resume.AddLanguage(new Language("English", "Some school English", LanguageProficiency.Basic));
         var jobPosting = WithLanguages(BuildJobPosting(), ("English", LanguageProficiency.Professional));
 
-        var result = _engine.Score(resume, jobPosting, ReferenceDate);
+        var result = ScoreBreakdownOf(resume, jobPosting, ReferenceDate);
 
         result.LanguagesScore.Should().Be(0.0);
     }
@@ -581,7 +589,7 @@ public class ScoringEngineTests
         resume.AddLanguage(new Language("English", "Native speaker", Level: null));
         var jobPosting = WithLanguages(BuildJobPosting(), ("English", LanguageProficiency.Professional));
 
-        var result = _engine.Score(resume, jobPosting, ReferenceDate);
+        var result = ScoreBreakdownOf(resume, jobPosting, ReferenceDate);
 
         result.LanguagesScore.Should().Be(0.0, "Fluency is display text and is never read as a level");
     }
@@ -593,7 +601,7 @@ public class ScoringEngineTests
         resume.AddLanguage(new Language("english", null, LanguageProficiency.Native));
         var jobPosting = WithLanguages(BuildJobPosting(), ("ENGLISH", LanguageProficiency.Professional));
 
-        var result = _engine.Score(resume, jobPosting, ReferenceDate);
+        var result = ScoreBreakdownOf(resume, jobPosting, ReferenceDate);
 
         result.LanguagesScore.Should().Be(1.0);
     }
@@ -610,7 +618,7 @@ public class ScoringEngineTests
             ("German", LanguageProficiency.Professional),
             ("French", LanguageProficiency.Basic));
 
-        var result = _engine.Score(resume, jobPosting, ReferenceDate);
+        var result = ScoreBreakdownOf(resume, jobPosting, ReferenceDate);
 
         result.LanguagesScore.Should().BeApproximately(1.0 / 3.0, 0.0001,
             "English satisfies, German is below level, French is missing");

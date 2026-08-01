@@ -5,6 +5,7 @@ using BuildCv.Domain.Common.ValueObjects;
 using BuildCv.Domain.Identity;
 using BuildCv.Domain.Jobs;
 using BuildCv.Domain.Resumes;
+using BuildCv.Domain.Scoring;
 using FluentAssertions;
 
 namespace BuildCv.Application.Tests.Scoring;
@@ -121,6 +122,30 @@ public class ScoreResumeHandlerTests
 
         result.IsSuccess.Should().BeFalse();
         result.Error.Should().Be("Resume not found.");
+    }
+
+    // The advice is persisted with the breakdown it was derived from, not recomputed on read. An Impact
+    // is only meaningful beside the score it was measured against, so a history entry holding the number
+    // without the advice could never answer "what was I told to do, and did it work".
+    [Fact]
+    public async Task Score_persists_the_recommendations_alongside_the_breakdown()
+    {
+        var ownerId = AccountId.New();
+        var resume = BuildResume(ownerId);
+        await _resumes.AddAsync(resume);
+        var jobPosting = BuildJobPosting(AccountId.New(), "C#");
+        await _jobPostings.AddAsync(jobPosting);
+
+        var result = await _handler.Handle(new ScoreResumeCommand(ownerId, resume.Id, jobPosting.Id));
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value!.Recommendations.Should().NotBeEmpty();
+
+        var stored = (await _analyses.GetPageByResumeIdAsync(resume.Id, PageRequests.Of())).Items
+            .Should().ContainSingle().Subject;
+        stored.Recommendations.Should().Equal(result.Value.Recommendations);
+        stored.Recommendations.Should().BeInAscendingOrder(RecommendationOrder.Display,
+            "the ten that survive the cap are chosen by this order, so the stored set is already in it");
     }
 
     // The three corners of published-or-owned. The first is the normal candidate flow; the second is

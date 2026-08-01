@@ -26,9 +26,11 @@ internal static class ScoringRules
     internal const double ProjectCap = 3.0;
     internal const double ExperienceDaysCap = 365.0 * 5;
 
-    // An education entry that names no degree. The gap between this and 1.0 is the whole of what
-    // NoDegreeRecorded is worth, and RecommendationBuilder subtracts rather than restating it.
+    // The two rungs of the education ladder. The gap between them is the whole of what NoDegreeRecorded
+    // is worth, and the ceiling is what both education rules aim at -- named rather than written as a
+    // literal 1.0 in two files, so the advice cannot end up quoting a target the formula no longer has.
     internal const double EducationWithoutDegreeScore = 0.7;
+    internal const double EducationWithDegreeScore = 1.0;
 
     // Σ(weight of matched) / Σ(weight of all). The magnitude now comes from JobRequirement.Weight,
     // which defaults from Priority, so a posting that states nothing scores exactly as it did when
@@ -83,7 +85,9 @@ internal static class ScoringRules
         if (resume.Educations.Count == 0)
             return 0.0;
 
-        return resume.Educations.Any(e => !string.IsNullOrWhiteSpace(e.Degree)) ? 1.0 : EducationWithoutDegreeScore;
+        return resume.Educations.Any(e => !string.IsNullOrWhiteSpace(e.Degree))
+            ? EducationWithDegreeScore
+            : EducationWithoutDegreeScore;
     }
 
     internal static double CertificationsScore(double validCount) => Math.Clamp(validCount / CertificationCap, 0.0, 1.0);

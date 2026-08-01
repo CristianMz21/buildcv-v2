@@ -56,10 +56,19 @@ public sealed class ScoreResumeHandler(
                 return Result<Analysis>.Failure("Forbidden.");
 
             var referenceDate = DateOnly.FromDateTime(timeProvider.GetUtcNow().DateTime);
-            var breakdown = scoringEngine.Score(resume, jobPosting, referenceDate);
+            var score = scoringEngine.Score(resume, jobPosting, referenceDate);
 
+            // The recommendations are persisted alongside the breakdown they were derived from. They
+            // have to be: an Impact is only meaningful next to the score it was measured against, and a
+            // history entry that stored the number without the advice could never answer "what was I
+            // told to do about this, and did it work".
             var analysis = Analysis.Create(
-                AnalysisId.New(), breakdown, resume.Id, jobPosting.Id, timeProvider.GetUtcNow());
+                AnalysisId.New(),
+                score.Breakdown,
+                resume.Id,
+                jobPosting.Id,
+                timeProvider.GetUtcNow(),
+                score.Recommendations);
             await analysisRepository.AddAsync(analysis, cancellationToken);
 
             return Result<Analysis>.Success(analysis);
