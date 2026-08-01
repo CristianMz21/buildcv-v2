@@ -22,8 +22,21 @@ public sealed record Page<T>(IReadOnlyList<T> Items, string? NextCursor)
         var kept = hasMore ? request.Limit : probed.Count;
         var items = probed.Take(kept).Select(row => row.Item).ToList();
 
-        return new Page<T>(items, hasMore ? Cursor.At(probed[kept - 1].Position).Encode() : null);
+        return new Page<T>(items, hasMore ? NextCursorAt(probed[kept - 1].Position) : null);
     }
+
+    // Unreachable while every store counts from 1 — bigint IDENTITY(1,1) under EF, Interlocked from
+    // zero everywhere else — but stated rather than left to Cursor.At, and the exception type is the
+    // point. Cursor.At throws ArgumentOutOfRangeException, which IS an ArgumentException, which the
+    // handlers catch and turn into a Result failure: a broken store would answer a client 400 reading
+    // "position ('0') must be a non-negative and non-zero value. (Parameter 'position')". That is a
+    // server fault wearing a client fault's status code, and it leaks a parameter name to do it. This
+    // is a 500.
+    private static string NextCursorAt(long position) =>
+        position > 0
+            ? Cursor.At(position).Encode()
+            : throw new InvalidOperationException(
+                "A keyset store reported a row position of zero or less, which no monotonic sequence can produce.");
 }
 
 // An entity paired with the keyset position it was read at.

@@ -13,12 +13,26 @@ public sealed class FakeResumeRepository : IResumeRepository
     private readonly List<KeysetRow<Resume>> _resumes = [];
     private long _sequence;
 
-    public Task<Resume?> GetByIdAsync(ResumeId id, CancellationToken cancellationToken = default) =>
-        Task.FromResult(_resumes.FirstOrDefault(row => row.Item.Id == id)?.Item);
+    // Counts the calls that would have been a database round trip.
+    //
+    // It exists for one assertion: that a malformed cursor is rejected BEFORE anything queries the
+    // store. Without the counter that guarantee is untestable — move the validation after the
+    // repository call and every other assertion in the invalid-cursor test stays green, so the test
+    // name would be the only thing claiming it, and names are what get trusted during a refactor.
+    public int ReadCount { get; private set; }
+
+    public Task<Resume?> GetByIdAsync(ResumeId id, CancellationToken cancellationToken = default)
+    {
+        ReadCount++;
+        return Task.FromResult(_resumes.FirstOrDefault(row => row.Item.Id == id)?.Item);
+    }
 
     public Task<Page<Resume>> GetPageByOwnerIdAsync(
-        AccountId ownerId, PageRequest page, CancellationToken cancellationToken = default) =>
-        Task.FromResult(_resumes.Where(row => row.Item.OwnerId == ownerId).ToNewestFirstPage(page));
+        AccountId ownerId, PageRequest page, CancellationToken cancellationToken = default)
+    {
+        ReadCount++;
+        return Task.FromResult(_resumes.Where(row => row.Item.OwnerId == ownerId).ToNewestFirstPage(page));
+    }
 
     public Task AddAsync(Resume resume, CancellationToken cancellationToken = default)
     {

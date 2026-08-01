@@ -115,6 +115,18 @@ public sealed class KeysetPagingTests
         page.Items.Should().Equal("c");
     }
 
+    // A store that reports a non-positive position is broken, and the exception TYPE is the assertion.
+    // ArgumentOutOfRangeException is an ArgumentException, which the handlers catch and convert into a
+    // Result failure — so the sloppy version of this answers the client 400 with a message naming an
+    // internal parameter. A server fault has to stay a server fault.
+    [Fact]
+    public void From_WhenTheStoreReportsAPositionNoSequenceCanProduce_IsAServerFaultNotAClientOne()
+    {
+        var act = () => Page<string>.From([Row("a", 0), Row("b", 0)], PageRequests.Of(1));
+
+        act.Should().Throw<InvalidOperationException>().And.Should().NotBeOfType<ArgumentException>();
+    }
+
     // Insertion order is not iteration order in a dictionary-backed store, so the ordering has to be
     // done by the paging code rather than inherited from the source.
     [Fact]

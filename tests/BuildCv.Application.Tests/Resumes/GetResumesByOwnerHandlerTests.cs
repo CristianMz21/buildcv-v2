@@ -66,6 +66,10 @@ public sealed class GetResumesByOwnerHandlerTests
     // The failure that must never be a full scan and must never be an exception: a cursor the caller
     // made up comes back as a Result failure, which the Api turns into a 400. Returning the first page
     // instead would silently restart the client's walk and look like the data had changed underneath it.
+    //
+    // ReadCount is the half of the name that would otherwise be a lie. Every other assertion here stays
+    // green if the validation moves to AFTER the repository call, so without the counter this test would
+    // promise "without touching the repository" and check no such thing.
     [Theory]
     [InlineData("nonsense")]
     [InlineData("AAAAAAAAAAA")]
@@ -80,6 +84,20 @@ public sealed class GetResumesByOwnerHandlerTests
         result.IsSuccess.Should().BeFalse();
         result.Error.Should().Be(PageRequest.InvalidCursorError);
         result.Value.Should().BeNull();
+        _resumes.ReadCount.Should().Be(0, "a forged cursor is rejected before anything queries the store");
+    }
+
+    // The other side of that counter: it is only meaningful because the successful path does move it.
+    // A counter that never increments would make the assertion above pass for the wrong reason.
+    [Fact]
+    public async Task Handle_WithAUsableCursor_DoesQueryTheRepository()
+    {
+        var owner = AccountId.New();
+        await Seed(owner);
+
+        await Page(owner, limit: 10);
+
+        _resumes.ReadCount.Should().Be(1);
     }
 
     [Fact]

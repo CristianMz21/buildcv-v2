@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using BuildCv.Application.Common.Pagination;
 using BuildCv.Domain.Identity;
 using BuildCv.Infrastructure.Persistence.EfCore;
@@ -27,9 +28,27 @@ public sealed class KeysetQueryTranslationTests
             .ToQueryString();
 
         sql.Should().MatchRegex(@"\[Seq\] < ", "the cursor boundary has to be evaluated by the server");
-        sql.Should().Contain("TOP(", "the limit+1 cap has to be a row cap, not a client-side Take");
+        sql.Should().MatchRegex(@"TOP\(@\w+\)", "the cap has to be a row cap, not a client-side Take");
         sql.Should().Contain("ORDER BY");
         sql.Should().Contain("DESC");
+
+        // The VALUE, not just the presence of a TOP. A regression to Take(page.Limit) — dropping the
+        // probe row, so the last page always reports a successor it does not have — leaves a TOP in the
+        // statement and would sail past a Contain("TOP(") assertion.
+        RowCapIn(sql).Should().Be(21, "twenty asked for, plus the one row that answers 'is there more?'");
+    }
+
+    // ToQueryString emits the parameters as DECLARE statements above the query, which is the only place
+    // the cap's actual value appears.
+    private static int RowCapIn(string sql)
+    {
+        var declaration = Regex.Match(sql, @"TOP\((@\w+)\)");
+        declaration.Success.Should().BeTrue("the statement has to carry a parameterised row cap");
+
+        var value = Regex.Match(sql, $@"DECLARE {Regex.Escape(declaration.Groups[1].Value)} int = (\d+);");
+        value.Success.Should().BeTrue("the row cap parameter has to be declared with a literal value");
+
+        return int.Parse(value.Groups[1].Value);
     }
 
     [Fact]
@@ -61,7 +80,19 @@ public sealed class KeysetQueryTranslationTests
         var sql = context.Resumes.NewestFirstProbe(PageRequests.Of(20)).ToQueryString();
 
         sql.Should().NotContain("[Seq] <");
-        sql.Should().Contain("TOP(");
+        RowCapIn(sql).Should().Be(21);
+    }
+
+    // The clamp reaches the SQL, not just the PageRequest: a caller asking for ten thousand rows must
+    // produce TOP(101), never TOP(10001).
+    [Fact]
+    public void NewestFirstProbe_WithALimitBeyondTheCeiling_CapsTheStatementAtTheMaximum()
+    {
+        using var context = PersistenceTestContext.ModelOnly();
+
+        var sql = context.Resumes.NewestFirstProbe(PageRequests.Of(10_000)).ToQueryString();
+
+        RowCapIn(sql).Should().Be(PageRequest.MaxLimit + 1);
     }
 
     // The soft-delete filter is a global query filter, so it survives anything composed on top of it —

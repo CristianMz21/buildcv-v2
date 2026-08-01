@@ -1,5 +1,7 @@
 namespace BuildCv.Application.Tests.Common.Pagination;
 
+using System.Buffers.Binary;
+using System.Buffers.Text;
 using BuildCv.Application.Common.Pagination;
 using FluentAssertions;
 
@@ -53,18 +55,58 @@ public sealed class CursorTests
         parsed.Should().BeNull();
     }
 
-    // A negative long is eight perfectly well-formed bytes, so length alone does not catch it — and it
-    // would read as "everything before row minus-something", which is the whole table on a descending
-    // walk.
-    [Fact]
-    public void TryParse_ForAWellFormedEncodingOfANegativePosition_Fails()
+    // A negative long is eleven perfectly well-formed characters, so neither the length gate nor the
+    // alphabet catches it — and it would read as "everything before row minus-something", which is the
+    // whole table on a descending walk. Only the `position <= 0` check stands between the two.
+    //
+    // Forged BIG-endian, matching the decoder. Doing it with BitConverter (little-endian on every
+    // platform this runs on) would have made the test pass for the wrong reason with -1, whose bytes are
+    // symmetric, and fail outright with long.MinValue, whose little-endian bytes read big-endian as a
+    // perfectly acceptable positive 128.
+    [Theory]
+    [InlineData(-1L)]
+    [InlineData(long.MinValue)]
+    public void TryParse_ForAWellFormedEncodingOfANegativePosition_Fails(long position)
     {
-        var forged = Convert.ToBase64String(BitConverter.GetBytes(-1L))
-            .Replace('+', '-')
-            .Replace('/', '_')
-            .TrimEnd('=');
+        Span<byte> bytes = stackalloc byte[sizeof(long)];
+        BinaryPrimitives.WriteInt64BigEndian(bytes, position);
+        var forged = Base64Url.EncodeToString(bytes);
 
+        forged.Length.Should().Be(11, "the forgery has to be well formed for the rejection to mean anything");
         Cursor.TryParse(forged, out _).Should().BeFalse();
+    }
+
+    // The byte order, pinned against a value written out by hand rather than round-tripped through the
+    // same code that produced it. Little-endian would encode position 1 as "AQAAAAAAAAA"; a round-trip
+    // test cannot tell the two apart, because it would be wrong in both directions at once.
+    [Fact]
+    public void Encode_LaysThePositionOutBigEndian()
+    {
+        Cursor.At(1).Encode().Should().Be("AAAAAAAAAAE");
+        Cursor.At(42).Encode().Should().Be("AAAAAAAAACo");
+    }
+
+    [Fact]
+    public void Encode_IsAlwaysElevenCharacters()
+    {
+        foreach (var position in new[] { 1L, 42L, int.MaxValue + 1L, long.MaxValue })
+            Cursor.At(position).Encode().Length.Should().Be(11);
+    }
+
+    // Base64Url.IsValid is more permissive than it looks: on its own it accepts embedded whitespace and
+    // optional padding, so every one of these decodes to position 42. They are the same row, so nothing
+    // is unsafe — but an opaque token with several spellings is a trap for the first thing downstream
+    // that compares two of them, and the length gate is what makes the spelling unique.
+    [Theory]
+    [InlineData(" AAAAAAAAACo")]
+    [InlineData("AAAAAAAAACo ")]
+    [InlineData("AAAA AAAAACo")]
+    [InlineData("AAAA\r\nAAAAACo")]
+    [InlineData("AAAAAAAAACo=")]
+    public void TryParse_ForANonCanonicalSpellingOfAValidPosition_Fails(string alias)
+    {
+        Cursor.TryParse(alias, out _).Should()
+            .BeFalse("'{0}' is not the one spelling this application mints", alias);
     }
 
     // Not client input: a store handing out a position of zero would be a bug in the store, and the

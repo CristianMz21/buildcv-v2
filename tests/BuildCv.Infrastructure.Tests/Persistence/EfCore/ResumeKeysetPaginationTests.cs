@@ -96,19 +96,25 @@ public sealed class ResumeKeysetPaginationTests
         secondPage.NextCursor.Should().BeNull("four resumes at two per page end on the second");
     }
 
-    // The ceiling has to hold at the port, not just at the endpoint: a caller that asks for ten thousand
-    // rows gets MaxLimit, and one that asks for zero gets a row rather than an empty page it would
-    // never escape.
+    // The ceiling has to hold against real rows, which means seeding PAST it. With three resumes in the
+    // table a request for a thousand returns three either way, and the assertion cannot tell TOP(101)
+    // from TOP(1001) — it would be a test of PageRequest wearing an integration test's costume.
+    //
+    // MaxLimit + 3 rows: asking for a thousand has to come back with exactly MaxLimit and a cursor
+    // saying there is more.
     [Fact]
-    public async Task GetPageByOwnerIdAsync_ClampsTheLimitAtTheDatabase()
+    public async Task GetPageByOwnerIdAsync_ClampsTheLimitAgainstMoreRowsThanTheCeilingAllows()
     {
         var owner = AccountId.New();
+        var seeded = PageRequest.MaxLimit + 3;
 
         await using (var writer = _fixture.NewApplicationContext())
         {
-            var repository = TestRepositories.Resumes(writer);
-            for (var index = 0; index < 3; index++)
-                await repository.AddAsync(NewResume(owner));
+            // Seeded through the context rather than one AddAsync at a time: this test needs a hundred
+            // rows to exist, not a hundred round trips, and the read side is what is under test.
+            for (var index = 0; index < seeded; index++)
+                writer.Resumes.Add(NewResume(owner));
+            await writer.SaveChangesAsync();
         }
 
         await using var reader = _fixture.NewApplicationContext();
@@ -118,9 +124,14 @@ public sealed class ResumeKeysetPaginationTests
             .Items.Should().ContainSingle("a limit of zero clamps up to one, it does not page nothing forever");
 
         var generous = await repositoryForReads.GetPageByOwnerIdAsync(owner, PageRequests.Of(1000));
-        generous.Items.Should().HaveCount(3);
-        generous.NextCursor.Should().BeNull();
-        PageRequests.Of(1000).Limit.Should().Be(PageRequest.MaxLimit);
+        generous.Items.Should().HaveCount(PageRequest.MaxLimit, "the ceiling is enforced by the query, not the caller");
+        generous.NextCursor.Should().NotBeNull("there are more rows than the ceiling allows through");
+
+        // And the clamped page is still a real page: walking on from it reaches the remainder.
+        var remainder = await repositoryForReads.GetPageByOwnerIdAsync(
+            owner, PageRequests.Of(1000, generous.NextCursor));
+        remainder.Items.Should().HaveCount(seeded - PageRequest.MaxLimit);
+        remainder.NextCursor.Should().BeNull();
     }
 
     [Fact]
