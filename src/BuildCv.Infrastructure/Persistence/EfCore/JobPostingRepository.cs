@@ -1,8 +1,8 @@
+using BuildCv.Application.Common.Pagination;
 using BuildCv.Application.Common.Repositories;
 using BuildCv.Domain.Identity;
 using BuildCv.Domain.Jobs;
 using BuildCv.Domain.Organizations;
-using BuildCv.Infrastructure.Persistence.Conventions;
 using Microsoft.EntityFrameworkCore;
 
 namespace BuildCv.Infrastructure.Persistence.EfCore;
@@ -30,26 +30,26 @@ internal sealed class JobPostingRepository : IJobPostingRepository
             .FirstOrDefaultAsync(posting => posting.Id == id, cancellationToken);
     }
 
-    public async Task<IReadOnlyList<JobPosting>> GetByOwnerIdAsync(
-        AccountId ownerId, CancellationToken cancellationToken = default)
+    public Task<Page<JobPosting>> GetPageByOwnerIdAsync(
+        AccountId ownerId, PageRequest page, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(ownerId);
+        ArgumentNullException.ThrowIfNull(page);
 
-        return await _context.JobPostings
+        return _context.JobPostings
             .Where(posting => posting.OwnerId == ownerId)
-            .OrderByDescending(posting => EF.Property<long>(posting, ShadowColumns.Seq))
-            .ToListAsync(cancellationToken);
+            .ToNewestFirstPageAsync(page, cancellationToken);
     }
 
-    public async Task<IReadOnlyList<JobPosting>> GetByOrganizationIdAsync(
-        OrganizationId organizationId, CancellationToken cancellationToken = default)
+    public Task<Page<JobPosting>> GetPageByOrganizationIdAsync(
+        OrganizationId organizationId, PageRequest page, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(organizationId);
+        ArgumentNullException.ThrowIfNull(page);
 
-        return await _context.JobPostings
+        return _context.JobPostings
             .Where(posting => posting.CompanyId == organizationId)
-            .OrderByDescending(posting => EF.Property<long>(posting, ShadowColumns.Seq))
-            .ToListAsync(cancellationToken);
+            .ToNewestFirstPageAsync(page, cancellationToken);
     }
 
     public async Task AddAsync(JobPosting jobPosting, CancellationToken cancellationToken = default)

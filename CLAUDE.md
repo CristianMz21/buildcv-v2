@@ -50,6 +50,17 @@ Follow this strictly; don't mix tiers:
 2. **Application** handlers catch `DomainException`/`ArgumentException` and return `Result<T>` (`Domain/Common/ValueObjects/Result.cs`, with `Map`/`Bind`/`Match`).
 3. **Api** converts `Result<T>` to HTTP via `Common/ResultExtensions.ToHttpResult()` (403 for "Forbidden.", 404 for errors ending in "not found.", else 400); anything that leaks is turned into RFC 7807 ProblemDetails by the `IExceptionHandler`s in `Common/ApiExceptionHandlers.cs`. All error responses are ProblemDetails-shaped.
 
+### List queries — keyset pagination
+
+**There are no unbounded list methods on any repository port, and adding one back is a regression.** Every list is `GetPage*Async(key, PageRequest, ct)` returning `Page<T>` (`Application/Common/Pagination/`).
+
+- `PageRequest.Create(limit, cursor)` clamps the limit into 1..100 (default 20) and **validates** the cursor, returning `Result<PageRequest>`; a cursor that will not decode fails with `PageRequest.InvalidCursorError` and becomes a 400. It never falls back to the first page — that would silently restart a client's walk.
+- `Cursor` wraps one number, the shadow `Seq` of the last row delivered, base64url-encoded as eight big-endian bytes so a malformed value is rejected on length alone. `Cursor.TryParse` calls `Base64Url.IsValid` **before** `TryDecodeFromChars`, because the latter throws `FormatException` on a bad character despite the `Try` in its name.
+- Repositories fetch `Limit + 1` rows and hand the probe to `Page<T>.From`, the single copy of the boundary arithmetic. The next cursor is the position of the **last row actually returned**, never the probe row.
+- EF paths go through `KeysetQueryExtensions`; the cursor comparison is on `EF.Property<long>(e, ShadowColumns.Seq)`, which is why this translates at all — value-converted strongly-typed ids do not translate `<`/`>`. `KeysetQueryTranslationTests` reads the generated SQL without a database so a client-evaluation fallback cannot hide behind green page assertions.
+- The in-memory store and the Application fakes carry an insertion counter standing in for `Seq` and share `KeysetSequence`, so they page identically to SQL Server. Api tests run on the in-memory provider; if it drifted, they would certify behavior production does not have.
+- Score history (`IAnalysisRepository`) pages **oldest first**; everything else is newest first. The cursor comparison flips with the direction.
+
 ### Encrypted columns
 
 PII columns are AES-GCM sealed and stored as `varbinary` (`Persistence/Converters/EncryptedConverter.cs`). **Never query them in LINQ** — the envelope carries a fresh nonce on every write, so two rows holding the same value have different bytes: `Where(a => a.Email == email)` compiles, runs, and returns nothing forever, and no index on the column can enforce uniqueness either.

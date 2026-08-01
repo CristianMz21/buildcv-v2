@@ -1,4 +1,5 @@
 using BuildCv.Application.Common.Abstractions;
+using BuildCv.Application.Common.Pagination;
 using BuildCv.Application.Common.Repositories;
 using BuildCv.Application.Common.Services;
 using BuildCv.Application.Identity;
@@ -102,7 +103,7 @@ public static class DependencyInjection
         // Resumes
         services.AddScoped<ICommandHandler<CreateResumeCommand, Result<Resume>>, CreateResumeHandler>();
         services.AddScoped<IQueryHandler<GetResumeQuery, Result<Resume>>, GetResumeHandler>();
-        services.AddScoped<IQueryHandler<GetResumesByOwnerQuery, Result<IReadOnlyList<Resume>>>, GetResumesByOwnerHandler>();
+        services.AddScoped<IQueryHandler<GetResumesByOwnerQuery, Result<Page<Resume>>>, GetResumesByOwnerHandler>();
         services.AddScoped<ICommandHandler<DeleteResumeCommand, Result<ResumeId>>, DeleteResumeHandler>();
         services.AddScoped<ICommandHandler<UpdateContactInformationCommand, Result<Resume>>, UpdateContactInformationHandler>();
         services.AddScoped<ICommandHandler<AddExperienceCommand, Result<Resume>>, AddExperienceHandler>();

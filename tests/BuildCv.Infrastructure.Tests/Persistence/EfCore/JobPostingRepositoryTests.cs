@@ -38,7 +38,7 @@ public sealed class JobPostingRepositoryTests
     }
 
     [Fact]
-    public async Task GetByOwnerIdAsync_ReturnsOnlyThatOwnersPostings_NewestFirst()
+    public async Task GetPageByOwnerIdAsync_ReturnsOnlyThatOwnersPostings_NewestFirst()
     {
         var owner = AccountId.New();
         var first = NewPosting(owner);
@@ -53,15 +53,16 @@ public sealed class JobPostingRepositoryTests
         }
 
         await using var reader = _fixture.NewApplicationContext();
-        var mine = await TestRepositories.JobPostings(reader).GetByOwnerIdAsync(owner);
+        var mine = await TestRepositories.JobPostings(reader).GetPageByOwnerIdAsync(owner, PageRequests.Of());
 
-        mine.Select(posting => posting.Id).Should().Equal(second.Id, first.Id);
+        mine.Items.Select(posting => posting.Id).Should().Equal(second.Id, first.Id);
+        mine.NextCursor.Should().BeNull();
     }
 
     // CompanyId is nullable, so this query also has to leave the postings that belong to no organization
     // out rather than sweeping up every NULL.
     [Fact]
-    public async Task GetByOrganizationIdAsync_ReturnsOnlyThePostingsOfThatOrganization()
+    public async Task GetPageByOrganizationIdAsync_ReturnsOnlyThePostingsOfThatOrganization()
     {
         var organizationId = OrganizationId.New();
         var owned = NewPosting(AccountId.New(), organizationId);
@@ -75,9 +76,10 @@ public sealed class JobPostingRepositoryTests
         }
 
         await using var reader = _fixture.NewApplicationContext();
-        var found = await TestRepositories.JobPostings(reader).GetByOrganizationIdAsync(organizationId);
+        var found = await TestRepositories.JobPostings(reader)
+            .GetPageByOrganizationIdAsync(organizationId, PageRequests.Of());
 
-        found.Should().ContainSingle().Which.Id.Should().Be(owned.Id);
+        found.Items.Should().ContainSingle().Which.Id.Should().Be(owned.Id);
     }
 
     [Fact]

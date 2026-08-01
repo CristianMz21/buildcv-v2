@@ -131,10 +131,11 @@ public class InMemoryRepositoryTests
 
         await repository.AddAsync(resume);
         var found = await repository.GetByIdAsync(resume.Id);
-        var byOwner = await repository.GetByOwnerIdAsync(ownerId);
+        var byOwner = await repository.GetPageByOwnerIdAsync(ownerId, PageRequests.Of());
 
         found.Should().Be(resume);
-        byOwner.Should().ContainSingle().Which.Should().Be(resume);
+        byOwner.Items.Should().ContainSingle().Which.Should().Be(resume);
+        byOwner.NextCursor.Should().BeNull();
     }
 
     [Fact]
@@ -158,10 +159,10 @@ public class InMemoryRepositoryTests
 
         await repository.AddAsync(jobPosting);
         var found = await repository.GetByIdAsync(jobPosting.Id);
-        var byOwner = await repository.GetByOwnerIdAsync(ownerId);
+        var byOwner = await repository.GetPageByOwnerIdAsync(ownerId, PageRequests.Of());
 
         found.Should().Be(jobPosting);
-        byOwner.Should().ContainSingle().Which.Should().Be(jobPosting);
+        byOwner.Items.Should().ContainSingle().Which.Should().Be(jobPosting);
     }
 
     [Fact]
@@ -189,8 +190,92 @@ public class InMemoryRepositoryTests
         await repository.AddAsync(matching);
         await repository.AddAsync(other);
 
-        var found = await repository.GetByResumeIdAsync(resumeId);
+        var found = await repository.GetPageByResumeIdAsync(resumeId, PageRequests.Of());
 
-        found.Should().ContainSingle().Which.Should().Be(matching);
+        found.Items.Should().ContainSingle().Which.Should().Be(matching);
+    }
+
+    // The parity that makes every Api test meaningful. Api tests run against this store, so if it
+    // answers the list ports in dictionary order — or hands out a cursor that skips a row — those tests
+    // certify page behavior SQL Server has never produced. Same walk as
+    // ResumeKeysetPaginationTests runs against a real database.
+    [Fact]
+    public async Task Resume_pages_walk_newest_first_without_a_gap_or_a_repeat()
+    {
+        var repository = new InMemoryResumeRepository();
+        var ownerId = AccountId.New();
+        var mine = new List<Resume>();
+        for (var index = 0; index < 5; index++)
+        {
+            var resume = CreateResume(ownerId);
+            await repository.AddAsync(resume);
+            mine.Add(resume);
+            await repository.AddAsync(CreateResume(AccountId.New()));
+        }
+
+        var visited = new List<ResumeId>();
+        var pageSizes = new List<int>();
+        string? cursor = null;
+        do
+        {
+            var page = await repository.GetPageByOwnerIdAsync(ownerId, PageRequests.Of(2, cursor));
+            pageSizes.Add(page.Items.Count);
+            visited.AddRange(page.Items.Select(resume => resume.Id));
+            pageSizes.Count.Should().BeLessThan(20, "a cursor walk that never terminates is a bug, not a hang");
+            cursor = page.NextCursor;
+        }
+        while (cursor is not null);
+
+        pageSizes.Should().Equal(2, 2, 1);
+        mine.Reverse();
+        visited.Should().Equal(mine.Select(resume => resume.Id));
+    }
+
+    // An UPDATE does not move a row in the clustered index, so it must not move one here either —
+    // otherwise editing an old resume would teleport it to the top of the list, past a cursor a client
+    // was already walking.
+    [Fact]
+    public async Task Resume_update_does_not_move_the_resume_in_the_page_order()
+    {
+        var repository = new InMemoryResumeRepository();
+        var ownerId = AccountId.New();
+        var first = CreateResume(ownerId);
+        var second = CreateResume(ownerId);
+        await repository.AddAsync(first);
+        await repository.AddAsync(second);
+
+        first.UpdateContactInformation(new ContactInformation(
+            PersonName.Create("Renamed Person"), Email.Create("renamed@example.com")));
+        await repository.UpdateAsync(first);
+
+        var page = await repository.GetPageByOwnerIdAsync(ownerId, PageRequests.Of());
+
+        page.Items.Select(resume => resume.Id).Should().Equal(second.Id, first.Id);
+    }
+
+    // Score history reads forwards, unlike every other paged list, so the in-memory store has to flip
+    // the boundary comparison with it.
+    [Fact]
+    public async Task Analysis_pages_walk_oldest_first()
+    {
+        var repository = new InMemoryAnalysisRepository();
+        var resumeId = ResumeId.New();
+        var breakdown = ScoreBreakdown.Create(0.5, 0.5, 0.5, 0.5, 0.5, ScoringWeightsSnapshot.Default());
+        var history = new List<AnalysisId>();
+        for (var index = 0; index < 3; index++)
+        {
+            var analysis = Analysis.Create(
+                AnalysisId.New(), breakdown, resumeId, JobPostingId.New(), DateTimeOffset.UtcNow);
+            await repository.AddAsync(analysis);
+            history.Add(analysis.Id);
+        }
+
+        var firstPage = await repository.GetPageByResumeIdAsync(resumeId, PageRequests.Of(2));
+        var secondPage = await repository.GetPageByResumeIdAsync(
+            resumeId, PageRequests.Of(2, firstPage.NextCursor));
+
+        firstPage.Items.Select(analysis => analysis.Id).Should().Equal(history[0], history[1]);
+        secondPage.Items.Select(analysis => analysis.Id).Should().Equal(history[2]);
+        secondPage.NextCursor.Should().BeNull();
     }
 }

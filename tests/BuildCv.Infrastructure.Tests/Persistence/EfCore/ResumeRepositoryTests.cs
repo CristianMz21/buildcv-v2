@@ -50,8 +50,14 @@ public sealed class ResumeRepositoryTests
     // where EF's identity resolution behaves differently for owned types. So `second` is a fully
     // populated resume rather than a bare one — otherwise the list path could return ten empty
     // collections and nothing here would notice.
+    //
+    // It is also the guarantee the KEYSET PROJECTION could quietly break. The paged query no longer
+    // selects the entity on its own: it selects the entity paired with its shadow Seq, because Seq is
+    // the next cursor and a materialized Resume can no longer be asked for it. If EF stopped carrying
+    // owned navigations through that projection, every resume in every list would arrive with ten empty
+    // collections and nothing else here would notice.
     [Fact]
-    public async Task GetByOwnerIdAsync_ReturnsOnlyThatOwnersResumes_NewestFirst_WithTheirOwnedCollections()
+    public async Task GetPageByOwnerIdAsync_ReturnsOnlyThatOwnersResumes_NewestFirst_WithTheirOwnedCollections()
     {
         var owner = AccountId.New();
         var other = AccountId.New();
@@ -68,7 +74,7 @@ public sealed class ResumeRepositoryTests
         }
 
         await using var reader = _fixture.NewApplicationContext();
-        var mine = await TestRepositories.Resumes(reader).GetByOwnerIdAsync(owner);
+        var mine = (await TestRepositories.Resumes(reader).GetPageByOwnerIdAsync(owner, PageRequests.Of())).Items;
 
         mine.Select(resume => resume.Id).Should().Equal(second.Id, first.Id);
 
@@ -152,7 +158,8 @@ public sealed class ResumeRepositoryTests
         await using var reader = _fixture.NewApplicationContext();
 
         (await TestRepositories.Resumes(reader).GetByIdAsync(resume.Id)).Should().BeNull();
-        (await TestRepositories.Resumes(reader).GetByOwnerIdAsync(resume.OwnerId)).Should().BeEmpty();
+        (await TestRepositories.Resumes(reader).GetPageByOwnerIdAsync(resume.OwnerId, PageRequests.Of()))
+            .Items.Should().BeEmpty();
 
         var tombstoned = await reader.Resumes.AsTracking()
             .IgnoreQueryFilters()
@@ -187,8 +194,8 @@ public sealed class ResumeRepositoryTests
         await using var reader = _fixture.NewApplicationContext();
         var analyses = TestRepositories.Analyses(reader);
 
-        (await analyses.GetByResumeIdAsync(resume.Id)).Should().BeEmpty();
-        (await analyses.GetByResumeIdAsync(unrelated.ResumeId)).Should().ContainSingle(
+        (await analyses.GetPageByResumeIdAsync(resume.Id, PageRequests.Of())).Items.Should().BeEmpty();
+        (await analyses.GetPageByResumeIdAsync(unrelated.ResumeId, PageRequests.Of())).Items.Should().ContainSingle(
             "only the deleted resume's analyses are tombstoned");
 
         // Tombstoned, not destroyed: the score history survives for audit exactly as the resume does.

@@ -1,7 +1,7 @@
+using BuildCv.Application.Common.Pagination;
 using BuildCv.Application.Common.Repositories;
 using BuildCv.Domain.Identity;
 using BuildCv.Domain.Resumes;
-using BuildCv.Infrastructure.Persistence.Conventions;
 using Microsoft.EntityFrameworkCore;
 
 namespace BuildCv.Infrastructure.Persistence.EfCore;
@@ -52,15 +52,15 @@ internal sealed class ResumeRepository : IResumeRepository
     // newest-first on Seq, which is the direction the (OwnerId, Seq DESC) index is laid out in and the
     // order the "my resumes" screen asks for. CreatedAt would not do — two resumes can share a
     // timestamp, and a non-total order makes keyset pagination skip or repeat rows.
-    public async Task<IReadOnlyList<Resume>> GetByOwnerIdAsync(
-        AccountId ownerId, CancellationToken cancellationToken = default)
+    public Task<Page<Resume>> GetPageByOwnerIdAsync(
+        AccountId ownerId, PageRequest page, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(ownerId);
+        ArgumentNullException.ThrowIfNull(page);
 
-        return await _context.Resumes
+        return _context.Resumes
             .Where(resume => resume.OwnerId == ownerId)
-            .OrderByDescending(resume => EF.Property<long>(resume, ShadowColumns.Seq))
-            .ToListAsync(cancellationToken);
+            .ToNewestFirstPageAsync(page, cancellationToken);
     }
 
     public async Task AddAsync(Resume resume, CancellationToken cancellationToken = default)

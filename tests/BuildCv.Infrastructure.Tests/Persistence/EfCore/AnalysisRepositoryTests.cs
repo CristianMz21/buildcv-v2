@@ -14,7 +14,7 @@ public sealed class AnalysisRepositoryTests
     public AnalysisRepositoryTests(SqlServerFixture fixture) => _fixture = fixture;
 
     [Fact]
-    public async Task AddAsync_ThenGetByResumeIdAsync_RoundTripsTheBreakdownAndRecommendations()
+    public async Task AddAsync_ThenGetPageByResumeIdAsync_RoundTripsTheBreakdownAndRecommendations()
     {
         var resumeId = ResumeId.New();
         var analysis = NewAnalysis(resumeId, 0.9);
@@ -23,9 +23,9 @@ public sealed class AnalysisRepositoryTests
             await TestRepositories.Analyses(writer).AddAsync(analysis);
 
         await using var reader = _fixture.NewApplicationContext();
-        var found = await TestRepositories.Analyses(reader).GetByResumeIdAsync(resumeId);
+        var found = await TestRepositories.Analyses(reader).GetPageByResumeIdAsync(resumeId, PageRequests.Of());
 
-        var reloaded = found.Should().ContainSingle().Subject;
+        var reloaded = found.Items.Should().ContainSingle().Subject;
         reloaded.Id.Should().Be(analysis.Id);
         reloaded.Breakdown.Should().Be(analysis.Breakdown);
         reloaded.Recommendations.Should().Equal(analysis.Recommendations);
@@ -37,7 +37,7 @@ public sealed class AnalysisRepositoryTests
     // the caller and two analyses of the same resume can carry the same instant — here they deliberately
     // do, so a ScoredAt ordering would be free to return them either way round.
     [Fact]
-    public async Task GetByResumeIdAsync_ReturnsThatResumesHistoryInInsertOrder()
+    public async Task GetPageByResumeIdAsync_ReturnsThatResumesHistoryInInsertOrder()
     {
         var resumeId = ResumeId.New();
         var scoredAt = DateTimeOffset.UtcNow;
@@ -53,17 +53,63 @@ public sealed class AnalysisRepositoryTests
         }
 
         await using var reader = _fixture.NewApplicationContext();
-        var history = await TestRepositories.Analyses(reader).GetByResumeIdAsync(resumeId);
+        var history = await TestRepositories.Analyses(reader).GetPageByResumeIdAsync(resumeId, PageRequests.Of());
 
-        history.Select(analysis => analysis.Id).Should().Equal(first.Id, second.Id);
+        history.Items.Select(analysis => analysis.Id).Should().Equal(first.Id, second.Id);
+    }
+
+    // Forwards, not backwards, and the cursor boundary flips with it: page two must start AFTER the row
+    // page one ended on, so a `<` copied from the newest-first path would return the same row twice and
+    // then run out.
+    [Fact]
+    public async Task GetPageByResumeIdAsync_WalkedByCursor_ReplaysTheHistoryForwardsExactlyOnce()
+    {
+        var resumeId = ResumeId.New();
+        var scoredAt = DateTimeOffset.UtcNow;
+        var history = new List<Analysis>();
+
+        await using (var writer = _fixture.NewApplicationContext())
+        {
+            var repository = TestRepositories.Analyses(writer);
+            for (var index = 0; index < 5; index++)
+            {
+                var analysis = NewAnalysis(resumeId, 0.1 * (index + 1), scoredAt);
+                await repository.AddAsync(analysis);
+                history.Add(analysis);
+            }
+
+            await repository.AddAsync(NewAnalysis(ResumeId.New(), 0.5));
+        }
+
+        await using var reader = _fixture.NewApplicationContext();
+        var repositoryForReads = TestRepositories.Analyses(reader);
+
+        var visited = new List<AnalysisId>();
+        var pageSizes = new List<int>();
+        string? cursor = null;
+        do
+        {
+            var page = await repositoryForReads.GetPageByResumeIdAsync(resumeId, PageRequests.Of(2, cursor));
+            pageSizes.Add(page.Items.Count);
+            visited.AddRange(page.Items.Select(analysis => analysis.Id));
+            pageSizes.Count.Should().BeLessThan(20, "a cursor walk that never terminates is a bug, not a hang");
+            cursor = page.NextCursor;
+        }
+        while (cursor is not null);
+
+        pageSizes.Should().Equal(2, 2, 1);
+        visited.Should().Equal(history.Select(analysis => analysis.Id));
     }
 
     [Fact]
-    public async Task GetByResumeIdAsync_ForAResumeThatWasNeverScored_IsEmpty()
+    public async Task GetPageByResumeIdAsync_ForAResumeThatWasNeverScored_IsAnEmptyFinalPage()
     {
         await using var reader = _fixture.NewApplicationContext();
 
-        (await TestRepositories.Analyses(reader).GetByResumeIdAsync(ResumeId.New())).Should().BeEmpty();
+        var page = await TestRepositories.Analyses(reader).GetPageByResumeIdAsync(ResumeId.New(), PageRequests.Of());
+
+        page.Items.Should().BeEmpty();
+        page.NextCursor.Should().BeNull();
     }
 
     private static Analysis NewAnalysis(ResumeId resumeId, double skills, DateTimeOffset? scoredAt = null) =>

@@ -1,8 +1,7 @@
+using BuildCv.Application.Common.Pagination;
 using BuildCv.Application.Common.Repositories;
 using BuildCv.Domain.Resumes;
 using BuildCv.Domain.Scoring;
-using BuildCv.Infrastructure.Persistence.Conventions;
-using Microsoft.EntityFrameworkCore;
 
 namespace BuildCv.Infrastructure.Persistence.EfCore;
 
@@ -33,14 +32,14 @@ internal sealed class AnalysisRepository : IAnalysisRepository
     //
     // Tombstoned analyses are excluded by the global query filter, which is what makes the cascade in
     // ResumeRepository.DeleteAsync observable through this port.
-    public async Task<IReadOnlyList<Analysis>> GetByResumeIdAsync(
-        ResumeId resumeId, CancellationToken cancellationToken = default)
+    public Task<Page<Analysis>> GetPageByResumeIdAsync(
+        ResumeId resumeId, PageRequest page, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(resumeId);
+        ArgumentNullException.ThrowIfNull(page);
 
-        return await _context.Analyses
+        return _context.Analyses
             .Where(analysis => analysis.ResumeId == resumeId)
-            .OrderBy(analysis => EF.Property<long>(analysis, ShadowColumns.Seq))
-            .ToListAsync(cancellationToken);
+            .ToOldestFirstPageAsync(page, cancellationToken);
     }
 }
