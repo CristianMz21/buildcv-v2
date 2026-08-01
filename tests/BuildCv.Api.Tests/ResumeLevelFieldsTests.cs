@@ -47,11 +47,14 @@ public sealed class ResumeLevelFieldsTests
         language.GetProperty("fluency").GetString().Should().Be("Bilingüe");
     }
 
-    // ignoreCase: true, so the casing a client happens to send is not a trap.
+    // ignoreCase: true, so the casing a client happens to send is not a trap. The STORED value is
+    // asserted, not just the status: an endpoint that parsed the level and then dropped it on the
+    // floor would answer 200 all day.
     [Theory]
     [InlineData("native")]
     [InlineData("NATIVE")]
     [InlineData("Native")]
+    [InlineData("NaTiVe")]
     public async Task AddLanguage_AcceptsTheLevelNameInAnyCasing(string level)
     {
         using var factory = new ApiTestFactory();
@@ -67,6 +70,36 @@ public sealed class ResumeLevelFieldsTests
         });
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await GetResumeAsync(client, token, resumeId))
+            .GetProperty("languages").EnumerateArray().Single()
+            .GetProperty("level").GetInt32().Should().Be(4);
+    }
+
+    // The case the IsDefined guard must NOT break. GET returns the level as a number, so a client that
+    // reads a resume, edits it and posts it back legitimately sends "4". Rejecting numeric input
+    // outright would close the hole below by breaking round-tripping; only UNDEFINED numbers may fail.
+    [Theory]
+    [InlineData("0", 0)]
+    [InlineData("4", 4)]
+    public async Task AddLanguage_AcceptsAValidNumericLevel_SoReadModifyWriteKeepsWorking(
+        string level, int expected)
+    {
+        using var factory = new ApiTestFactory();
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        var (_, token) = await client.RegisterAndLoginAsync(TestHelpers.CandidateEmail);
+        var resumeId = await CreateResumeAsync(client, token);
+
+        var response = await PostAsync(client, token, $"/resumes/{resumeId}/languages", new
+        {
+            name = "English",
+            fluency = (string?)null,
+            level
+        });
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await GetResumeAsync(client, token, resumeId))
+            .GetProperty("languages").EnumerateArray().Single()
+            .GetProperty("level").GetInt32().Should().Be(expected);
     }
 
     [Fact]
@@ -92,10 +125,19 @@ public sealed class ResumeLevelFieldsTests
         language.GetProperty("level").ValueKind.Should().Be(JsonValueKind.Null);
     }
 
+    // The numeric cases are the ones that matter, and none of them is a name Enum.TryParse rejects —
+    // TryParse accepts ANY numeric string. Measured against SQL Server before the IsDefined guard
+    // existed: 99 stored as 99, 300 truncated to 44, and -1 wrapped to 255, all silently, because the
+    // tinyint conversion is unchecked. 255 is above Native, so "-1" — the most obviously-invalid input
+    // a fuzzer sends — became MAXIMUM proficiency, and PR 3 would tell that candidate they meet a
+    // requirement they do not. Removing IsDefined from the endpoint fails exactly these three.
     [Theory]
     [InlineData("Bilingue")]
     [InlineData("C2")]
     [InlineData("")]
+    [InlineData("99")]
+    [InlineData("300")]
+    [InlineData("-1")]
     public async Task AddLanguage_WithALevelTheEnumDoesNotKnow_IsABadRequest(string level)
     {
         using var factory = new ApiTestFactory();
@@ -152,6 +194,9 @@ public sealed class ResumeLevelFieldsTests
     [Theory]
     [InlineData("Licenciatura")]
     [InlineData("PhD")]
+    [InlineData("99")]
+    [InlineData("300")]
+    [InlineData("-1")]
     public async Task AddEducation_WithALevelTheEnumDoesNotKnow_IsABadRequest(string level)
     {
         using var factory = new ApiTestFactory();
