@@ -111,10 +111,21 @@ public sealed class ModelConfigurationTests
         "Education.Period",
 
         // The two dimensions the scorer could not previously see, on the candidate's side. Both are
-        // levels, which is the plaintext half of the classification rule, and both sit beside an
-        // ENCRYPTED free-text column saying roughly the same thing in prose (Language.Fluency,
-        // Education.Degree). Sealing either of these would leave the engine with only the prose --
-        // which it must never parse -- and the section would silently score zero for everyone.
+        // levels, which is the plaintext half of the classification rule, and each sits beside the
+        // free-text column saying roughly the same thing in prose. Those two neighbours are classified
+        // DIFFERENTLY, and the difference is the rule, not an inconsistency:
+        //
+        //   Education.Degree  -- ENCRYPTED. It names a qualification, which describes a person.
+        //   Language.Fluency  -- PLAINTEXT, four lines above. It describes a level, and CLAUDE.md puts
+        //                        "a skill, a level or a span of time" on the readable side.
+        //
+        // Sealing either LEVEL would leave the engine with only the prose -- which it must never
+        // parse -- and the section would silently score zero for everyone.
+        //
+        // Residual worth naming, and a follow-up rather than a change here: Fluency is FREE TEXT
+        // classified as a level, so nothing stops a candidate typing something personal into it. The
+        // current mapping follows the stated rule; whether the rule should cover free-text level
+        // descriptors is the open question.
         "Language.Level", "Education.Level",
         "Certificate.ValidityPeriod",
         "Award.Date",

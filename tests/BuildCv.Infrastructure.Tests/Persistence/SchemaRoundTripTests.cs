@@ -209,10 +209,12 @@ public sealed class SchemaRoundTripTests
         reloaded.Interests.Should().BeEquivalentTo(resume.Interests);
         reloaded.References.Should().BeEquivalentTo(resume.References);
 
-        // The two new level columns, named where a failure says which one broke. They sit beside the
-        // ENCRYPTED free text that says roughly the same thing in prose — Fluency here, Degree on
-        // Education — and the whole point of them is that the engine reads the level and never parses
-        // the prose. A level lost on the way to disk would leave only the prose behind.
+        // The two new level columns, named where a failure says which one broke. Each sits beside the
+        // free text that says roughly the same thing in prose, and the two neighbours are classified
+        // differently on purpose: Education.Degree is ENCRYPTED because a qualification names a
+        // person, while Language.Fluency is PLAINTEXT because it describes a level, which CLAUDE.md
+        // puts on the readable side. Either way the engine reads the LEVEL and never parses the prose,
+        // and a level lost on the way to disk would leave only prose behind.
         reloaded.Languages.Single().Level.Should().Be(LanguageProficiency.Native);
         reloaded.Educations.Single().Level.Should().Be(EducationLevel.Bachelor);
     }
