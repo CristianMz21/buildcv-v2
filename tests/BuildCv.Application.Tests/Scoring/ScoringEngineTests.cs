@@ -409,4 +409,57 @@ public class ScoringEngineTests
         result.WeightedTotal.Should().BeApproximately(1.0, 0.0001,
             "a section carrying weight that nothing computes lowers the maximum achievable score");
     }
+
+    // JobRequirement.Weight now defaults FROM Priority instead of from a flat 1.0. That is neutral
+    // only while the engine keeps deriving its magnitude from Priority inline and never reads Weight,
+    // so this asserts the second half rather than trusting it.
+    //
+    // The weights here deliberately CONTRADICT the priority-derived ones: read Weight and the score is
+    // 10 / (10 + 0) = 1.0; read Priority and it is 1.0 / (1.0 + 0.5). One number tells the two models
+    // apart, which is the only reason this test is worth having.
+    //
+    // PR 3 is expected to break it, and that break is the signal the engine finally started reading
+    // Weight.
+    [Fact]
+    public void Skills_score_is_derived_from_priority_and_ignores_the_requirement_weight()
+    {
+        var resume = BuildResume("C#");
+        var jobPosting = JobPosting.Create(AccountId.New(), "Backend Developer", OrganizationName.Create("Acme"));
+        jobPosting.AddRequirement(
+            JobRequirement.Create(Technology.Create("C#"), RequirementPriority.MustHave, 10.0));
+        jobPosting.AddRequirement(
+            JobRequirement.Create(Technology.Create("Go"), RequirementPriority.NiceToHave, 0.0));
+
+        var result = _engine.Score(resume, jobPosting, ReferenceDate);
+
+        result.SkillsScore.Should().BeApproximately(1.0 / 1.5, 0.0001,
+            "the magnitude still comes from Priority, so an explicit Weight changes nothing yet");
+    }
+
+    // The one observable change this PR makes: Create(skill, NiceToHave) now yields Weight 0.5 where
+    // the old parameter default handed back 1.0. Every score has to be bit-for-bit identical either
+    // way, which is what makes the change behaviour-neutral rather than merely small.
+    //
+    // Exact equality, not approximate — anything looser would tolerate a score that really did move.
+    [Fact]
+    public void Weighted_total_is_identical_whether_weights_are_derived_or_stated_the_old_way()
+    {
+        var resume = BuildResume("C#");
+
+        var derived = JobPosting.Create(AccountId.New(), "Backend Developer", OrganizationName.Create("Acme"));
+        derived.AddRequirement(JobRequirement.Create(Technology.Create("C#"), RequirementPriority.MustHave));
+        derived.AddRequirement(JobRequirement.Create(Technology.Create("Go"), RequirementPriority.NiceToHave));
+
+        var oldDefaults = JobPosting.Create(AccountId.New(), "Backend Developer", OrganizationName.Create("Acme"));
+        oldDefaults.AddRequirement(
+            JobRequirement.Create(Technology.Create("C#"), RequirementPriority.MustHave, 1.0));
+        oldDefaults.AddRequirement(
+            JobRequirement.Create(Technology.Create("Go"), RequirementPriority.NiceToHave, 1.0));
+
+        derived.Requirements[1].Weight.Should().NotBe(oldDefaults.Requirements[1].Weight,
+            "the two postings must really disagree about Weight, or this proves nothing");
+
+        _engine.Score(resume, derived, ReferenceDate).WeightedTotal
+            .Should().Be(_engine.Score(resume, oldDefaults, ReferenceDate).WeightedTotal);
+    }
 }

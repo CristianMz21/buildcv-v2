@@ -132,4 +132,43 @@ public class JobPostingTests
 
         view.Should().HaveCount(1);
     }
+
+    // The numbers are not arbitrary: they are exactly what ScoringEngine.ComputeSkillsScore has always
+    // computed inline from Priority. Changing either one here moves every skills score in the product,
+    // which is why they are asserted as literals rather than derived from the enum.
+    [Theory]
+    [InlineData(RequirementPriority.MustHave, 1.0)]
+    [InlineData(RequirementPriority.NiceToHave, 0.5)]
+    public void JobRequirement_weight_defaults_from_priority(RequirementPriority priority, double expected) =>
+        JobRequirement.Create(Technology.Create("C#"), priority).Weight.Should().Be(expected);
+
+    // Weight is the magnitude and Priority the gate, so a caller who states a magnitude keeps it. Zero
+    // is included because it is the one explicit value a `weight ?? default` would swallow if the
+    // parameter were ever typed as a plain double with a sentinel.
+    [Theory]
+    [InlineData(RequirementPriority.MustHave, 0.0)]
+    [InlineData(RequirementPriority.MustHave, 2.5)]
+    [InlineData(RequirementPriority.NiceToHave, 3.0)]
+    public void JobRequirement_explicit_weight_overrides_the_priority_default(
+        RequirementPriority priority, double weight) =>
+        JobRequirement.Create(Technology.Create("C#"), priority, weight).Weight.Should().Be(weight);
+
+    [Theory]
+    [InlineData(-0.1)]
+    [InlineData(10.1)]
+    public void JobRequirement_rejects_a_weight_outside_the_allowed_range(double weight)
+    {
+        var act = () => JobRequirement.Create(Technology.Create("C#"), RequirementPriority.MustHave, weight);
+
+        act.Should().Throw<ArgumentOutOfRangeException>();
+    }
+
+    // Persisted as tinyint (JobPostingConfiguration). Renumbering a member rewrites the meaning of
+    // every row already on disk, so the numbers are pinned rather than left to declaration order.
+    [Theory]
+    [InlineData(RequirementPriority.MustHave, 0)]
+    [InlineData(RequirementPriority.NiceToHave, 1)]
+    public void RequirementPriority_members_keep_their_persisted_numbers(
+        RequirementPriority priority, int expected) =>
+        ((int)priority).Should().Be(expected);
 }
