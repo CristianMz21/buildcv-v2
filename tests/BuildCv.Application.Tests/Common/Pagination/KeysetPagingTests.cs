@@ -124,7 +124,11 @@ public sealed class KeysetPagingTests
     {
         var act = () => Page<string>.From([Row("a", 0), Row("b", 0)], PageRequests.Of(1));
 
-        act.Should().Throw<InvalidOperationException>().And.Should().NotBeOfType<ArgumentException>();
+        // InvalidOperationException is not an ArgumentException, so this one assertion IS the "not a
+        // 400" claim — spelling that out as a second NotBeOfType clause would read like a further guard
+        // while being incapable of failing. What makes this discriminate is the revert: letting
+        // Cursor.At throw again turns it red.
+        act.Should().Throw<InvalidOperationException>();
     }
 
     // Insertion order is not iteration order in a dictionary-backed store, so the ordering has to be

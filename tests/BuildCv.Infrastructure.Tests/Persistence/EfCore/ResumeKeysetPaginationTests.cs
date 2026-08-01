@@ -112,6 +112,12 @@ public sealed class ResumeKeysetPaginationTests
         {
             // Seeded through the context rather than one AddAsync at a time: this test needs a hundred
             // rows to exist, not a hundred round trips, and the read side is what is under test.
+            //
+            // The one write in these tests that does not go through the repository, so it is also the
+            // one that skips SaveTranslatingFailuresAsync — no DuplicateKeyException or
+            // ConcurrencyConflictException translation here. Acceptable for a seed of fresh rows with
+            // random ids, where neither failure is reachable; anything asserting on write BEHAVIOUR
+            // must still go through the repository.
             for (var index = 0; index < seeded; index++)
                 writer.Resumes.Add(NewResume(owner));
             await writer.SaveChangesAsync();

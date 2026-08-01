@@ -89,15 +89,24 @@ public sealed class GetResumesByOwnerHandlerTests
 
     // The other side of that counter: it is only meaningful because the successful path does move it.
     // A counter that never increments would make the assertion above pass for the wrong reason.
+    //
+    // Both calls carry weight. The first has no cursor, the second carries one the handler minted, so
+    // this covers the branch the invalid-cursor test is asserting the absence of — a cursor that DOES
+    // decode has to reach the store.
     [Fact]
     public async Task Handle_WithAUsableCursor_DoesQueryTheRepository()
     {
         var owner = AccountId.New();
         await Seed(owner);
+        await Seed(owner);
 
-        await Page(owner, limit: 10);
+        var firstPage = await Page(owner, limit: 1);
+        firstPage.NextCursor.Should().NotBeNull();
 
-        _resumes.ReadCount.Should().Be(1);
+        var secondPage = await Page(owner, limit: 1, cursor: firstPage.NextCursor);
+
+        secondPage.Items.Should().ContainSingle();
+        _resumes.ReadCount.Should().Be(2);
     }
 
     [Fact]
