@@ -15,10 +15,19 @@ public sealed class RegisterAccountHandler(
     IPasswordHasher passwordHasher)
     : ICommandHandler<RegisterAccountCommand, Result<AccountDto>>
 {
+    // Registration is anonymous self-service, so the requested role is attacker-controlled.
+    // Only these roles may be self-assigned. No production path grants privileged roles today —
+    // Account.ChangeRole exists but has no Application handler or endpoint; granting one will
+    // require an explicit administrative use case.
+    private static bool IsSelfAssignable(Role role) => role is Role.Candidate or Role.Recruiter;
+
     public async Task<Result<AccountDto>> Handle(RegisterAccountCommand command, CancellationToken cancellationToken = default)
     {
         try
         {
+            if (!IsSelfAssignable(command.Role))
+                return Result<AccountDto>.Failure("Role is not available for self-registration.");
+
             var email = Email.Create(command.Email);
 
             if (await accountRepository.ExistsByEmailAsync(email, cancellationToken))

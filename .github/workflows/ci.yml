@@ -3,11 +3,13 @@ name: CI
 on:
   push:
     branches: [main]
+  # Every base branch, not just main: stacked PRs target their parent branch, and a
+  # `branches: [main]` filter silently skips CI for all of them until they retarget.
   pull_request:
-    branches: [main]
+    branches: ['**']
 
 jobs:
-  build:
+  build-and-unit-test:
     runs-on: ubuntu-latest
 
     steps:
@@ -28,4 +30,25 @@ jobs:
         run: dotnet format BuildCv.slnx --verify-no-changes --no-restore
 
       - name: Test
-        run: dotnet test BuildCv.slnx -c Release --no-build --collect:"XPlat Code Coverage"
+        run: dotnet test BuildCv.slnx -c Release --no-build --filter "Category!=Integration" --collect:"XPlat Code Coverage"
+
+  integration-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore BuildCv.slnx
+
+      - name: Build
+        run: dotnet build BuildCv.slnx -c Release --no-restore
+
+      - name: Test
+        run: dotnet test BuildCv.slnx -c Release --no-build --filter "Category=Integration" --collect:"XPlat Code Coverage"
