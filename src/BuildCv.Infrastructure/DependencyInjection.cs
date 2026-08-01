@@ -14,8 +14,11 @@ using BuildCv.Domain.Resumes;
 using BuildCv.Domain.Scoring;
 using BuildCv.Infrastructure.Persistence;
 using BuildCv.Infrastructure.Persistence.BlindIndexes;
+using BuildCv.Infrastructure.Persistence.EfCore;
+using BuildCv.Infrastructure.Persistence.Interceptors;
 using BuildCv.Infrastructure.Security;
 using BuildCv.Infrastructure.Security.Encryption;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -25,8 +28,21 @@ namespace BuildCv.Infrastructure;
 
 public static class DependencyInjection
 {
-    public static IServiceCollection AddInfrastructure(this IServiceCollection services, IConfiguration configuration)
+    // Matches Microsoft.Extensions.Hosting's Environments.Development without taking a dependency on
+    // the hosting abstractions for one string.
+    private const string DevelopmentEnvironment = "Development";
+
+    /// <param name="environmentName">
+    /// The host's environment name. A real host always has one; leaving it null means the services are
+    /// being composed without a host — registration tests, design-time tooling — which is local by
+    /// construction. It is what decides whether the in-memory store is allowed.
+    /// </param>
+    public static IServiceCollection AddInfrastructure(
+        this IServiceCollection services, IConfiguration configuration, string? environmentName = null)
     {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(configuration);
+
         services.AddOptions<JwtSettings>()
             .Bind(configuration.GetSection(JwtSettings.SectionName))
             .Validate(s => s.SigningKey is not null && s.SigningKey.Length >= 32,
@@ -65,12 +81,8 @@ public static class DependencyInjection
         services.AddSingleton(TimeProvider.System);
         services.AddSingleton<IPasswordHasher, PasswordHasher>();
         services.AddSingleton<ITokenService, TokenService>();
-        services.AddSingleton<IAccountRepository, InMemoryAccountRepository>();
-        services.AddSingleton<IRefreshTokenRepository, InMemoryRefreshTokenRepository>();
-        services.AddSingleton<IResumeRepository, InMemoryResumeRepository>();
-        services.AddSingleton<IJobPostingRepository, InMemoryJobPostingRepository>();
-        services.AddSingleton<IOrganizationRepository, InMemoryOrganizationRepository>();
-        services.AddSingleton<IAnalysisRepository, InMemoryAnalysisRepository>();
+
+        AddPersistence(services, configuration, environmentName);
 
         services.AddSingleton<IScoringEngine, ScoringEngine>();
 
@@ -117,4 +129,126 @@ public static class DependencyInjection
 
         return services;
     }
+
+    // The one place that decides where aggregates actually live.
+    private static void AddPersistence(
+        IServiceCollection services, IConfiguration configuration, string? environmentName)
+    {
+        var provider = PersistenceConfiguration.ResolveProvider(configuration);
+
+        if (string.Equals(provider, PersistenceConfiguration.InMemoryProvider, StringComparison.OrdinalIgnoreCase))
+        {
+            AddInMemoryPersistence(services, configuration, environmentName);
+            return;
+        }
+
+        if (string.Equals(provider, PersistenceConfiguration.SqlServerProvider, StringComparison.OrdinalIgnoreCase))
+        {
+            AddSqlServerPersistence(services, configuration, environmentName);
+            return;
+        }
+
+        // Naming both accepted values, because the realistic way to reach this line is a typo in an
+        // environment variable on a host that is otherwise configured correctly.
+        throw new InvalidOperationException(
+            $"{PersistenceConfiguration.ProviderKey} is '{provider}'. Supported values are "
+            + $"'{PersistenceConfiguration.SqlServerProvider}' and '{PersistenceConfiguration.InMemoryProvider}'.");
+    }
+
+    private static void AddSqlServerPersistence(
+        IServiceCollection services, IConfiguration configuration, string? environmentName)
+    {
+        // Scoped, both of them: AuditSaveChangesInterceptor depends on ICurrentUser, which the Api
+        // replaces with an HttpContext-backed implementation that only means anything inside a request.
+        services.AddScoped<BlindIndexSaveChangesInterceptor>();
+        services.AddScoped<AuditSaveChangesInterceptor>();
+
+        services.AddDbContext<BuildCvDbContext>((serviceProvider, options) => options
+            // Resolved here rather than at registration time so composing the services never needs a
+            // reachable database — several tests build the whole graph and only ever resolve a hasher.
+            .UseSqlServer(
+                ResolveConnectionString(configuration, environmentName),
+                sqlServer => sqlServer.EnableRetryOnFailure())
+
+            // NoTracking is the default because most reads are reads. The repositories say AsTracking()
+            // explicitly on the ones that feed a mutation, which makes "this entity is about to change"
+            // a visible decision at the call site instead of an ambient property of the context.
+            .UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking)
+
+            // ORDER IS PINNED, and PersistenceRegistrationTests asserts it.
+            //
+            // The blind-index pass runs FIRST so it only ever observes entity states the application
+            // produced. The audit pass rewrites states — it converts a Deleted root into a Modified
+            // tombstone — and running it first would hand the blind-index pass an Account it now sees as
+            // Modified, sending it back through Compute() under the ACTIVE key. That happens to be
+            // harmless today only because reassigning an equal byte[] is a no-op under EF's structural
+            // comparer: a property of EF, not of this code, and not one to build a rotation on. In this
+            // order the two interceptors are independent by construction.
+            .AddInterceptors(
+                serviceProvider.GetRequiredService<BlindIndexSaveChangesInterceptor>(),
+                serviceProvider.GetRequiredService<AuditSaveChangesInterceptor>())
+
+            // Stated rather than left to the default, and it must stay false in EVERY environment,
+            // Development included. Sensitive-data logging writes parameter values into the log, and the
+            // parameters on this context are blind-index digests and freshly sealed envelopes — the exact
+            // material the encryption exists to keep out of a dump. A future `if (IsDevelopment())`
+            // branch here would be a data leak, so PersistenceRegistrationTests reads this back off the
+            // COMPOSED provider.
+            .EnableSensitiveDataLogging(false));
+
+        services.AddScoped<IAccountRepository, AccountRepository>();
+        services.AddScoped<IRefreshTokenRepository, RefreshTokenRepository>();
+        services.AddScoped<IResumeRepository, ResumeRepository>();
+        services.AddScoped<IJobPostingRepository, JobPostingRepository>();
+        services.AddScoped<IOrganizationRepository, OrganizationRepository>();
+        services.AddScoped<IAnalysisRepository, AnalysisRepository>();
+    }
+
+    // The in-memory store is a development convenience and a test double. It is registered as singletons
+    // because it IS the storage, and it loses everything on restart.
+    private static void AddInMemoryPersistence(
+        IServiceCollection services, IConfiguration configuration, string? environmentName)
+    {
+        // Fails at registration, not at the first write. A host that has been told to keep user accounts
+        // in a dictionary must refuse to start rather than serve traffic and lose it, and the only way to
+        // find that out at runtime is that everyone is logged out after a deploy.
+        if (!IsLocal(environmentName)
+            && !configuration.GetValue(PersistenceConfiguration.AllowInMemoryOutsideDevelopmentKey, false))
+        {
+            throw new InvalidOperationException(
+                $"{PersistenceConfiguration.ProviderKey} is '{PersistenceConfiguration.InMemoryProvider}' in the "
+                + $"'{environmentName}' environment, which would discard all data on restart. Use "
+                + $"'{PersistenceConfiguration.SqlServerProvider}', or set "
+                + $"{PersistenceConfiguration.AllowInMemoryOutsideDevelopmentKey}=true if this really is a test host.");
+        }
+
+        services.AddSingleton<IAccountRepository, InMemoryAccountRepository>();
+        services.AddSingleton<IRefreshTokenRepository, InMemoryRefreshTokenRepository>();
+        services.AddSingleton<IResumeRepository, InMemoryResumeRepository>();
+        services.AddSingleton<IJobPostingRepository, InMemoryJobPostingRepository>();
+        services.AddSingleton<IOrganizationRepository, InMemoryOrganizationRepository>();
+        services.AddSingleton<IAnalysisRepository, InMemoryAnalysisRepository>();
+    }
+
+    // ConnectionStrings:BuildCv is the application's setting. When it is absent the local default comes
+    // from BuildCvDbContextFactory, which is the ONE committed copy of that string — appsettings used to
+    // carry a second copy that nothing read and that was free to drift away from the one `dotnet ef`
+    // uses. Outside a local composition there is no default: pointing a deployed host at localhost
+    // silently is worse than refusing to start.
+    private static string ResolveConnectionString(IConfiguration configuration, string? environmentName)
+    {
+        var configured = configuration.GetConnectionString(PersistenceConfiguration.ConnectionStringName);
+        if (!string.IsNullOrWhiteSpace(configured))
+            return configured;
+
+        return IsLocal(environmentName)
+            ? BuildCvDbContextFactory.DefaultConnectionString
+            : throw new InvalidOperationException(
+                $"ConnectionStrings:{PersistenceConfiguration.ConnectionStringName} must be configured in the "
+                + $"'{environmentName}' environment.");
+    }
+
+    private static bool IsLocal(string? environmentName) =>
+        environmentName is null
+        || string.Equals(environmentName, DevelopmentEnvironment, StringComparison.OrdinalIgnoreCase);
 }
