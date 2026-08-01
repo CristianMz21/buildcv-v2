@@ -85,14 +85,21 @@ public sealed class ModelConfigurationTests
         ["Reference.Email"] = "Reference.Email",
         ["Reference.PhoneNumber"] = "Reference.PhoneNumber",
         ["Reference.ReferenceText"] = "Reference.ReferenceText",
+
+        // Generated advice, but not generic advice: the sentence quotes the resume and the posting it
+        // was scored against back at the candidate. Its STRUCTURE — Section, Priority, Kind, Impact —
+        // stays plaintext beside it, which is what keeps "which advice do we give most often"
+        // answerable without the text.
+        ["Recommendation.Message"] = "Recommendation.Message",
     };
 
     // The other half of the same requirement. Encrypting any of these would silently end a feature:
     // the scoring engine reads them, and internal analytics groups by them.
     //
     // A deliberate SPOT-CHECK, not an exhaustive set — it names the highest-value analytical columns
-    // and omits the ones whose loss would be obvious or harmless (audit timestamps, the remaining
-    // ScoreBreakdown scores, Membership, the opaque Guid foreign keys). Completeness is not needed
+    // and omits the ones whose loss would be obvious or harmless (audit timestamps, the four
+    // ScoreBreakdown scores not named below, Membership, the opaque Guid foreign keys). Completeness
+    // is not needed
     // here because ExpectedEncryptedColumns is asserted with exact set equality in BOTH directions:
     // nothing can gain encryption without being declared there, so nothing can slip out of this list
     // unnoticed. This one exists to make the intent of the classification legible.
@@ -110,8 +117,12 @@ public sealed class ModelConfigurationTests
         "JobPosting.Title", "JobPosting.Description", "JobPosting.CompanyName", "JobPosting.Status",
         "Organization.Name", "Organization.Slug", "Organization.Status",
         "Account.Role", "Account.Status", "Account.FailedLoginCount",
-        "Analysis.ScoredAt", "Analysis.Recommendations",
-        "ScoreBreakdown.SkillsScore", "ScoreBreakdown.Weights",
+        "Analysis.ScoredAt",
+        "ScoreBreakdown.SkillsScore", "ScoreBreakdown.LanguagesScore", "ScoreBreakdown.Weights",
+
+        // The half of a recommendation that survives its message being sealed. Encrypting any of
+        // these would not lose a column, it would lose the rollup the encryption was traded for.
+        "Recommendation.Section", "Recommendation.Priority", "Recommendation.Kind", "Recommendation.Impact",
     ];
 
     private static readonly Type[] ExpectedAggregateRoots =
@@ -283,9 +294,10 @@ public sealed class ModelConfigurationTests
         }
     }
 
-    // The ten resume collections plus the three elsewhere. Every getter returns _entries.AsReadOnly(),
-    // so EF reading through the property gets a ReadOnlyCollection it cannot add to; the failure is an
-    // exception on the first child insert, not at model build.
+    // The ten resume collections plus the four elsewhere: two on JobPosting, Organization.Members, and
+    // Analysis.Recommendations. Every getter returns _entries.AsReadOnly(), so EF reading through the
+    // property gets a ReadOnlyCollection it cannot add to; the failure is an exception on the first
+    // child insert, not at model build.
     [Fact]
     public void OwnedCollections_UseTheBackingField()
     {
@@ -296,7 +308,7 @@ public sealed class ModelConfigurationTests
             .Where(navigation => navigation.IsCollection)
             .ToList();
 
-        collections.Should().HaveCount(13);
+        collections.Should().HaveCount(14);
         collections.Should().OnlyContain(navigation =>
             navigation.GetPropertyAccessMode() == PropertyAccessMode.Field
             && navigation.FieldInfo != null);
@@ -310,6 +322,10 @@ public sealed class ModelConfigurationTests
     [InlineData(typeof(Analysis), nameof(Analysis.OverallScore))]
     [InlineData(typeof(Analysis), nameof(Analysis.Band))]
     [InlineData(typeof(ScoreBreakdown), nameof(ScoreBreakdown.WeightedTotal))]
+    // Sections is the one whose failure would not look like a stale column: left mapped, EF tries to
+    // discover SectionScore as an ENTITY TYPE and the model build throws, so every test in this file
+    // fails at once rather than this one assertion.
+    [InlineData(typeof(ScoreBreakdown), nameof(ScoreBreakdown.Sections))]
     public void ComputedMembers_AreNotMapped(Type clrType, string propertyName)
     {
         using var context = PersistenceTestContext.ModelOnly();
@@ -328,11 +344,13 @@ public sealed class ModelConfigurationTests
 
         var actual = context.Model.GetEntityTypes().Select(Name).Order(StringComparer.Ordinal);
 
+        // SectionScore is deliberately absent: it is projected from ScoreBreakdown's own columns and
+        // Ignored, so its appearance here would mean the projection had become a table.
         actual.Should().Equal(
             "Account", "Analysis", "Award", "Certificate", "ContactInformation", "Education",
             "Experience", "Interest", "JobPosting", "JobRequirement", "Language", "Membership",
-            "Organization", "Project", "Publication", "Reference", "RefreshToken", "Responsibility",
-            "Resume", "ScoreBreakdown", "Skill");
+            "Organization", "Project", "Publication", "Recommendation", "Reference", "RefreshToken",
+            "Responsibility", "Resume", "ScoreBreakdown", "Skill");
     }
 
     private static IEnumerable<(IEntityType EntityType, IProperty Property)> EncryptedProperties(IModel model) =>

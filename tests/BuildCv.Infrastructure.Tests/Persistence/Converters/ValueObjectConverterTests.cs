@@ -88,6 +88,55 @@ public class ValueObjectConverterTests
         act.Should().Throw<InvalidAccountException>();
     }
 
+    // The claim that makes "no data migration is needed for the sixth section" true, proved rather
+    // than argued. This is a LITERAL v1 payload — five members, exactly what is on disk for every
+    // analysis scored before Languages existed — and it must still load: Languages deserializes absent
+    // as 0.0, the other five still sum to 1.0, the factory accepts it, and the old analysis explains
+    // its own arithmetic exactly, with Languages having contributed nothing. Which is what happened.
+    [Fact]
+    public void ScoringWeights_AVersionOnePayloadStillLoadsAndReadsZeroForLanguages()
+    {
+        const string v1 =
+            """{"Skills":0.45,"Experience":0.2,"Education":0.2,"Certifications":0.1,"Projects":0.05,"SchemaVersion":1}""";
+
+        var weights = ScoringWeightsSnapshotConverter.FromJson(v1);
+
+        weights.Languages.Should().Be(0.0, "a v1 payload never carried a sixth weight");
+        weights.SchemaVersion.Should().Be(1, "the row must keep saying which model explained it");
+        weights.Skills.Should().Be(0.45);
+        weights.Education.Should().Be(0.2, "v1 weighted Education at 0.20, and that score stays explained by it");
+
+        // The whole point: a v1 breakdown still produces the total it always produced.
+        var breakdown = ScoreBreakdown.Create(1.0, 1.0, 1.0, 1.0, 1.0, 0.0, weights);
+        breakdown.WeightedTotal.Should().BeApproximately(1.0, 0.0001);
+    }
+
+    [Fact]
+    public void ScoringWeights_RoundTripThroughJsonWithSixMembers()
+    {
+        var weights = ScoringWeightsSnapshot.Default();
+
+        var json = ScoringWeightsSnapshotConverter.ToJson(weights);
+
+        json.Should().Contain("\"Languages\":0.1");
+        json.Length.Should().BeLessThanOrEqualTo(ScoringWeightsSnapshotConverter.MaxLength,
+            "a payload wider than the column truncates, and a truncated snapshot cannot be parsed back");
+        ScoringWeightsSnapshotConverter.FromJson(json).Should().Be(weights);
+    }
+
+    // Reading goes back through the factory, so a persisted set that no longer sums to 1.0 has to fail
+    // loudly instead of silently explaining a score with weights that could not have produced it.
+    [Fact]
+    public void ScoringWeights_APayloadThatNoLongerSumsToOne_FailsLoudly()
+    {
+        const string broken =
+            """{"Skills":0.45,"Experience":0.2,"Education":0.2,"Certifications":0.1,"Projects":0.05,"Languages":0.1,"SchemaVersion":2}""";
+
+        var act = () => ScoringWeightsSnapshotConverter.FromJson(broken);
+
+        act.Should().Throw<ArgumentException>();
+    }
+
     [Fact]
     public void StronglyTypedIds_RoundTripThroughGuid()
     {

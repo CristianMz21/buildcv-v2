@@ -70,19 +70,21 @@ internal static class KeysetQueryExtensions
     // second round trip and without a COUNT over the whole owner. Page<T>.From owns what happens to it.
     //
     // AsSplitQuery, and on a paged read it is the difference between bounded and unbounded. Every entity
-    // paged here carries owned collections — Resume has ten, JobPosting has two — and owned navigations
-    // load eagerly. In one statement that is a LEFT JOIN per collection onto the same principal, and the
-    // server returns their CARTESIAN PRODUCT: rows shipped is the sum, over the page, of the PRODUCT of
-    // each principal's collection counts. TOP caps the principals inside the subquery, so the fan-out
-    // happens outside it and the cap does not reach it. Nothing caps any collection, so a client that
-    // posts enough child rows chooses that number. Split query asks one statement per collection, which
-    // makes the work the SUM of the counts and puts an actual ceiling on a page.
+    // paged here carries owned collections — Resume has ten, JobPosting has two, Analysis has one — and
+    // owned navigations load eagerly. In one statement that is a LEFT JOIN per collection onto the same
+    // principal, and the server returns their CARTESIAN PRODUCT: rows shipped is the sum, over the page,
+    // of the PRODUCT of each principal's collection counts. TOP caps the principals inside the subquery,
+    // so the fan-out happens outside it and the cap does not reach it. Nothing caps any collection, so a
+    // client that posts enough child rows chooses that number. Split query asks one statement per
+    // collection, which makes the work the SUM of the counts and puts an actual ceiling on a page.
     //
     // The cost is stated rather than hidden: the statements are not one atomic read, so a page can
     // observe a collection edit that landed between them. That is acceptable here — these lists are
     // edited by their own owner, and the alternative is a query whose size an unauthenticated row count
-    // decides. It is also inert where it is not needed: Analysis has no collections, so its page emits
-    // the same single statement it did before.
+    // decides. Score history is the case that shows why this belongs in the shared probe rather than in
+    // one repository: Analysis owned no collections when this was written and owns Recommendations now,
+    // so a page of twenty would have fanned out the moment that mapping landed, with no code here
+    // changing and nothing to notice it.
     //
     // Applied AFTER the projection deliberately. Split query has real restrictions with projections, so
     // whether it survives KeysetRow<T> is a question to answer rather than assume — the SQL is read in

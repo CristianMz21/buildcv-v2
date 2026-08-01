@@ -263,9 +263,13 @@ public sealed class ResumeRepositoryTests
     private static Analysis NewAnalysis(ResumeId resumeId) =>
         Analysis.Create(
             AnalysisId.New(),
-            ScoreBreakdown.Create(0.9, 0.8, 0.7, 0.6, 0.5, ScoringWeightsSnapshot.Default()),
+            ScoreBreakdown.Create(0.9, 0.8, 0.7, 0.6, 0.5, 0.4, ScoringWeightsSnapshot.Default()),
             resumeId,
             JobPostingId.New(),
             DateTimeOffset.UtcNow,
-            ["Add more C# projects."]);
+            [
+                Recommendation.Create(
+                    SectionType.Projects, RecommendationPriority.Important,
+                    RecommendationKind.FewerProjectsThanExpected, "Add more C# projects.", 0.05),
+            ]);
 }

@@ -3,6 +3,7 @@ using BuildCv.Application.Common.Pagination;
 using BuildCv.Domain.Identity;
 using BuildCv.Domain.Jobs;
 using BuildCv.Domain.Resumes;
+using BuildCv.Domain.Scoring;
 using BuildCv.Infrastructure.Persistence;
 using BuildCv.Infrastructure.Persistence.EfCore;
 using FluentAssertions;
@@ -146,9 +147,10 @@ public sealed class KeysetQueryTranslationTests
     }
 
     // The counterfactual, because "zero joins" is only evidence if the query would otherwise have had
-    // them. Without this, a refactor that stopped loading the collections at all would leave the two
+    // them. Without this, a refactor that stopped loading the collections at all would leave the
     // assertions above green while breaking every consumer. It also states the size of what was removed:
-    // ten tables for a resume, two for a job posting, each multiplying against the others.
+    // ten tables for a resume, two for a job posting, one for an analysis, each multiplying against the
+    // others.
     [Fact]
     public void NewestFirstProbe_WithoutSplitting_WouldJoinEveryOwnedCollection()
     {
@@ -156,26 +158,38 @@ public sealed class KeysetQueryTranslationTests
 
         var resumes = context.Resumes.NewestFirstProbe(PageRequests.Of(20)).AsSingleQuery().ToQueryString();
         var jobs = context.JobPostings.NewestFirstProbe(PageRequests.Of(20)).AsSingleQuery().ToQueryString();
+        var analyses = context.Analyses.OldestFirstProbe(PageRequests.Of(20)).AsSingleQuery().ToQueryString();
 
         JoinsIn(resumes).Should().Be(
             OwnedCollectionsOn(context, typeof(Resume)),
             "this is the shape being rejected: one join per collection, multiplying into a product");
         JoinsIn(jobs).Should().Be(OwnedCollectionsOn(context, typeof(JobPosting)));
+
+        // Analysis owns Recommendations now, so score history is no longer the entity for which
+        // splitting was inert: a page of twenty analyses each carrying ten recommendations is two
+        // hundred rows off the wire for twenty scores, and nothing caps how many a scoring run emits.
+        JoinsIn(analyses).Should().Be(
+            OwnedCollectionsOn(context, typeof(Analysis)),
+            "the counterfactual has to be real for the zero below to be evidence");
+        OwnedCollectionsOn(context, typeof(Analysis)).Should().Be(1, "Analysis owns Recommendations");
     }
 
     // ToQueryString renders only the FIRST statement of a split query and appends a note saying so, so
-    // the note is what proves the collections went somewhere rather than being dropped. Asserted for
-    // Analysis too — it owns no collections, so splitting changes nothing about its statement, and
-    // pinning that keeps the page shared by all three lists rather than special-cased per entity.
+    // the note is what proves the collection went somewhere rather than being dropped.
+    //
+    // This used to read "an entity with no collections", asserting that splitting was inert for score
+    // history. Adding Recommendations made that false without touching a line of the probe — which is
+    // exactly why AsSplitQuery belongs in the shared helper rather than in the two repositories that
+    // needed it at the time.
     [Fact]
-    public void OldestFirstProbe_OverAnEntityWithNoCollections_IsStillTheSameSingleStatement()
+    public void OldestFirstProbe_OverAnalyses_FetchesTheRecommendationsInASeparateStatement()
     {
         using var context = PersistenceTestContext.ModelOnly();
 
         var sql = context.Analyses.OldestFirstProbe(PageRequests.Of(20)).ToQueryString();
 
-        JoinsIn(sql).Should().Be(0);
-        RowCapIn(sql).Should().Be(21);
+        JoinsIn(sql).Should().Be(0, "the owned collection has to be fetched by its own statement");
+        RowCapIn(sql).Should().Be(21, "splitting must not cost the cap that bounds the principals");
         sql.Should().Contain("split-query mode");
     }
 

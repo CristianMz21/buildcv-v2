@@ -10,9 +10,8 @@ namespace BuildCv.Infrastructure.Persistence.Converters;
 // wasteful, since it serializes both sides to compare them. These work on the model value instead.
 //
 // Named for the conversion rather than the encryption on purpose: ForList is used by deliberately
-// PLAINTEXT columns too (Skill.Keywords, Project.Technologies, Analysis.Recommendations). A name
-// implying encryption would tell the next person auditing the data classification something false
-// about those three.
+// PLAINTEXT columns too (Skill.Keywords, Project.Technologies). A name implying encryption would tell
+// the next person auditing the data classification something false about those two.
 internal static class ConvertedComparers
 {
     // For the immutable value objects and records the Domain exposes: value equality, no snapshot copy.
@@ -23,9 +22,8 @@ internal static class ConvertedComparers
             value => value.GetHashCode(),
             value => value);
 
-    // List-shaped members (Highlights, Keywords, Technologies, Profiles, Recommendations) are
-    // replaced wholesale by the Domain, but EF still needs order-sensitive equality plus a snapshot
-    // it can diff against.
+    // List-shaped members (Highlights, Keywords, Technologies, Profiles) are replaced wholesale by
+    // the Domain, but EF still needs order-sensitive equality plus a snapshot it can diff against.
     public static ValueComparer<IReadOnlyList<T>> ForList<T>()
         where T : notnull =>
         new(

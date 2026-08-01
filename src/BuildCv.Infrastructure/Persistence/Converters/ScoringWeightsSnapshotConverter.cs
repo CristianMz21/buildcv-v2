@@ -32,6 +32,7 @@ internal sealed class ScoringWeightsSnapshotConverter() : ValueConverter<Scoring
                 weights.Education,
                 weights.Certifications,
                 weights.Projects,
+                weights.Languages,
                 weights.SchemaVersion),
             Options);
     }
@@ -49,14 +50,21 @@ internal sealed class ScoringWeightsSnapshotConverter() : ValueConverter<Scoring
             weights.Education,
             weights.Certifications,
             weights.Projects,
+            weights.Languages,
             weights.SchemaVersion);
     }
 
+    // Languages was appended when the model grew to six sections, and that is why no data migration
+    // was needed for it: a v1 payload has five members, Languages deserializes absent as 0.0, the
+    // other five still sum to 1.0, and the factory accepts it. The old analysis then explains its own
+    // arithmetic exactly, with Languages having contributed nothing — which is what happened.
+    // ValueObjectConverterTests pins that with a literal v1 payload rather than reasoning about it.
     internal sealed record WeightsJson(
         double Skills,
         double Experience,
         double Education,
         double Certifications,
         double Projects,
+        double Languages,
         int SchemaVersion);
 }
