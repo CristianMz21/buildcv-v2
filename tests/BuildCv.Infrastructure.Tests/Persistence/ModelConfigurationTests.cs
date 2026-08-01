@@ -109,11 +109,23 @@ public sealed class ModelConfigurationTests
         "Project.Technologies", "Project.Period",
         "Experience.Type", "Experience.Period",
         "Education.Period",
+
+        // The two dimensions the scorer could not previously see, on the candidate's side. Both are
+        // levels, which is the plaintext half of the classification rule, and both sit beside an
+        // ENCRYPTED free-text column saying roughly the same thing in prose (Language.Fluency,
+        // Education.Degree). Sealing either of these would leave the engine with only the prose --
+        // which it must never parse -- and the section would silently score zero for everyone.
+        "Language.Level", "Education.Level",
         "Certificate.ValidityPeriod",
         "Award.Date",
         "Publication.ReleaseDate",
         "JobRequirement.Skill", "JobRequirement.Priority", "JobRequirement.Weight",
         "JobPosting.Title", "JobPosting.Description", "JobPosting.CompanyName", "JobPosting.Status",
+
+        // The posting's side of the same two dimensions. JobPosting is wholly plaintext by design --
+        // see the header comment on JobPostingConfiguration -- so these are here to state the intent,
+        // not to defend a borderline call.
+        "JobPosting.EducationLevel", "LanguageRequirement.Name", "LanguageRequirement.MinimumLevel",
         "Organization.Name", "Organization.Slug", "Organization.Status",
         "Account.Role", "Account.Status", "Account.FailedLoginCount",
         "Analysis.ScoredAt",
@@ -293,10 +305,11 @@ public sealed class ModelConfigurationTests
         }
     }
 
-    // The ten resume collections plus the four elsewhere: two on JobPosting, Organization.Members, and
-    // Analysis.Recommendations. Every getter returns _entries.AsReadOnly(), so EF reading through the
-    // property gets a ReadOnlyCollection it cannot add to; the failure is an exception on the first
-    // child insert, not at model build.
+    // The ten resume collections plus the five elsewhere: three on JobPosting (Requirements,
+    // LanguageRequirements, Responsibilities), Organization.Members, and Analysis.Recommendations.
+    // Every getter returns _entries.AsReadOnly(), so EF reading through the property gets a
+    // ReadOnlyCollection it cannot add to; the failure is an exception on the first child insert, not
+    // at model build.
     [Fact]
     public void OwnedCollections_UseTheBackingField()
     {
@@ -307,7 +320,7 @@ public sealed class ModelConfigurationTests
             .Where(navigation => navigation.IsCollection)
             .ToList();
 
-        collections.Should().HaveCount(14);
+        collections.Should().HaveCount(15);
         collections.Should().OnlyContain(navigation =>
             navigation.GetPropertyAccessMode() == PropertyAccessMode.Field
             && navigation.FieldInfo != null);
@@ -347,9 +360,9 @@ public sealed class ModelConfigurationTests
         // Ignored, so its appearance here would mean the projection had become a table.
         actual.Should().Equal(
             "Account", "Analysis", "Award", "Certificate", "ContactInformation", "Education",
-            "Experience", "Interest", "JobPosting", "JobRequirement", "Language", "Membership",
-            "Organization", "Project", "Publication", "Recommendation", "Reference", "RefreshToken",
-            "Responsibility", "Resume", "ScoreBreakdown", "Skill");
+            "Experience", "Interest", "JobPosting", "JobRequirement", "Language", "LanguageRequirement",
+            "Membership", "Organization", "Project", "Publication", "Recommendation", "Reference",
+            "RefreshToken", "Responsibility", "Resume", "ScoreBreakdown", "Skill");
     }
 
     private static IEnumerable<(IEntityType EntityType, IProperty Property)> EncryptedProperties(IModel model) =>

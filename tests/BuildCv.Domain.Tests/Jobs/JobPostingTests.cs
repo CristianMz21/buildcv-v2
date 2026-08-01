@@ -133,6 +133,73 @@ public class JobPostingTests
         view.Should().HaveCount(1);
     }
 
+    [Fact]
+    public void JobPosting_accepts_language_requirements()
+    {
+        var job = JobPosting.Create(OwnerId, "Dev", OrganizationName.Create("TechCorp"));
+
+        job.SetLanguageRequirements(
+        [
+            LanguageRequirement.Create("English", LanguageProficiency.Professional),
+            LanguageRequirement.Create("Spanish", LanguageProficiency.Native),
+        ]);
+
+        job.LanguageRequirements.Should().HaveCount(2);
+        job.LanguageRequirements[0].MinimumLevel.Should().Be(LanguageProficiency.Professional);
+    }
+
+    // The guard that matters, and the reason it cannot lean on record equality: LanguageRequirement
+    // stores its name as typed, so "English" and "english" are two distinct values. Without an
+    // OrdinalIgnoreCase comparison a posting would carry both, and PR 3 would score the candidate
+    // against whichever it read first.
+    [Fact]
+    public void JobPosting_rejects_a_duplicate_language_requirement_case_insensitively()
+    {
+        var job = JobPosting.Create(OwnerId, "Dev", OrganizationName.Create("TechCorp"));
+        job.AddLanguageRequirement(LanguageRequirement.Create("English", LanguageProficiency.Professional));
+
+        var act = () => job.AddLanguageRequirement(
+            LanguageRequirement.Create("ENGLISH", LanguageProficiency.Basic));
+
+        act.Should().Throw<DuplicateSkillException>();
+        job.LanguageRequirements.Should().ContainSingle();
+    }
+
+    // The same guard on the bulk setter. Add-one and set-many are separate code paths on JobPosting,
+    // so a guard on only one of them leaves the other as a way in.
+    [Fact]
+    public void JobPosting_rejects_a_duplicate_within_a_language_requirement_set()
+    {
+        var job = JobPosting.Create(OwnerId, "Dev", OrganizationName.Create("TechCorp"));
+
+        var act = () => job.SetLanguageRequirements(
+        [
+            LanguageRequirement.Create("English", LanguageProficiency.Professional),
+            LanguageRequirement.Create("english", LanguageProficiency.Basic),
+        ]);
+
+        act.Should().Throw<DuplicateSkillException>();
+        job.LanguageRequirements.Should().BeEmpty("a rejected set must not leave a partial write behind");
+    }
+
+    [Fact]
+    public void JobPosting_language_requirements_view_reflects_subsequent_additions()
+    {
+        var job = JobPosting.Create(OwnerId, "Dev", OrganizationName.Create("TechCorp"));
+        var view = job.LanguageRequirements;
+
+        job.AddLanguageRequirement(LanguageRequirement.Create("English", LanguageProficiency.Basic));
+
+        view.Should().HaveCount(1);
+    }
+
+    // Not stated has to stay distinguishable from HighSchool = 0, or PR 3 invents a requirement no
+    // posting made and penalises every candidate who does not meet it.
+    [Fact]
+    public void JobPosting_states_no_education_level_by_default() =>
+        JobPosting.Create(OwnerId, "Dev", OrganizationName.Create("TechCorp"))
+            .EducationLevel.Should().BeNull();
+
     // The numbers are not arbitrary: they are exactly what ScoringEngine.ComputeSkillsScore has always
     // computed inline from Priority. Changing either one here moves every skills score in the product,
     // which is why they are asserted as literals rather than derived from the enum.

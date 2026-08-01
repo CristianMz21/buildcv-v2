@@ -12,6 +12,7 @@ public sealed class JobPosting
 
     private readonly List<JobRequirement> _requirements = [];
     private readonly List<Responsibility> _responsibilities = [];
+    private readonly List<LanguageRequirement> _languageRequirements = [];
 
     public JobPostingId Id { get; }
     public AccountId OwnerId { get; }
@@ -26,6 +27,14 @@ public sealed class JobPosting
     public DateTimeOffset? ClosesAt { get; private set; }
     public IReadOnlyList<JobRequirement> Requirements => _requirements.AsReadOnly();
     public IReadOnlyList<Responsibility> Responsibilities => _responsibilities.AsReadOnly();
+    public IReadOnlyList<LanguageRequirement> LanguageRequirements => _languageRequirements.AsReadOnly();
+
+    // Nullable because most postings state no degree requirement at all, and "not stated" has to stay
+    // distinguishable from "high school": PR 3 penalises a candidate for missing a stated requirement
+    // and must not invent one. There is no Domain mutator yet on purpose -- job-side authoring is
+    // recruiter-facing and this phase is candidate-first, so the column exists for the scorer to read
+    // and the write path arrives with the "bring your own job offer" phase. EF materializes it.
+    public EducationLevel? EducationLevel { get; private set; }
 
     private JobPosting(
         JobPostingId id,
@@ -113,6 +122,42 @@ public sealed class JobPosting
         foreach (var requirement in requirements)
         {
             if (!seen.Add(requirement.Skill.Name))
+                return true;
+        }
+        return false;
+    }
+
+    public void SetLanguageRequirements(IEnumerable<LanguageRequirement> requirements)
+    {
+        ArgumentNullException.ThrowIfNull(requirements);
+        var list = requirements.ToList();
+        foreach (var r in list)
+            ArgumentNullException.ThrowIfNull(r);
+        if (HasDuplicateLanguage(list))
+            throw new DuplicateSkillException("Duplicate language in requirements.");
+        _languageRequirements.Clear();
+        _languageRequirements.AddRange(list);
+        Touch();
+    }
+
+    public void AddLanguageRequirement(LanguageRequirement requirement)
+    {
+        ArgumentNullException.ThrowIfNull(requirement);
+        if (HasDuplicateLanguage(_languageRequirements.Append(requirement)))
+            throw new DuplicateSkillException($"Language '{requirement.Name}' already exists in requirements.");
+        _languageRequirements.Add(requirement);
+        Touch();
+    }
+
+    // OrdinalIgnoreCase, exactly as HasDuplicateSkill compares skill names. LanguageRequirement stores
+    // its name as typed, so record equality alone would let "English" and "english" both onto one
+    // posting -- and PR 3 would then score the candidate against whichever it happened to read first.
+    private static bool HasDuplicateLanguage(IEnumerable<LanguageRequirement> requirements)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var requirement in requirements)
+        {
+            if (!seen.Add(requirement.Name))
                 return true;
         }
         return false;

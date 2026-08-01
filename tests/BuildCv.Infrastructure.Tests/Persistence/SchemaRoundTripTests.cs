@@ -133,7 +133,8 @@ public sealed class SchemaRoundTripTests
         { Highlights = ["Shipped v1", "Halved build times"] });
 
         resume.AddEducation(new Education(
-            OrganizationName.Create("University of London"), "BSc", "Mathematics", period, "First"));
+            OrganizationName.Create("University of London"), "BSc", "Mathematics", period, "First",
+            EducationLevel.Bachelor));
 
         // `with`, not an object initializer: Skill is built by a factory method, and Keywords is an
         // init-only member on the record it returns.
@@ -156,7 +157,7 @@ public sealed class SchemaRoundTripTests
             Url.Create("https://learn.example.com/verify/CRED-123"),
             period));
 
-        resume.AddLanguage(new Language("Spanish", "Native"));
+        resume.AddLanguage(new Language("Spanish", "Native", LanguageProficiency.Native));
         resume.AddAward(new Award("Turing Award", OrganizationName.Create("ACM"), new DateOnly(2022, 3, 1), "For services."));
         resume.AddPublication(new Publication(
             "Notes on the Engine",
@@ -207,6 +208,13 @@ public sealed class SchemaRoundTripTests
         reloaded.Publications.Should().BeEquivalentTo(resume.Publications);
         reloaded.Interests.Should().BeEquivalentTo(resume.Interests);
         reloaded.References.Should().BeEquivalentTo(resume.References);
+
+        // The two new level columns, named where a failure says which one broke. They sit beside the
+        // ENCRYPTED free text that says roughly the same thing in prose — Fluency here, Degree on
+        // Education — and the whole point of them is that the engine reads the level and never parses
+        // the prose. A level lost on the way to disk would leave only the prose behind.
+        reloaded.Languages.Single().Level.Should().Be(LanguageProficiency.Native);
+        reloaded.Educations.Single().Level.Should().Be(EducationLevel.Bachelor);
     }
 
     // The other half of the classification, proved rather than asserted about the model: the skill
@@ -240,7 +248,7 @@ public sealed class SchemaRoundTripTests
     }
 
     [Fact]
-    public async Task JobPosting_RoundTrips_WithRequirementsAndResponsibilities()
+    public async Task JobPosting_RoundTrips_WithRequirementsLanguagesAndResponsibilities()
     {
         var posting = JobPosting.Create(
             AccountId.New(), "Senior .NET Engineer", OrganizationName.Create("Contoso"), "Build things.");
@@ -249,6 +257,11 @@ public sealed class SchemaRoundTripTests
         [
             JobRequirement.Create(Technology.Create("C#"), RequirementPriority.MustHave, 3),
             JobRequirement.Create(Technology.Create("SQL"), RequirementPriority.NiceToHave, 1),
+        ]);
+        posting.SetLanguageRequirements(
+        [
+            LanguageRequirement.Create("English", LanguageProficiency.Professional),
+            LanguageRequirement.Create("Español", LanguageProficiency.Native),
         ]);
         posting.SetResponsibilities([Responsibility.Create("Ship features."), Responsibility.Create("Review code.")]);
         posting.Publish();
@@ -262,6 +275,7 @@ public sealed class SchemaRoundTripTests
         await using var reader = _fixture.NewContext();
         var reloaded = await reader.JobPostings
             .Include(entity => entity.Requirements)
+            .Include(entity => entity.LanguageRequirements)
             .Include(entity => entity.Responsibilities)
             .SingleAsync(entity => entity.Id == posting.Id);
 
@@ -270,7 +284,20 @@ public sealed class SchemaRoundTripTests
         reloaded.CompanyName.Should().Be(posting.CompanyName);
         reloaded.Status.Should().Be(JobPostingStatus.Published);
         reloaded.Requirements.Should().BeEquivalentTo(posting.Requirements);
+        reloaded.LanguageRequirements.Should().BeEquivalentTo(posting.LanguageRequirements);
         reloaded.Responsibilities.Should().BeEquivalentTo(posting.Responsibilities);
+
+        // The classification, proved rather than asserted about the model: this filter runs on the
+        // SERVER. Both columns had to be plaintext for it to translate, and PR 3's engine needs
+        // exactly this — "postings requiring Spanish at native level" is not a question anything can
+        // ask through an envelope. BeEquivalentTo above cannot show it; it only reads bytes back.
+        var demanding = await reader.JobPostings
+            .Where(entity => entity.LanguageRequirements.Any(requirement =>
+                requirement.Name == "Español" && requirement.MinimumLevel == LanguageProficiency.Native))
+            .Select(entity => entity.Id)
+            .ToListAsync();
+
+        demanding.Should().Contain(posting.Id);
     }
 
     [Fact]
