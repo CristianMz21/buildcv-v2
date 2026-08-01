@@ -99,6 +99,7 @@ public static class DependencyInjection
         services.AddScoped<IQueryHandler<GetAccountQuery, Result<AccountDto>>, GetAccountHandler>();
         services.AddScoped<ICommandHandler<ChangePasswordCommand, Result<AccountDto>>, ChangePasswordHandler>();
         services.AddScoped<ICommandHandler<VerifyEmailCommand, Result<AccountDto>>, VerifyEmailHandler>();
+        services.AddScoped<ICommandHandler<RevokeSessionsCommand, Result>, RevokeSessionsHandler>();
 
         // Resumes
         services.AddScoped<ICommandHandler<CreateResumeCommand, Result<Resume>>, CreateResumeHandler>();

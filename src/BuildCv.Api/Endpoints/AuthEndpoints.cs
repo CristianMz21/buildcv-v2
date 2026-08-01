@@ -93,12 +93,35 @@ public static class AuthEndpoints
         .AllowAnonymous()
         .RequireRateLimiting(RateLimitPolicies.Auth);
 
-        group.MapPost("/logout", (HttpContext httpContext, ILogger<Program> logger) =>
+        // AllowAnonymous is deliberate. The fallback authorization policy would answer 401 the
+        // moment the access token expired, which is precisely when a user wants out — and a 401
+        // leaves both cookies in the browser with the refresh token still live in the store, so
+        // requiring authentication makes the security action unavailable exactly when it matters.
+        // Authentication middleware still runs, so a caller presenting a valid token is
+        // identified and every refresh token on that account is revoked. Cookies are cleared
+        // unconditionally and the answer is always 204: an anonymous logout is a no-op that leaks
+        // nothing. CsrfGuardMiddleware still covers this route (it is not in ExemptPaths), so a
+        // cross-site request cannot force-revoke a victim's sessions.
+        group.MapPost("/logout", async Task<IResult> (
+            HttpContext httpContext,
+            ICommandHandler<RevokeSessionsCommand, Result> handler,
+            ILogger<Program> logger,
+            CancellationToken cancellationToken) =>
         {
+            var accountId = httpContext.User.GetAccountIdOrNull();
+            var revoked = accountId is null
+                ? null
+                : await handler.Handle(new RevokeSessionsCommand(accountId), cancellationToken);
+
             AuthCookies.ClearTokens(httpContext);
-            AuditLog.Log(logger, "logout", httpContext.User.GetAccountIdOrNull(), httpContext);
+            AuditLog.Log(
+                logger,
+                revoked is { IsSuccess: false } ? "logout_revoke_failure" : "logout",
+                accountId,
+                httpContext);
             return Results.NoContent();
-        });
+        })
+        .AllowAnonymous();
 
         group.MapPost("/change-password", async Task<IResult> (
             ChangePasswordRequest request,
@@ -112,7 +135,13 @@ public static class AuthEndpoints
                 cancellationToken);
 
             if (result.IsSuccess)
+            {
+                // The handler just revoked every refresh token on this account, including the one
+                // in the caller's own cookie. Clearing both cookies keeps the browser's view
+                // honest instead of leaving it holding credentials the server no longer accepts.
+                AuthCookies.ClearTokens(httpContext);
                 AuditLog.Log(logger, "password_changed", new AccountId(result.Value!.Id), httpContext);
+            }
 
             return result.ToHttpResult();
         })

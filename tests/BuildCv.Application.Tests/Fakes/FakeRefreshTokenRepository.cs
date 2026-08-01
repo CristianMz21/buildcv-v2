@@ -7,6 +7,8 @@ public sealed class FakeRefreshTokenRepository : IRefreshTokenRepository
 {
     private readonly List<RefreshToken> _tokens = [];
 
+    public IReadOnlyList<RefreshToken> Tokens => _tokens;
+
     public Task<RefreshToken?> GetByTokenAsync(string token, CancellationToken cancellationToken = default) =>
         Task.FromResult(_tokens.FirstOrDefault(t => t.Token == token));
 
@@ -19,6 +21,12 @@ public sealed class FakeRefreshTokenRepository : IRefreshTokenRepository
     public Task RevokeAsync(string token, CancellationToken cancellationToken = default)
     {
         _tokens.RemoveAll(t => t.Token == token);
+        return Task.CompletedTask;
+    }
+
+    public Task RevokeAllForAccountAsync(AccountId accountId, CancellationToken cancellationToken = default)
+    {
+        _tokens.RemoveAll(t => t.AccountId == accountId);
         return Task.CompletedTask;
     }
 }

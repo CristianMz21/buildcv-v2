@@ -123,6 +123,27 @@ public class InMemoryRepositoryTests
     }
 
     [Fact]
+    public async Task RefreshToken_revoke_all_for_account_drops_only_that_accounts_tokens()
+    {
+        var repository = new InMemoryRefreshTokenRepository();
+        var accountId = AccountId.New();
+        var createdAt = DateTimeOffset.UtcNow;
+
+        var first = RefreshToken.Create(new string('a', 86), accountId, createdAt, createdAt.AddDays(30));
+        var second = RefreshToken.Create(new string('b', 86), accountId, createdAt, createdAt.AddDays(30));
+        var bystander = RefreshToken.Create(new string('c', 86), AccountId.New(), createdAt, createdAt.AddDays(30));
+        await repository.AddAsync(first);
+        await repository.AddAsync(second);
+        await repository.AddAsync(bystander);
+
+        await repository.RevokeAllForAccountAsync(accountId);
+
+        (await repository.GetByTokenAsync(first.Token)).Should().BeNull();
+        (await repository.GetByTokenAsync(second.Token)).Should().BeNull();
+        (await repository.GetByTokenAsync(bystander.Token)).Should().Be(bystander);
+    }
+
+    [Fact]
     public async Task Resume_add_and_get_by_id_roundtrip()
     {
         var repository = new InMemoryResumeRepository();
