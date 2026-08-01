@@ -99,10 +99,9 @@ public sealed class ModelConfigurationTests
     // A deliberate SPOT-CHECK, not an exhaustive set — it names the highest-value analytical columns
     // and omits the ones whose loss would be obvious or harmless (audit timestamps, the four
     // ScoreBreakdown scores not named below, Membership, the opaque Guid foreign keys). Completeness
-    // is not needed
-    // here because ExpectedEncryptedColumns is asserted with exact set equality in BOTH directions:
-    // nothing can gain encryption without being declared there, so nothing can slip out of this list
-    // unnoticed. This one exists to make the intent of the classification legible.
+    // is not needed here because ExpectedEncryptedColumns is asserted with exact set equality in BOTH
+    // directions: nothing can gain encryption without being declared there, so nothing can slip out of
+    // this list unnoticed. This one exists to make the intent of the classification legible.
     private static readonly string[] HighValueAnalyticalColumns =
     [
         "Skill.Name", "Skill.Level", "Skill.YearsOfExperience", "Skill.Keywords",

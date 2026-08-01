@@ -15,6 +15,15 @@ public sealed class Analysis
     public ResumeId ResumeId { get; }
     public JobPostingId JobPostingId { get; }
     public DateTimeOffset ScoredAt { get; }
+
+    // UNORDERED. This is a set, not a sequence: the child table carries a surrogate key and no stored
+    // position, so a reloaded analysis hands these back in whatever order the server chose — which is
+    // NOT the order they were added in, and is not stable between reads.
+    //
+    // Anything presenting these to a candidate has to sort them explicitly (Priority, then Impact).
+    // Insertion order is the assumption to avoid; the reason there is no position column is that a
+    // stored one is a lie the moment a rule is added or removed, the same argument ChildTable makes
+    // about positional keys.
     public IReadOnlyList<Recommendation> Recommendations => _recommendations.AsReadOnly();
 
     public int OverallScore => (int)Math.Round(Breakdown.WeightedTotal * 100);
