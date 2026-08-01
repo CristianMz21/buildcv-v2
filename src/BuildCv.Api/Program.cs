@@ -3,10 +3,13 @@ using System.Threading.RateLimiting;
 using BuildCv.Api.Common;
 using BuildCv.Api.Endpoints;
 using BuildCv.Api.Security;
+using BuildCv.Application.Common.Services;
 using BuildCv.Infrastructure;
+using BuildCv.Infrastructure.Persistence;
 using BuildCv.Infrastructure.Security;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 
@@ -16,7 +19,15 @@ builder.WebHost.ConfigureKestrel(options => options.AddServerHeader = false);
 
 var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
 
-builder.Services.AddInfrastructure(builder.Configuration);
+// The environment name goes in because the persistence provider is chosen there: the in-memory store is
+// allowed to be selected locally and must not be selectable on a deployed host by accident.
+builder.Services.AddInfrastructure(builder.Configuration, builder.Environment.EnvironmentName);
+
+// AFTER AddInfrastructure, which registers UnknownCurrentUser with TryAdd semantics. The last
+// registration for a service type wins, so this is what the audit interceptor resolves — and it is what
+// puts a real account id into the CreatedBy / UpdatedBy / DeletedBy columns instead of NULL.
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddScoped<ICurrentUser, HttpContextCurrentUser>();
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer();
 
@@ -132,11 +143,26 @@ if (allowedOrigins.Length > 0)
 
 builder.Services.AddProblemDetails();
 builder.Services.AddExceptionHandler<DomainExceptionHandler>();
+// Before the catch-all: a storage conflict is a 409 the client can act on, and letting it fall through
+// to the 500 handler would tell a caller whose only problem is a stale copy that the server is broken.
+builder.Services.AddExceptionHandler<PersistenceExceptionHandler>();
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 
 builder.Services.AddOpenApi();
 
 var app = builder.Build();
+
+// Development convenience only, and narrow on purpose. Applying migrations from inside the application
+// means the process that serves traffic also owns the schema; that is fine for a laptop and wrong for a
+// deployment, where the migration is a separate, reviewable step that runs once rather than once per
+// instance. Guarded three ways so turning it on anywhere else takes a deliberate act.
+if (app.Environment.IsDevelopment()
+    && PersistenceConfiguration.UsesSqlServer(app.Configuration)
+    && PersistenceConfiguration.AutoMigrateEnabled(app.Configuration))
+{
+    await using var migrationScope = app.Services.CreateAsyncScope();
+    await migrationScope.ServiceProvider.GetRequiredService<BuildCvDbContext>().Database.MigrateAsync();
+}
 
 app.UseMiddleware<SecurityHeadersMiddleware>();
 app.UseExceptionHandler();

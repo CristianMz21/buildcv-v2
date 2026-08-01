@@ -17,6 +17,21 @@ public sealed class ApiTestFactory(string? environment = null) : WebApplicationF
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment(_environment);
+
+        // UseSetting, not the in-memory collection below, and the difference is load-bearing. Choosing a
+        // persistence provider happens while services are being REGISTERED, which is before
+        // ConfigureAppConfiguration's sources are attached — a value added there arrives too late and the
+        // host registers the SQL Server repositories, then fails every request on a connection it was
+        // never meant to open. UseSetting writes into the host configuration WebApplication.CreateBuilder
+        // reads, which is the same channel UseEnvironment above already travels on.
+        //
+        // These tests are about HTTP behavior, not storage, so they run on the in-memory store and never
+        // need a database. The acknowledgement key is what lets the one test that deliberately builds a
+        // Staging-shaped host keep using it: outside Development the in-memory provider refuses to
+        // register without it.
+        builder.UseSetting("Persistence:Provider", "InMemory");
+        builder.UseSetting("Persistence:AllowInMemoryOutsideDevelopment", "true");
+
         builder.ConfigureAppConfiguration((_, config) =>
         {
             config.AddInMemoryCollection(new Dictionary<string, string?>

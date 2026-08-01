@@ -1,4 +1,5 @@
 using BuildCv.Domain.Exceptions;
+using BuildCv.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
 
@@ -31,6 +32,38 @@ public sealed class DomainExceptionHandler : IExceptionHandler
             default:
                 return false;
         }
+    }
+}
+
+// Storage conflicts. Both are 409: the request was well formed and the server understood it, but another
+// write got there first, and the caller's move in either case is to reload and retry.
+//
+// The details are fixed strings rather than the exception's message. The exceptions themselves carry a
+// SqlException inner whose text names the index that fired — on this model, an index over a blind-index
+// digest — and an error body is the last place that belongs.
+public sealed class PersistenceExceptionHandler : IExceptionHandler
+{
+    public async ValueTask<bool> TryHandleAsync(
+        HttpContext httpContext, Exception exception, CancellationToken cancellationToken)
+    {
+        var detail = exception switch
+        {
+            ConcurrencyConflictException => "The record was modified by another request. Reload it and try again.",
+            DuplicateKeyException => "A record with the same unique value already exists.",
+            _ => null
+        };
+
+        if (detail is null)
+            return false;
+
+        httpContext.Response.StatusCode = StatusCodes.Status409Conflict;
+        await httpContext.Response.WriteAsJsonAsync(new ProblemDetails
+        {
+            Title = "Conflict",
+            Detail = detail,
+            Status = StatusCodes.Status409Conflict
+        }, cancellationToken);
+        return true;
     }
 }
 
