@@ -23,11 +23,30 @@ internal sealed class ResumeRepository : IResumeRepository
         _context = context;
     }
 
+    // AsSplitQuery, and this one is not a micro-optimization. Ten owned collections in one statement
+    // means ten LEFT JOINs against the same principal, and SQL Server returns their CARTESIAN PRODUCT:
+    // a resume with 4 experiences, 3 educations, 20 skills and so on comes back as the product of those
+    // counts, not their sum. EF de-duplicates during materialization, which is exactly why every
+    // functional test passes and nothing here ever looked wrong — the cost is entirely in the rows the
+    // server builds, sorts and ships. Nothing caps any collection, so the product is attacker-controlled.
+    //
+    // Split query issues one statement per collection instead, so the work becomes the SUM of the
+    // counts. The extra round trips are the price, and they are bounded at eleven; the join form is
+    // bounded by nothing.
     public async Task<Resume?> GetByIdAsync(ResumeId id, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(id);
-        return await _context.Resumes.AsTracking().FirstOrDefaultAsync(resume => resume.Id == id, cancellationToken);
+        return await ByIdQuery(_context, id).FirstOrDefaultAsync(cancellationToken);
     }
+
+    // Stops one step short of executing so the SQL can be READ without a database — the failure this
+    // guards against is invisible from the outside. A single-query GetByIdAsync returns exactly the
+    // same Resume as a split one, because EF de-duplicates the fan-out during materialization; the only
+    // place the difference shows is the statement. ResumeQueryTranslationTests counts the joins in it.
+    internal static IQueryable<Resume> ByIdQuery(BuildCvDbContext context, ResumeId id) =>
+        context.Resumes.AsTracking()
+            .AsSplitQuery()
+            .Where(resume => resume.Id == id);
 
     // A pure read: nothing mutates a list, so it rides the context-wide NoTracking default. Ordered
     // newest-first on Seq, which is the direction the (OwnerId, Seq DESC) index is laid out in and the
