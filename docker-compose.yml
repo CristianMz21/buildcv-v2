@@ -8,7 +8,10 @@
 
 services:
   sqlserver:
-    image: mcr.microsoft.com/mssql/server:2022-latest
+    # Pinned to a specific CU, not `2022-latest`: that tag is a floating pointer Microsoft has
+    # repointed before (moving sqlcmd from /opt/mssql-tools/bin to /opt/mssql-tools18/bin broke
+    # Testcontainers' default wait strategy — testcontainers-dotnet#1220). A pinned tag can't move.
+    image: mcr.microsoft.com/mssql/server:2022-CU26-ubuntu-22.04
     container_name: buildcv-sqlserver
     environment:
       ACCEPT_EULA: "Y"

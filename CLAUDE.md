@@ -24,7 +24,7 @@ dotnet test tests/BuildCv.Api.Tests/BuildCv.Api.Tests.csproj --filter "FullyQual
 dotnet test tests/BuildCv.Domain.Tests/BuildCv.Domain.Tests.csproj --filter "FullyQualifiedName~ResumeTests.AddSkill_Duplicate_Throws"
 ```
 
-CI (`.github/workflows/ci.yml`): restore → build Release → `dotnet format --verify-no-changes` → test with coverage. Unformatted code fails CI, so run `dotnet format` before committing.
+CI (`.github/workflows/ci.yml`) runs two parallel jobs: `build-and-unit-test` (restore → build Release → `dotnet format --verify-no-changes` → unit tests with coverage) and `integration-test` (restore → build Release → integration tests with coverage, 15-minute timeout). Unformatted code fails CI, so run `dotnet format` before committing.
 
 ## Architecture
 
@@ -67,6 +67,8 @@ Middleware order in `Program.cs` matters (SecurityHeaders → ExceptionHandler �
 xUnit + FluentAssertions everywhere; `Xunit` is a global using in test projects. Naming: `Method_Condition_ExpectedResult`. No mocking libraries — Application tests use hand-written fakes in `tests/BuildCv.Application.Tests/Fakes/`; extend those instead of adding Moq/NSubstitute.
 
 API tests use `ApiTestFactory` (`WebApplicationFactory<Program>`), which forces the Development environment and injects in-memory `Jwt:*` config. Use its `CreateCookieClient()` and the `TestHelpers` register/login extensions for authenticated scenarios.
+
+Tests tagged `[Trait("Category", "Integration")]` require a running local Docker daemon: they start and migrate their own disposable SQL Server 2022 container via `Testcontainers.MsSql` (not the `docker-compose.yml` instance — no `docker compose up` needed). `dotnet test --filter "Category!=Integration"` runs unit tests only; `--filter "Category=Integration"` runs integration tests only. `docker-compose.yml` is unrelated — it's for manual development and `dotnet ef database update`.
 
 ## Conventions
 
