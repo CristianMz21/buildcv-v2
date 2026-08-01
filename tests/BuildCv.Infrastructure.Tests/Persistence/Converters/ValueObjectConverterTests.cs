@@ -111,10 +111,50 @@ public class ValueObjectConverterTests
         // The whole point: a v1 breakdown still produces the total it always produced.
         var breakdown = ScoreBreakdown.Create(1.0, 1.0, 1.0, 1.0, 1.0, 0.0, weights);
         breakdown.WeightedTotal.Should().BeApproximately(1.0, 0.0001);
+    }
 
-        // And it is arithmetically what this PR ships, which is the claim that makes the change
-        // behaviour-neutral: every row already on disk reads back as today's weighting exactly.
-        weights.Should().Be(ScoringWeightsSnapshot.Default());
+    // THE INVERSE of the assertion that used to close the test above.
+    //
+    // While Languages carried no weight, a v1 payload read back as exactly Default() and that equality
+    // WAS the behaviour-neutrality claim, measured at the persistence layer. v2 redistributes, so the
+    // equality is now false on purpose — and stating that it is false is what stops a future
+    // redistribution from being reverted by accident and passing silently.
+    //
+    // It also names the rollback cliff in the place a reader meets the payload. A build older than v2
+    // deserializing a v2 row sees five weights summing to 0.90, and Create throws on the sum invariant:
+    // every row written after v2 deploys is unreadable to it, which is why there is no rolling back
+    // past the first write.
+    [Fact]
+    public void ScoringWeights_AVersionOnePayloadNoLongerMatchesTodaysWeighting()
+    {
+        const string v1 =
+            """{"Skills":0.45,"Experience":0.2,"Education":0.2,"Certifications":0.1,"Projects":0.05,"SchemaVersion":1}""";
+
+        var stored = ScoringWeightsSnapshotConverter.FromJson(v1);
+        var today = ScoringWeightsSnapshot.Default();
+
+        // The WEIGHTS, member by member, and NOT `stored.Should().NotBe(today)`. Record equality
+        // includes SchemaVersion, so the whole-record comparison is satisfied by the version differing
+        // even when every weight is identical — a negative control that reverted the redistribution and
+        // left the const at 2 walked straight past it. The claim here is about the numbers.
+        stored.Education.Should().NotBe(today.Education,
+            "v2 halved Education, so an old row is explained by a different model");
+        stored.Languages.Should().NotBe(today.Languages,
+            "and funded Languages with what Education lost");
+
+        stored.SchemaVersion.Should().NotBe(ScoringWeightsSnapshot.CurrentSchemaVersion,
+            "and the row says so rather than leaving the difference to be inferred from the numbers");
+
+        // The other direction of the cliff, executed rather than described: drop the sixth member from
+        // a v2 payload — which is precisely what an older reader's deserializer does with a member it
+        // does not know — and the factory refuses it.
+        const string v2SeenByAnOldReader =
+            """{"Skills":0.45,"Experience":0.2,"Education":0.1,"Certifications":0.1,"Projects":0.05,"SchemaVersion":2}""";
+
+        var act = () => ScoringWeightsSnapshotConverter.FromJson(v2SeenByAnOldReader);
+
+        act.Should().Throw<ArgumentException>()
+            .WithMessage("*0.9*", "the five members it can see sum to 0.90, not 1.00");
     }
 
     [Fact]
@@ -124,7 +164,7 @@ public class ValueObjectConverterTests
 
         var json = ScoringWeightsSnapshotConverter.ToJson(weights);
 
-        json.Should().Contain("\"Languages\"", "the written shape carries the member even at weight zero");
+        json.Should().Contain("\"Languages\"", "the section now carries weight, and the payload states it");
         ScoringWeightsSnapshotConverter.FromJson(json).Should().Be(weights);
     }
 

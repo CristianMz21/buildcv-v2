@@ -5,6 +5,11 @@ using BuildCv.Domain.Jobs;
 using BuildCv.Domain.Resumes;
 using BuildCv.Domain.Scoring;
 
+// A pure function of (resume, posting, referenceDate). Registered as a singleton, so it holds no
+// state and neither does anything it calls.
+//
+// Every formula lives in ScoringRules rather than here, because RecommendationBuilder has to evaluate
+// the same formulas to say what acting on a gap is worth.
 public sealed class ScoringEngine : IScoringEngine
 {
     public ScoreBreakdown Score(Resume resume, JobPosting jobPosting, DateOnly referenceDate)
@@ -12,78 +17,17 @@ public sealed class ScoringEngine : IScoringEngine
         ArgumentNullException.ThrowIfNull(resume);
         ArgumentNullException.ThrowIfNull(jobPosting);
 
-        var skillsScore = ComputeSkillsScore(resume, jobPosting);
-        var experienceScore = ComputeExperienceScore(resume, referenceDate);
-        var educationScore = ComputeEducationScore(resume);
-        var certificationsScore = ComputeCertificationsScore(resume, referenceDate);
-        var projectsScore = ComputeProjectsScore(resume);
+        var (matchedWeight, totalWeight) = ScoringRules.SkillWeights(resume, jobPosting);
 
         return ScoreBreakdown.Create(
-            skillsScore,
-            experienceScore,
-            educationScore,
-            certificationsScore,
-            projectsScore,
-            // Languages is shaped but not yet computed: the engine still scores exactly the five
-            // sections it always has, and a 0.0 here says so honestly rather than inventing a number.
-            0.0,
+            ScoringRules.SkillsScore(matchedWeight, totalWeight),
+            ScoringRules.ExperienceScore(ScoringRules.ProfessionalDays(resume, referenceDate)),
+            ScoringRules.EducationScore(resume),
+            ScoringRules.CertificationsScore(ScoringRules.ValidCertificateCount(resume, referenceDate)),
+            ScoringRules.ProjectsScore(ScoringRules.QualifyingProjectCount(resume)),
+            ScoringRules.LanguagesScore(
+                ScoringRules.SatisfiedLanguageCount(resume, jobPosting),
+                jobPosting.LanguageRequirements.Count),
             ScoringWeightsSnapshot.Default());
-    }
-
-    private static double ComputeSkillsScore(Resume resume, JobPosting jobPosting)
-    {
-        if (jobPosting.Requirements.Count == 0)
-            return 0.5;
-
-        double matchedWeight = 0;
-        double totalWeight = 0;
-
-        foreach (var requirement in jobPosting.Requirements)
-        {
-            var weight = requirement.Priority == RequirementPriority.MustHave ? 1.0 : 0.5;
-            totalWeight += weight;
-            if (IsSatisfiedBy(requirement, resume))
-                matchedWeight += weight;
-        }
-
-        return Math.Clamp(matchedWeight / totalWeight, 0.0, 1.0);
-    }
-
-    private static bool IsSatisfiedBy(JobRequirement requirement, Resume resume) =>
-        resume.Skills.Any(s => s.Name.Name.Equals(requirement.Skill.Name, StringComparison.OrdinalIgnoreCase))
-        || resume.Skills.Any(s => s.Keywords.Any(k => k.Equals(requirement.Skill.Name, StringComparison.OrdinalIgnoreCase)))
-        || resume.Projects.Any(p => p.Technologies.Any(t => t.Name.Equals(requirement.Skill.Name, StringComparison.OrdinalIgnoreCase)));
-
-    private static double ComputeExperienceScore(Resume resume, DateOnly referenceDate)
-    {
-        var totalDays = resume.Experiences
-            .Where(e => e.Type == ExperienceType.Professional)
-            .Sum(e => e.Period.DurationInDays(referenceDate));
-
-        return Math.Clamp(totalDays / (365.0 * 5), 0.0, 1.0);
-    }
-
-    private static double ComputeEducationScore(Resume resume)
-    {
-        if (resume.Educations.Count == 0)
-            return 0.0;
-
-        return resume.Educations.Any(e => !string.IsNullOrWhiteSpace(e.Degree)) ? 1.0 : 0.7;
-    }
-
-    private static double ComputeCertificationsScore(Resume resume, DateOnly referenceDate)
-    {
-        var validCount = resume.Certificates.Count(c =>
-            c.ValidityPeriod is null
-            || c.ValidityPeriod.IsCurrent
-            || c.ValidityPeriod.End >= referenceDate);
-
-        return Math.Clamp(validCount / 3.0, 0.0, 1.0);
-    }
-
-    private static double ComputeProjectsScore(Resume resume)
-    {
-        var count = resume.Projects.Count(p => p.Technologies.Count > 0 || p.Highlights.Count > 0);
-        return Math.Clamp(count / 3.0, 0.0, 1.0);
     }
 }
