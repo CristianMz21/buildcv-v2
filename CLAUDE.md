@@ -50,6 +50,20 @@ Follow this strictly; don't mix tiers:
 2. **Application** handlers catch `DomainException`/`ArgumentException` and return `Result<T>` (`Domain/Common/ValueObjects/Result.cs`, with `Map`/`Bind`/`Match`).
 3. **Api** converts `Result<T>` to HTTP via `Common/ResultExtensions.ToHttpResult()` (403 for "Forbidden.", 404 for errors ending in "not found.", else 400); anything that leaks is turned into RFC 7807 ProblemDetails by the `IExceptionHandler`s in `Common/ApiExceptionHandlers.cs`. All error responses are ProblemDetails-shaped.
 
+### Encrypted columns
+
+PII columns are AES-GCM sealed and stored as `varbinary` (`Persistence/Converters/EncryptedConverter.cs`). **Never query them in LINQ** — the envelope carries a fresh nonce on every write, so two rows holding the same value have different bytes: `Where(a => a.Email == email)` compiles, runs, and returns nothing forever, and no index on the column can enforce uniqueness either.
+
+Exact-match lookups go through the HMAC **blind-index** shadow columns instead — `EmailHash` on `identity.Accounts`, `TokenHash` on `identity.RefreshTokens` — which carry the (filtered, unique) indexes. Rules:
+
+- Digests are computed only through `Persistence/BlindIndexes/AccountEmailIndex` and `RefreshTokenIndex`, never through `IBlindIndex` directly (they own the AAD context string and demand an already-normalized value).
+- **Writes** use `Compute` (active key only) and happen exclusively in `BlindIndexSaveChangesInterceptor`, so the digest and the ciphertext can never disagree.
+- **Reads** use `ComputeCandidates` (every configured key) via `Persistence/EfCore/BlindIndexLookup`, which takes a candidate list and has no single-digest overload. `Compute` on a read path silently answers "not found" for every row written under a retired key during a rotation window — which also lets the same address register twice.
+
+Analytical columns stay plaintext by design (skill names, levels, years, date ranges, scores): they are what the scoring engine and internal analytics query, and no query can reach through an envelope. `Persistence/Configurations/*.cs` states the classification per property; `ModelConfigurationTests` asserts it.
+
+Soft delete is a shadow `DeletedAt` plus a global query filter on every aggregate root. `Account.Delete()` and `Organization.Delete()` set a domain `Status` **and** the repository writes the tombstone alongside it — one observable delete, and the filtered unique indexes then genuinely free the address or slug for re-registration.
+
 ### API security model
 
 Auth is JWT in HttpOnly cookies (with `Authorization: Bearer` fallback — `OnMessageReceived` reads the `access_token` cookie). Refresh tokens are opaque, cookie-scoped to `/auth/refresh`. Cross-cutting pieces live in `src/BuildCv.Api/Security/`:
