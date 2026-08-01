@@ -25,6 +25,10 @@ public sealed class RefreshTokenIndex
 
     // The digest to WRITE. Takes the entity rather than its string so a write cannot be computed for
     // a token that never passed the Domain's length and lifetime validation.
+    //
+    // WRITES ONLY, and there is exactly one caller: BlindIndexSaveChangesInterceptor. A read goes through
+    // Persistence/EfCore/BlindIndexLookup, which takes the ComputeCandidates list and has no overload
+    // that would accept this.
     public byte[] Compute(RefreshToken refreshToken)
     {
         ArgumentNullException.ThrowIfNull(refreshToken);

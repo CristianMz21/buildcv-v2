@@ -30,6 +30,10 @@ public sealed class AccountEmailIndex
     }
 
     // The digest to WRITE, under the active blind-index key.
+    //
+    // WRITES ONLY, and there is exactly one caller: BlindIndexSaveChangesInterceptor. A read goes through
+    // Persistence/EfCore/BlindIndexLookup, which takes the ComputeCandidates list and has no overload
+    // that would accept this — see ComputeCandidates below for what using this one instead costs.
     public byte[] Compute(Email email)
     {
         ArgumentNullException.ThrowIfNull(email);

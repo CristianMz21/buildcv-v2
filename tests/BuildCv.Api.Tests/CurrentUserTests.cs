@@ -1,8 +1,10 @@
 using System.Security.Claims;
 using BuildCv.Api.Security;
+using BuildCv.Application.Common.Services;
 using BuildCv.Domain.Identity;
 using FluentAssertions;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace BuildCv.Api.Tests;
 
@@ -50,6 +52,21 @@ public class CurrentUserTests
     public void AccountId_OutsideAnyRequest_IsNull()
     {
         new HttpContextCurrentUser(new HttpContextAccessor()).AccountId.Should().BeNull();
+    }
+
+    // The registration itself, not the class. Infrastructure registers UnknownCurrentUser through
+    // TryAddSingleton and Program.cs overrides it by registering afterwards — which means the guarantee
+    // rests entirely on the ORDER of two lines in two different files. Move AddInfrastructure below the
+    // override and every CreatedBy, UpdatedBy and DeletedBy column silently reverts to NULL with a fully
+    // green suite. Nothing else in the codebase would notice; this does.
+    [Fact]
+    public void ICurrentUser_ResolvedFromTheHost_IsTheHttpContextBackedImplementation()
+    {
+        using var factory = new ApiTestFactory();
+        using var scope = factory.Services.CreateScope();
+
+        scope.ServiceProvider.GetRequiredService<ICurrentUser>().Should().BeOfType<HttpContextCurrentUser>(
+            "AddInfrastructure's UnknownCurrentUser fallback must lose to the Api's override");
     }
 
     private static IHttpContextAccessor Accessor(HttpContext httpContext) =>
