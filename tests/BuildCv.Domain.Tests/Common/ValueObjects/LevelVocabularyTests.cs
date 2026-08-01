@@ -29,10 +29,11 @@ public class LevelVocabularyTests
     public void EducationLevel_members_keep_their_persisted_numbers(EducationLevel level, int expected) =>
         ((int)level).Should().Be(expected);
 
-    // The other half, and the one the numbers alone do not state: the members ASCEND, which is what
-    // makes `held >= required` the whole comparison PR 3 needs. Enum.GetValues returns members in
-    // NUMERIC order, so asserting it against the intended semantic order is a real check — swap two
-    // members' numbers and the returned sequence stops matching.
+    // The two below are DOCUMENTATION, not additional coverage: with all five numbers pinned above,
+    // Enum.GetValues' order is already determined, so nothing can reach these that the theories would
+    // not have caught first. They earn their place by stating the semantic contract the numbers only
+    // imply — the members ASCEND, which is what makes `held >= required` the whole comparison PR 3
+    // needs — in a form a reader does not have to reconstruct from five integers.
     [Fact]
     public void LanguageProficiency_ascends_from_least_to_most_proficient() =>
         Enum.GetValues<LanguageProficiency>().Should().Equal(
