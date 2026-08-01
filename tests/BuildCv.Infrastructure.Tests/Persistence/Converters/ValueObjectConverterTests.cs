@@ -128,6 +128,34 @@ public class ValueObjectConverterTests
         ScoringWeightsSnapshotConverter.FromJson(json).Should().Be(weights);
     }
 
+    // FromJson has to carry the version that was WRITTEN, not fall back to the one that ships today.
+    //
+    // The argument that does this is optional, so dropping it compiles silently, and the two tests
+    // that used to catch that now assert 1 against a fallback of 1 — they agree with the bug. The
+    // version here is deliberately unequal to CurrentSchemaVersion, and the first assertion fails
+    // rather than the test quietly weakening if a future bump ever makes it equal again.
+    //
+    // Latent until PR 3 moves the const to 2, at which point every historical row would start
+    // claiming it was scored under weights that did not exist when it was scored.
+    [Fact]
+    public void ScoringWeights_ThePersistedSchemaVersionSurvivesTheRoundTrip()
+    {
+        const int persisted = 7;
+        persisted.Should().NotBe(ScoringWeightsSnapshot.CurrentSchemaVersion,
+            "a version equal to the fallback cannot detect the fallback");
+
+        const string stored =
+            """{"Skills":0.45,"Experience":0.2,"Education":0.2,"Certifications":0.1,"Projects":0.05,"Languages":0.0,"SchemaVersion":7}""";
+
+        // Parsed from a literal rather than round-tripped through ToJson, so a writer that dropped the
+        // member could not make this pass by never emitting it.
+        ScoringWeightsSnapshotConverter.FromJson(stored).SchemaVersion.Should().Be(persisted);
+
+        var written = ScoringWeightsSnapshot.Create(0.45, 0.20, 0.20, 0.10, 0.05, 0.00, persisted);
+        ScoringWeightsSnapshotConverter.FromJson(ScoringWeightsSnapshotConverter.ToJson(written))
+            .Should().Be(written);
+    }
+
     // The column-width guard, on a payload that can actually fail it.
     //
     // Default() serializes to roughly 120 characters against a 256 cap, so measuring THAT would pass

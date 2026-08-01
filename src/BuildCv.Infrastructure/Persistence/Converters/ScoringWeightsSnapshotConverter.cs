@@ -51,6 +51,12 @@ internal sealed class ScoringWeightsSnapshotConverter() : ValueConverter<Scoring
             weights.Certifications,
             weights.Projects,
             weights.Languages,
+            // The PERSISTED version, never the current one. This argument looks redundant and is not:
+            // the parameter is optional, so deleting it compiles and every historical row silently
+            // starts reporting whatever version ships today — the exact failure the field exists to
+            // prevent. Pinned by ScoringWeights_ThePersistedSchemaVersionSurvivesTheRoundTrip, which
+            // uses a version deliberately unequal to CurrentSchemaVersion so it cannot agree with the
+            // fallback.
             weights.SchemaVersion);
     }
 
