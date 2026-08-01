@@ -55,10 +55,12 @@ public class CurrentUserTests
     }
 
     // The registration itself, not the class. Infrastructure registers UnknownCurrentUser through
-    // TryAddSingleton and Program.cs overrides it by registering afterwards — which means the guarantee
-    // rests entirely on the ORDER of two lines in two different files. Move AddInfrastructure below the
-    // override and every CreatedBy, UpdatedBy and DeletedBy column silently reverts to NULL with a fully
-    // green suite. Nothing else in the codebase would notice; this does.
+    // TryAddSingleton, which no-ops once the service type is present, so the two registrations are
+    // order-insensitive — either order resolves HttpContextCurrentUser.
+    //
+    // What is fragile is that the override exists at all. Delete it, turn it into a TryAdd, or switch
+    // Infrastructure's fallback to a plain AddSingleton, and every CreatedBy, UpdatedBy and DeletedBy
+    // column silently reverts to NULL. Nothing else in the codebase would notice; this does.
     [Fact]
     public void ICurrentUser_ResolvedFromTheHost_IsTheHttpContextBackedImplementation()
     {

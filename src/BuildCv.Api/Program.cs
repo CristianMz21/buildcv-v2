@@ -23,9 +23,10 @@ var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get
 // allowed to be selected locally and must not be selectable on a deployed host by accident.
 builder.Services.AddInfrastructure(builder.Configuration, builder.Environment.EnvironmentName);
 
-// AFTER AddInfrastructure, which registers UnknownCurrentUser with TryAdd semantics. The last
-// registration for a service type wins, so this is what the audit interceptor resolves — and it is what
-// puts a real account id into the CreatedBy / UpdatedBy / DeletedBy columns instead of NULL.
+// Overrides the UnknownCurrentUser that AddInfrastructure registers with TryAdd semantics. TryAdd
+// no-ops once the service type is present and the last plain registration wins, so either order
+// resolves this one — it is what puts a real account id into the CreatedBy / UpdatedBy / DeletedBy
+// columns instead of NULL. Removing this line, or weakening it to TryAdd, silently reverts them.
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ICurrentUser, HttpContextCurrentUser>();
 
