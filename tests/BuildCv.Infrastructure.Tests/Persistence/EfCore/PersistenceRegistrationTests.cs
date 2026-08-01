@@ -114,6 +114,35 @@ public sealed class PersistenceRegistrationTests
         provider.GetRequiredService<IAccountRepository>().Should().BeOfType<InMemoryAccountRepository>();
     }
 
+    // ...and Production cannot use it. The hatch exists for a test host building production-SHAPED
+    // configuration; there is no test host that has to call itself Production, so honouring the key there
+    // would leave one configuration line between a live deployment and a store that forgets every account
+    // on restart.
+    [Fact]
+    public void TheInMemoryProvider_IgnoresTheAcknowledgementInProduction()
+    {
+        var settings = InMemorySettings();
+        settings[PersistenceConfiguration.AllowInMemoryOutsideDevelopmentKey] = "true";
+
+        var act = () => BuildProvider(settings, "Production");
+
+        act.Should().Throw<InvalidOperationException>()
+            .WithMessage("*would discard all data on restart*");
+    }
+
+    // The environment name has no default: it decides whether the in-memory store may be registered and
+    // whether the localhost connection string carrying committed dev credentials may be used, so a caller
+    // that omitted it would fail OPEN.
+    [Fact]
+    public void TheEnvironmentName_IsRequired()
+    {
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(SqlServerSettings()).Build();
+
+        var act = () => new ServiceCollection().AddInfrastructure(configuration, "  ");
+
+        act.Should().Throw<ArgumentException>();
+    }
+
     [Fact]
     public void AnUnrecognizedProvider_FailsNamingTheSupportedValues()
     {

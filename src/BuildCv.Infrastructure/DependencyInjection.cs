@@ -28,20 +28,25 @@ namespace BuildCv.Infrastructure;
 
 public static class DependencyInjection
 {
-    // Matches Microsoft.Extensions.Hosting's Environments.Development without taking a dependency on
-    // the hosting abstractions for one string.
+    // Matches Microsoft.Extensions.Hosting's Environments without taking a dependency on the hosting
+    // abstractions for two strings.
     private const string DevelopmentEnvironment = "Development";
+    private const string ProductionEnvironment = "Production";
 
     /// <param name="environmentName">
-    /// The host's environment name. A real host always has one; leaving it null means the services are
-    /// being composed without a host — registration tests, design-time tooling — which is local by
-    /// construction. It is what decides whether the in-memory store is allowed.
+    /// The host's environment name. Required, and deliberately has no default: it is what decides
+    /// whether the in-memory store may be registered and whether the local connection string may be
+    /// used, so a caller that omitted it would fail OPEN — a new host that forgot the argument would
+    /// silently inherit permission to keep accounts in a dictionary and to dial localhost with the
+    /// committed development credentials. Composition without a real host (registration tests,
+    /// tooling) has to name an environment like everything else.
     /// </param>
     public static IServiceCollection AddInfrastructure(
-        this IServiceCollection services, IConfiguration configuration, string? environmentName = null)
+        this IServiceCollection services, IConfiguration configuration, string environmentName)
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(configuration);
+        ArgumentException.ThrowIfNullOrWhiteSpace(environmentName);
 
         services.AddOptions<JwtSettings>()
             .Bind(configuration.GetSection(JwtSettings.SectionName))
@@ -132,7 +137,7 @@ public static class DependencyInjection
 
     // The one place that decides where aggregates actually live.
     private static void AddPersistence(
-        IServiceCollection services, IConfiguration configuration, string? environmentName)
+        IServiceCollection services, IConfiguration configuration, string environmentName)
     {
         var provider = PersistenceConfiguration.ResolveProvider(configuration);
 
@@ -156,7 +161,7 @@ public static class DependencyInjection
     }
 
     private static void AddSqlServerPersistence(
-        IServiceCollection services, IConfiguration configuration, string? environmentName)
+        IServiceCollection services, IConfiguration configuration, string environmentName)
     {
         // Scoped, both of them: AuditSaveChangesInterceptor depends on ICurrentUser, which the Api
         // replaces with an HttpContext-backed implementation that only means anything inside a request.
@@ -207,19 +212,21 @@ public static class DependencyInjection
     // The in-memory store is a development convenience and a test double. It is registered as singletons
     // because it IS the storage, and it loses everything on restart.
     private static void AddInMemoryPersistence(
-        IServiceCollection services, IConfiguration configuration, string? environmentName)
+        IServiceCollection services, IConfiguration configuration, string environmentName)
     {
         // Fails at registration, not at the first write. A host that has been told to keep user accounts
         // in a dictionary must refuse to start rather than serve traffic and lose it, and the only way to
         // find that out at runtime is that everyone is logged out after a deploy.
-        if (!IsLocal(environmentName)
-            && !configuration.GetValue(PersistenceConfiguration.AllowInMemoryOutsideDevelopmentKey, false))
+        if (!InMemoryIsAllowedIn(configuration, environmentName))
         {
             throw new InvalidOperationException(
                 $"{PersistenceConfiguration.ProviderKey} is '{PersistenceConfiguration.InMemoryProvider}' in the "
                 + $"'{environmentName}' environment, which would discard all data on restart. Use "
-                + $"'{PersistenceConfiguration.SqlServerProvider}', or set "
-                + $"{PersistenceConfiguration.AllowInMemoryOutsideDevelopmentKey}=true if this really is a test host.");
+                + $"'{PersistenceConfiguration.SqlServerProvider}'."
+                + (IsProduction(environmentName)
+                    ? string.Empty
+                    : $" If this really is a test host, set "
+                        + $"{PersistenceConfiguration.AllowInMemoryOutsideDevelopmentKey}=true."));
         }
 
         services.AddSingleton<IAccountRepository, InMemoryAccountRepository>();
@@ -230,25 +237,43 @@ public static class DependencyInjection
         services.AddSingleton<IAnalysisRepository, InMemoryAnalysisRepository>();
     }
 
+    // Development gets it for free. Anything else has to say so — EXCEPT Production, which cannot say so
+    // at all: the acknowledgement exists for a test host that deliberately builds production-SHAPED
+    // configuration (Staging, in this repo's Api tests), and there is no such thing as a test host that
+    // has to call itself Production. Leaving the hatch open there would mean one configuration line
+    // between a live deployment and a store that forgets every account on restart.
+    private static bool InMemoryIsAllowedIn(IConfiguration configuration, string environmentName)
+    {
+        if (IsDevelopment(environmentName))
+            return true;
+
+        if (IsProduction(environmentName))
+            return false;
+
+        return configuration.GetValue(PersistenceConfiguration.AllowInMemoryOutsideDevelopmentKey, false);
+    }
+
     // ConnectionStrings:BuildCv is the application's setting. When it is absent the local default comes
     // from BuildCvDbContextFactory, which is the ONE committed copy of that string — appsettings used to
     // carry a second copy that nothing read and that was free to drift away from the one `dotnet ef`
-    // uses. Outside a local composition there is no default: pointing a deployed host at localhost
-    // silently is worse than refusing to start.
-    private static string ResolveConnectionString(IConfiguration configuration, string? environmentName)
+    // uses. Outside Development there is no default: that string carries committed development
+    // credentials, and pointing a deployed host at localhost silently is worse than refusing to start.
+    private static string ResolveConnectionString(IConfiguration configuration, string environmentName)
     {
         var configured = configuration.GetConnectionString(PersistenceConfiguration.ConnectionStringName);
         if (!string.IsNullOrWhiteSpace(configured))
             return configured;
 
-        return IsLocal(environmentName)
+        return IsDevelopment(environmentName)
             ? BuildCvDbContextFactory.DefaultConnectionString
             : throw new InvalidOperationException(
                 $"ConnectionStrings:{PersistenceConfiguration.ConnectionStringName} must be configured in the "
                 + $"'{environmentName}' environment.");
     }
 
-    private static bool IsLocal(string? environmentName) =>
-        environmentName is null
-        || string.Equals(environmentName, DevelopmentEnvironment, StringComparison.OrdinalIgnoreCase);
+    private static bool IsDevelopment(string environmentName) =>
+        string.Equals(environmentName, DevelopmentEnvironment, StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsProduction(string environmentName) =>
+        string.Equals(environmentName, ProductionEnvironment, StringComparison.OrdinalIgnoreCase);
 }

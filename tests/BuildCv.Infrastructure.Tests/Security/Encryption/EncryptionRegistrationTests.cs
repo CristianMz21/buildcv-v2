@@ -96,9 +96,13 @@ public class EncryptionRegistrationTests
         ["Encryption:BlindIndex:Keys:b1"] = BlindIndexKey
     };
 
+    // AddInfrastructure requires an environment name — it decides whether the in-memory store may be
+    // registered and whether the local connection string may be used, so it has no safe default. These
+    // tests are about the key rings, not persistence; Development is the honest answer for a composition
+    // that never resolves a DbContext.
     private static ServiceProvider BuildProvider(Dictionary<string, string?> settings)
     {
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
-        return new ServiceCollection().AddInfrastructure(configuration).BuildServiceProvider();
+        return new ServiceCollection().AddInfrastructure(configuration, "Development").BuildServiceProvider();
     }
 }
