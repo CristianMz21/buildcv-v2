@@ -18,7 +18,8 @@ namespace BuildCv.Infrastructure.Persistence.EfCore;
 // The entity is projected ALONGSIDE its Seq because Seq is shadow state: once EF has materialized a
 // Resume there is no way left to ask where it sat, and that number is exactly the next cursor. Owned
 // navigations still travel with the entity through this projection — ResumeRepositoryTests walks a page
-// and asserts the ten collections arrive, so that is checked rather than assumed.
+// and asserts the ten collections arrive, so that is checked rather than assumed. HOW they travel is
+// the other half of the story, and it is not free: see Probe.
 internal static class KeysetQueryExtensions
 {
     public static Task<Page<TEntity>> ToNewestFirstPageAsync<TEntity>(
@@ -67,12 +68,36 @@ internal static class KeysetQueryExtensions
 
     // Limit + 1: the extra row is never returned, it only answers "is there another page?" without a
     // second round trip and without a COUNT over the whole owner. Page<T>.From owns what happens to it.
+    //
+    // AsSplitQuery, and on a paged read it is the difference between bounded and unbounded. Every entity
+    // paged here carries owned collections — Resume has ten, JobPosting has two — and owned navigations
+    // load eagerly. In one statement that is a LEFT JOIN per collection onto the same principal, and the
+    // server returns their CARTESIAN PRODUCT: rows shipped is the sum, over the page, of the PRODUCT of
+    // each principal's collection counts. TOP caps the principals inside the subquery, so the fan-out
+    // happens outside it and the cap does not reach it. Nothing caps any collection, so a client that
+    // posts enough child rows chooses that number. Split query asks one statement per collection, which
+    // makes the work the SUM of the counts and puts an actual ceiling on a page.
+    //
+    // The cost is stated rather than hidden: the statements are not one atomic read, so a page can
+    // observe a collection edit that landed between them. That is acceptable here — these lists are
+    // edited by their own owner, and the alternative is a query whose size an unauthenticated row count
+    // decides. It is also inert where it is not needed: Analysis has no collections, so its page emits
+    // the same single statement it did before.
+    //
+    // Applied AFTER the projection deliberately. Split query has real restrictions with projections, so
+    // whether it survives KeysetRow<T> is a question to answer rather than assume — the SQL is read in
+    // KeysetQueryTranslationTests, which counts the joins and re-checks the row cap on the split shape.
+    //
+    // Take with split query needs a total order or EF cannot align the follow-up statements. Seq is a
+    // bigint IDENTITY and unique, so the ORDER BY above already is one; EF appends the key as a
+    // tie-break anyway, which is redundant here rather than load-bearing.
     private static IQueryable<KeysetRow<TEntity>> Probe<TEntity>(
         IOrderedQueryable<TEntity> ordered, PageRequest page)
         where TEntity : class =>
         ordered
             .Select(entity => new KeysetRow<TEntity>(entity, EF.Property<long>(entity, ShadowColumns.Seq)))
-            .Take(page.Limit + 1);
+            .Take(page.Limit + 1)
+            .AsSplitQuery();
 
     private static async Task<Page<TEntity>> RunAsync<TEntity>(
         IQueryable<KeysetRow<TEntity>> probe, PageRequest page, CancellationToken cancellationToken)

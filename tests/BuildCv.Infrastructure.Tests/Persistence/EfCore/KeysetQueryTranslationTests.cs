@@ -1,6 +1,9 @@
 using System.Text.RegularExpressions;
 using BuildCv.Application.Common.Pagination;
 using BuildCv.Domain.Identity;
+using BuildCv.Domain.Jobs;
+using BuildCv.Domain.Resumes;
+using BuildCv.Infrastructure.Persistence;
 using BuildCv.Infrastructure.Persistence.EfCore;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
@@ -107,4 +110,77 @@ public sealed class KeysetQueryTranslationTests
 
         sql.Should().Contain("[DeletedAt] IS NULL");
     }
+
+    // The assertion this file was missing, and the one that makes the row cap mean something.
+    //
+    // TOP caps the PRINCIPALS. Joining the owned collections in the same statement fans out after that
+    // cap: rows shipped is the sum, over the page, of the PRODUCT of each principal's collection counts.
+    // A resume with ten modestly filled collections is already thousands of rows, times a page of
+    // twenty, and no collection is capped by anything — so a client picks the number. EF de-duplicates
+    // on materialization, so every page-shape assertion in this suite and every integration test passes
+    // either way. The join count is the only place the difference exists.
+    [Fact]
+    public void NewestFirstProbe_OverResumes_JoinsNoneOfTheTenOwnedCollections()
+    {
+        using var context = PersistenceTestContext.ModelOnly();
+
+        var sql = context.Resumes.NewestFirstProbe(PageRequests.Of(20)).ToQueryString();
+
+        JoinsIn(sql).Should().Be(0, "each owned collection has to be fetched by its own statement");
+        RowCapIn(sql).Should().Be(21, "splitting must not cost the cap that bounds the principals");
+        sql.Should().MatchRegex(@"\[Seq\] DESC", "nor the order the cursor walks");
+    }
+
+    // Not only resumes. JobPosting owns two collections and is paged through the same helper, so the
+    // fix belongs in the shared probe rather than in ResumeRepository — a per-repository fix would leave
+    // this list quietly multiplying Requirements by Responsibilities.
+    [Fact]
+    public void NewestFirstProbe_OverJobPostings_JoinsNeitherOwnedCollection()
+    {
+        using var context = PersistenceTestContext.ModelOnly();
+
+        var sql = context.JobPostings.NewestFirstProbe(PageRequests.Of(20)).ToQueryString();
+
+        JoinsIn(sql).Should().Be(0);
+        RowCapIn(sql).Should().Be(21);
+    }
+
+    // The counterfactual, because "zero joins" is only evidence if the query would otherwise have had
+    // them. Without this, a refactor that stopped loading the collections at all would leave the two
+    // assertions above green while breaking every consumer. It also states the size of what was removed:
+    // ten tables for a resume, two for a job posting, each multiplying against the others.
+    [Fact]
+    public void NewestFirstProbe_WithoutSplitting_WouldJoinEveryOwnedCollection()
+    {
+        using var context = PersistenceTestContext.ModelOnly();
+
+        var resumes = context.Resumes.NewestFirstProbe(PageRequests.Of(20)).AsSingleQuery().ToQueryString();
+        var jobs = context.JobPostings.NewestFirstProbe(PageRequests.Of(20)).AsSingleQuery().ToQueryString();
+
+        JoinsIn(resumes).Should().Be(
+            OwnedCollectionsOn(context, typeof(Resume)),
+            "this is the shape being rejected: one join per collection, multiplying into a product");
+        JoinsIn(jobs).Should().Be(OwnedCollectionsOn(context, typeof(JobPosting)));
+    }
+
+    // ToQueryString renders only the FIRST statement of a split query and appends a note saying so, so
+    // the note is what proves the collections went somewhere rather than being dropped. Asserted for
+    // Analysis too — it owns no collections, so splitting changes nothing about its statement, and
+    // pinning that keeps the page shared by all three lists rather than special-cased per entity.
+    [Fact]
+    public void OldestFirstProbe_OverAnEntityWithNoCollections_IsStillTheSameSingleStatement()
+    {
+        using var context = PersistenceTestContext.ModelOnly();
+
+        var sql = context.Analyses.OldestFirstProbe(PageRequests.Of(20)).ToQueryString();
+
+        JoinsIn(sql).Should().Be(0);
+        RowCapIn(sql).Should().Be(21);
+        sql.Should().Contain("split-query mode");
+    }
+
+    private static int JoinsIn(string sql) => sql.Split("JOIN", StringSplitOptions.None).Length - 1;
+
+    private static int OwnedCollectionsOn(BuildCvDbContext context, Type entity) =>
+        context.Model.FindEntityType(entity)!.GetNavigations().Count(navigation => navigation.IsCollection);
 }
