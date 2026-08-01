@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using BuildCv.Application.Common.Pagination;
 using BuildCv.Application.Common.Repositories;
 using BuildCv.Domain.Identity;
 using BuildCv.Domain.Jobs;
@@ -6,46 +7,55 @@ using BuildCv.Domain.Organizations;
 
 namespace BuildCv.Infrastructure.Persistence;
 
+// See InMemoryResumeRepository for why the insertion counter exists and why UpdateAsync must not
+// renumber a row.
 public sealed class InMemoryJobPostingRepository : IJobPostingRepository
 {
-    private readonly ConcurrentDictionary<Guid, JobPosting> _jobPostings = new();
+    private readonly ConcurrentDictionary<Guid, KeysetRow<JobPosting>> _jobPostings = new();
+    private long _sequence;
 
     public Task<JobPosting?> GetByIdAsync(JobPostingId id, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        _jobPostings.TryGetValue(id.Value, out var jobPosting);
-        return Task.FromResult(jobPosting);
+        _jobPostings.TryGetValue(id.Value, out var row);
+        return Task.FromResult(row?.Item);
     }
 
-    public Task<IReadOnlyList<JobPosting>> GetByOwnerIdAsync(AccountId ownerId, CancellationToken cancellationToken = default)
+    public Task<Page<JobPosting>> GetPageByOwnerIdAsync(
+        AccountId ownerId, PageRequest page, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        IReadOnlyList<JobPosting> jobPostings = _jobPostings.Values
-            .Where(j => j.OwnerId.Value == ownerId.Value)
-            .ToList();
-        return Task.FromResult(jobPostings);
+        return Task.FromResult(_jobPostings.Values
+            .Where(row => row.Item.OwnerId.Value == ownerId.Value)
+            .ToNewestFirstPage(page));
     }
 
-    public Task<IReadOnlyList<JobPosting>> GetByOrganizationIdAsync(OrganizationId organizationId, CancellationToken cancellationToken = default)
+    public Task<Page<JobPosting>> GetPageByOrganizationIdAsync(
+        OrganizationId organizationId, PageRequest page, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        IReadOnlyList<JobPosting> jobPostings = _jobPostings.Values
-            .Where(j => j.CompanyId is not null && j.CompanyId.Value == organizationId.Value)
-            .ToList();
-        return Task.FromResult(jobPostings);
+        return Task.FromResult(_jobPostings.Values
+            .Where(row => row.Item.CompanyId is not null && row.Item.CompanyId.Value == organizationId.Value)
+            .ToNewestFirstPage(page));
     }
 
     public Task AddAsync(JobPosting jobPosting, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        _jobPostings[jobPosting.Id.Value] = jobPosting;
+        _jobPostings[jobPosting.Id.Value] = NextRow(jobPosting);
         return Task.CompletedTask;
     }
 
     public Task UpdateAsync(JobPosting jobPosting, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        _jobPostings[jobPosting.Id.Value] = jobPosting;
+        _jobPostings.AddOrUpdate(
+            jobPosting.Id.Value,
+            _ => NextRow(jobPosting),
+            (_, existing) => existing with { Item = jobPosting });
         return Task.CompletedTask;
     }
+
+    private KeysetRow<JobPosting> NextRow(JobPosting jobPosting) =>
+        new(jobPosting, Interlocked.Increment(ref _sequence));
 }

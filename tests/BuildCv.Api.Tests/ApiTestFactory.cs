@@ -3,31 +3,68 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
 namespace BuildCv.Api.Tests;
 
 // Defaults to Development because most tests rely on the relaxed local-http behavior; pass a
-// different environment name to exercise the production-shaped configuration.
-public sealed class ApiTestFactory(string? environment = null) : WebApplicationFactory<Program>
+// different environment name to exercise the production-shaped configuration. `configureServices`
+// runs after the app's own registrations, so a test can swap an adapter — the only way to reach
+// failure branches that the in-memory repositories never take.
+public sealed class ApiTestFactory(
+    string? environment = null,
+    Action<IServiceCollection>? configureServices = null) : WebApplicationFactory<Program>
 {
+    // Exposed so tests can mint tokens the API will accept — an expired one, or one signed with
+    // the wrong key — to prove what each authentication scheme does and does not accept.
+    public const string SigningKey = "test-signing-key-min-32-characters-long-0123456789";
+    public const string Issuer = "buildcv-api";
+    public const string Audience = "buildcv-bff";
+
     private readonly string _environment = environment ?? Environments.Development;
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment(_environment);
+
+        // UseSetting, not the in-memory collection below, and the difference is load-bearing. Choosing a
+        // persistence provider happens while services are being REGISTERED, which is before
+        // ConfigureAppConfiguration's sources are attached — a value added there arrives too late and the
+        // host registers the SQL Server repositories, then fails every request on a connection it was
+        // never meant to open. UseSetting writes into the host configuration WebApplication.CreateBuilder
+        // reads, which is the same channel UseEnvironment above already travels on.
+        //
+        // These tests are about HTTP behavior, not storage, so they run on the in-memory store and never
+        // need a database. The acknowledgement key is what lets the one test that deliberately builds a
+        // Staging-shaped host keep using it: outside Development the in-memory provider refuses to
+        // register without it.
+        builder.UseSetting("Persistence:Provider", "InMemory");
+        builder.UseSetting("Persistence:AllowInMemoryOutsideDevelopment", "true");
+
         builder.ConfigureAppConfiguration((_, config) =>
         {
             config.AddInMemoryCollection(new Dictionary<string, string?>
             {
-                ["Jwt:SigningKey"] = "test-signing-key-min-32-characters-long-0123456789",
-                ["Jwt:Issuer"] = "buildcv-api",
-                ["Jwt:Audience"] = "buildcv-bff",
+                ["Jwt:SigningKey"] = SigningKey,
+                ["Jwt:Issuer"] = Issuer,
+                ["Jwt:Audience"] = Audience,
                 ["Jwt:AccessTokenMinutes"] = "15",
-                ["Jwt:RefreshTokenDays"] = "30"
+                ["Jwt:RefreshTokenDays"] = "30",
+                // AddInfrastructure requires a usable Encryption key ring and validates it on start,
+                // so every host the tests build needs one. Test-only material, distinct from the
+                // committed development keys.
+                ["Encryption:ActiveKeyId"] = "test-v1",
+                ["Encryption:Keys:test-v1:Aes"] = "Z6h2YbISQC6Wo2Xbs2xQr1PistFWXwHrenrptzxtc6o=",
+                ["Encryption:BlindIndex:ActiveKeyId"] = "test-b1",
+                ["Encryption:BlindIndex:Keys:test-b1"] = "Xw273xuvdyoZuGb8kJo1vYXumxFtiHqIZkntZaZLegs="
             });
         });
+
+        if (configureServices is not null)
+            builder.ConfigureTestServices(configureServices);
     }
 
     public HttpClient CreateCookieClient() =>
@@ -71,12 +108,23 @@ internal static class TestHelpers
 
     // The antiforgery request token is bound to the current principal, so callers must fetch it
     // after authenticating. See the /auth/antiforgery endpoint comment.
-    public static async Task<string> GetAntiforgeryTokenAsync(this HttpClient client)
+    public static async Task<string> GetAntiforgeryTokenAsync(this HttpClient client) =>
+        (await client.GetAntiforgeryTokenAndCookieAsync()).RequestToken;
+
+    // Both halves of the double-submit pair, for tests that drive cookies by hand. `authCookie`
+    // decides which principal the request token gets bound to: pass the caller's access-token
+    // cookie for an authenticated binding, omit it for an anonymous one.
+    public static async Task<(string RequestToken, string Cookie)> GetAntiforgeryTokenAndCookieAsync(
+        this HttpClient client, string? authCookie = null)
     {
-        var response = await client.GetAsync("/auth/antiforgery");
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/auth/antiforgery");
+        if (authCookie is not null)
+            request.Headers.Add("Cookie", authCookie);
+
+        var response = await client.SendAsync(request);
         response.EnsureSuccessStatusCode();
         var body = await response.Content.ReadFromJsonAsync<AntiforgeryBody>();
-        return body!.RequestToken;
+        return (body!.RequestToken, GetCookieValue(response, "XSRF-TOKEN"));
     }
 
     public static string GetSetCookie(HttpResponseMessage response, string name) =>

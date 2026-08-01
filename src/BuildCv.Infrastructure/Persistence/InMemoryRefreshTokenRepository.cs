@@ -28,4 +28,20 @@ public sealed class InMemoryRefreshTokenRepository : IRefreshTokenRepository
         _tokens.TryRemove(token, out _);
         return Task.CompletedTask;
     }
+
+    public Task RevokeAllForAccountAsync(AccountId accountId, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        // ConcurrentDictionary supports removal while enumerating. A token issued for this account
+        // after enumeration started may survive; that is the same race any store has, and it only
+        // covers sessions created after the revocation request arrived.
+        foreach (var entry in _tokens)
+        {
+            if (entry.Value.AccountId == accountId)
+                _tokens.TryRemove(entry.Key, out _);
+        }
+
+        return Task.CompletedTask;
+    }
 }

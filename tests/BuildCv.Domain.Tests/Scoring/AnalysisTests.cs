@@ -13,15 +13,13 @@ public class AnalysisTests
     public void Analysis_with_low_band_can_be_created()
     {
         var breakdown = ScoreBreakdown.Create(0.3, 0.4, 0.2, 0.5, 0.8, DefaultWeights);
-        var analysis = new Analysis(
-            Id: AnalysisId.New(),
-            Breakdown: breakdown,
-            ResumeId: ResumeId.New(),
-            JobPostingId: JobPostingId.New(),
-            ScoredAt: DateTimeOffset.Now)
-        {
-            Recommendations = ["Add more skills", "Improve summary"]
-        };
+        var analysis = Analysis.Create(
+            id: AnalysisId.New(),
+            breakdown: breakdown,
+            resumeId: ResumeId.New(),
+            jobPostingId: JobPostingId.New(),
+            scoredAt: DateTimeOffset.Now,
+            recommendations: ["Add more skills", "Improve summary"]);
 
         analysis.OverallScore.Should().Be(34);
         analysis.Band.Should().Be(ScoreBand.Low);
@@ -32,12 +30,12 @@ public class AnalysisTests
     public void Analysis_with_defaults_can_be_created()
     {
         var breakdown = ScoreBreakdown.Create(0.5, 0.5, 0.5, 0.5, 0.5, DefaultWeights);
-        var analysis = new Analysis(
-            Id: AnalysisId.New(),
-            Breakdown: breakdown,
-            ResumeId: ResumeId.New(),
-            JobPostingId: JobPostingId.New(),
-            ScoredAt: DateTimeOffset.Now);
+        var analysis = Analysis.Create(
+            id: AnalysisId.New(),
+            breakdown: breakdown,
+            resumeId: ResumeId.New(),
+            jobPostingId: JobPostingId.New(),
+            scoredAt: DateTimeOffset.Now);
 
         analysis.Recommendations.Should().BeEmpty();
     }
@@ -55,26 +53,107 @@ public class AnalysisTests
     }
 
     private static Analysis BuildAnalysis(ScoreBreakdown breakdown) =>
-        new(
-            Id: AnalysisId.New(),
-            Breakdown: breakdown,
-            ResumeId: ResumeId.New(),
-            JobPostingId: JobPostingId.New(),
-            ScoredAt: DateTimeOffset.Now);
+        Analysis.Create(
+            id: AnalysisId.New(),
+            breakdown: breakdown,
+            resumeId: ResumeId.New(),
+            jobPostingId: JobPostingId.New(),
+            scoredAt: DateTimeOffset.Now);
 
     [Fact]
-    public void Analysis_is_immutable()
+    public void Recommendations_are_set_at_creation()
     {
-        var a1 = new Analysis(
-            Id: AnalysisId.New(),
-            Breakdown: ScoreBreakdown.Create(0.5, 0.5, 0.5, 0.5, 0.5, DefaultWeights),
-            ResumeId: ResumeId.New(),
-            JobPostingId: JobPostingId.New(),
-            ScoredAt: DateTimeOffset.Now);
+        var analysis = Analysis.Create(
+            id: AnalysisId.New(),
+            breakdown: ScoreBreakdown.Create(0.5, 0.5, 0.5, 0.5, 0.5, DefaultWeights),
+            resumeId: ResumeId.New(),
+            jobPostingId: JobPostingId.New(),
+            scoredAt: DateTimeOffset.Now,
+            recommendations: ["Add more skills"]);
 
-        var a2 = a1 with { Recommendations = ["Add more skills"] };
+        analysis.Recommendations.Should().HaveCount(1);
+        analysis.Recommendations.Should().ContainSingle().Which.Should().Be("Add more skills");
+    }
 
-        a1.Recommendations.Should().BeEmpty();
-        a2.Recommendations.Should().HaveCount(1);
+    [Fact]
+    public void Analysis_null_id_throws()
+    {
+        var act = () => Analysis.Create(
+            id: null!,
+            breakdown: ScoreBreakdown.Create(0.5, 0.5, 0.5, 0.5, 0.5, DefaultWeights),
+            resumeId: ResumeId.New(),
+            jobPostingId: JobPostingId.New(),
+            scoredAt: DateTimeOffset.Now);
+
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    [Fact]
+    public void Analysis_null_breakdown_throws()
+    {
+        var act = () => Analysis.Create(
+            id: AnalysisId.New(),
+            breakdown: null!,
+            resumeId: ResumeId.New(),
+            jobPostingId: JobPostingId.New(),
+            scoredAt: DateTimeOffset.Now);
+
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    [Fact]
+    public void Analysis_null_resume_id_throws()
+    {
+        var act = () => Analysis.Create(
+            id: AnalysisId.New(),
+            breakdown: ScoreBreakdown.Create(0.5, 0.5, 0.5, 0.5, 0.5, DefaultWeights),
+            resumeId: null!,
+            jobPostingId: JobPostingId.New(),
+            scoredAt: DateTimeOffset.Now);
+
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    [Fact]
+    public void Analysis_null_job_posting_id_throws()
+    {
+        var act = () => Analysis.Create(
+            id: AnalysisId.New(),
+            breakdown: ScoreBreakdown.Create(0.5, 0.5, 0.5, 0.5, 0.5, DefaultWeights),
+            resumeId: ResumeId.New(),
+            jobPostingId: null!,
+            scoredAt: DateTimeOffset.Now);
+
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    [Fact]
+    public void Analysis_recommendations_are_defensively_copied()
+    {
+        var source = new List<string> { "Add more skills" };
+        var analysis = Analysis.Create(
+            id: AnalysisId.New(),
+            breakdown: ScoreBreakdown.Create(0.5, 0.5, 0.5, 0.5, 0.5, DefaultWeights),
+            resumeId: ResumeId.New(),
+            jobPostingId: JobPostingId.New(),
+            scoredAt: DateTimeOffset.Now,
+            recommendations: source);
+
+        source.Add("Improve summary");
+
+        analysis.Recommendations.Should().HaveCount(1);
+    }
+
+    [Fact]
+    public void Analysis_equality_by_id()
+    {
+        var breakdown = ScoreBreakdown.Create(0.5, 0.5, 0.5, 0.5, 0.5, DefaultWeights);
+        var id = AnalysisId.New();
+        var a1 = Analysis.Create(id, breakdown, ResumeId.New(), JobPostingId.New(), DateTimeOffset.Now);
+        var a2 = Analysis.Create(id, breakdown, ResumeId.New(), JobPostingId.New(), DateTimeOffset.Now);
+        var a3 = Analysis.Create(AnalysisId.New(), breakdown, ResumeId.New(), JobPostingId.New(), DateTimeOffset.Now);
+
+        a1.Should().Be(a2);
+        a1.Should().NotBe(a3);
     }
 }

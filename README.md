@@ -18,6 +18,8 @@ dotnet test
 dotnet run --project src/BuildCv.Api
 ```
 
+Los tests de integración (`[Trait("Category", "Integration")]`) requieren un daemon de Docker corriendo local: levantan y migran su propio contenedor SQL Server 2022 descartable vía `Testcontainers.MsSql` — no usan la instancia de `docker-compose.yml`, así que no hace falta `docker compose up` para correrlos. `dotnet test --filter "Category!=Integration"` corre solo los unitarios; `--filter "Category=Integration"` corre solo los de integración. `docker-compose.yml` es para desarrollo manual y `dotnet ef database update`, un propósito distinto.
+
 ## Arquitectura
 
 ```

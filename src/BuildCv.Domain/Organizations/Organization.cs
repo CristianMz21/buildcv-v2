@@ -7,15 +7,17 @@ using BuildCv.Domain.Common.ValueObjects;
 
 public sealed class Organization
 {
+    private readonly List<Membership> _members = [];
+
     public OrganizationId Id { get; }
     public OrganizationName Name { get; }
     public Slug Slug { get; }
     public OrganizationStatus Status { get; private set; }
     public DateTimeOffset CreatedAt { get; }
     public DateTimeOffset UpdatedAt { get; private set; }
-    public IReadOnlyList<Membership> Members { get; private set; }
+    public IReadOnlyList<Membership> Members => _members.AsReadOnly();
 
-    private Organization(OrganizationId id, OrganizationName name, Slug slug, Membership founder)
+    private Organization(OrganizationId id, OrganizationName name, Slug slug)
     {
         var now = DateTimeOffset.UtcNow;
         Id = id;
@@ -24,7 +26,6 @@ public sealed class Organization
         Status = OrganizationStatus.Active;
         CreatedAt = now;
         UpdatedAt = now;
-        Members = new List<Membership> { founder }.AsReadOnly();
     }
 
     public static Organization Create(OrganizationName name, Slug slug, AccountId founderId)
@@ -33,9 +34,12 @@ public sealed class Organization
         ArgumentNullException.ThrowIfNull(slug);
         ArgumentNullException.ThrowIfNull(founderId);
 
-        var founder = new Membership(founderId, MembershipRole.Owner, DateTimeOffset.UtcNow);
-        return new Organization(OrganizationId.New(), name, slug, founder);
+        var organization = new Organization(OrganizationId.New(), name, slug);
+        organization._members.Add(new Membership(founderId, MembershipRole.Owner, DateTimeOffset.UtcNow));
+        return organization;
     }
+
+    private void Touch() => UpdatedAt = DateTimeOffset.UtcNow;
 
     public void AddMember(AccountId accountId, MembershipRole role = MembershipRole.Member)
     {
@@ -43,12 +47,8 @@ public sealed class Organization
         if (Members.Any(m => m.AccountId == accountId))
             throw new InvalidMembershipException("Account is already a member.");
 
-        var updated = new List<Membership>(Members)
-        {
-            new(accountId, role, DateTimeOffset.UtcNow)
-        };
-        Members = updated.AsReadOnly();
-        UpdatedAt = DateTimeOffset.UtcNow;
+        _members.Add(new Membership(accountId, role, DateTimeOffset.UtcNow));
+        Touch();
     }
 
     public void RemoveMember(AccountId accountId)
@@ -60,47 +60,42 @@ public sealed class Organization
         if (member.Role == MembershipRole.Owner && Members.Count(m => m.Role == MembershipRole.Owner) == 1)
             throw new InvalidMembershipException("Cannot remove the only owner of an organization.");
 
-        Members = Members.Where(m => m.AccountId != accountId).ToList().AsReadOnly();
-        UpdatedAt = DateTimeOffset.UtcNow;
+        _members.Remove(member);
+        Touch();
     }
 
     public void ChangeMemberRole(AccountId accountId, MembershipRole newRole)
     {
         ArgumentNullException.ThrowIfNull(accountId);
-        var member = Members.FirstOrDefault(m => m.AccountId == accountId)
-            ?? throw new InvalidMembershipException("Account is not a member.");
+        var index = _members.FindIndex(m => m.AccountId == accountId);
+        if (index < 0)
+            throw new InvalidMembershipException("Account is not a member.");
+        var member = _members[index];
 
         if (member.Role == MembershipRole.Owner && newRole != MembershipRole.Owner
             && Members.Count(m => m.Role == MembershipRole.Owner) == 1)
             throw new InvalidMembershipException("Cannot demote the only owner of an organization.");
 
-        var updated = new List<Membership>();
-        foreach (var m in Members)
-        {
-            updated.Add(m.AccountId == accountId
-                ? m with { Role = newRole }
-                : m);
-        }
-        Members = updated.AsReadOnly();
-        UpdatedAt = DateTimeOffset.UtcNow;
+        _members[index] = member with { Role = newRole };
+        Touch();
     }
 
     public void Suspend()
     {
         Status = OrganizationStatus.Suspended;
-        UpdatedAt = DateTimeOffset.UtcNow;
+        Touch();
     }
 
     public void Restore()
     {
         Status = OrganizationStatus.Active;
-        UpdatedAt = DateTimeOffset.UtcNow;
+        Touch();
     }
 
     public void Delete()
     {
         Status = OrganizationStatus.Deleted;
-        UpdatedAt = DateTimeOffset.UtcNow;
+        Touch();
     }
 
     public override bool Equals(object? obj) => obj is Organization other && Id.Equals(other.Id);

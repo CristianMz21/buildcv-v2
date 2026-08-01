@@ -123,4 +123,15 @@ public class ResumeCollectionTests
 
         act.Should().Throw<EntryNotFoundException>();
     }
+
+    [Fact]
+    public void Resume_skills_view_reflects_subsequent_additions()
+    {
+        var resume = BuildResume();
+        var view = resume.Skills;
+
+        resume.AddSkill(Skill.Create(Technology.Create("C#")));
+
+        view.Should().HaveCount(1);
+    }
 }

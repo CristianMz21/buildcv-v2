@@ -5,6 +5,9 @@ using BuildCv.Domain.Organizations;
 
 namespace BuildCv.Infrastructure.Persistence;
 
+// Filters Status == Deleted out of both lookups for the same reason InMemoryAccountRepository does: the
+// EF repository writes the DeletedAt tombstone alongside Organization.Delete()'s status change, and the
+// filtered unique index on Slug then releases the public handle. See that file for the full argument.
 public sealed class InMemoryOrganizationRepository : IOrganizationRepository
 {
     private readonly ConcurrentDictionary<Guid, Organization> _organizations = new();
@@ -13,14 +16,14 @@ public sealed class InMemoryOrganizationRepository : IOrganizationRepository
     {
         cancellationToken.ThrowIfCancellationRequested();
         _organizations.TryGetValue(id.Value, out var organization);
-        return Task.FromResult(organization);
+        return Task.FromResult(IsLive(organization) ? organization : null);
     }
 
     public Task<Organization?> GetBySlugAsync(Slug slug, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var organization = _organizations.Values.FirstOrDefault(
-            o => string.Equals(o.Slug.Value, slug.Value, StringComparison.OrdinalIgnoreCase));
+            o => IsLive(o) && string.Equals(o.Slug.Value, slug.Value, StringComparison.OrdinalIgnoreCase));
         return Task.FromResult(organization);
     }
 
@@ -37,4 +40,7 @@ public sealed class InMemoryOrganizationRepository : IOrganizationRepository
         _organizations[organization.Id.Value] = organization;
         return Task.CompletedTask;
     }
+
+    private static bool IsLive(Organization? organization) =>
+        organization is { Status: not OrganizationStatus.Deleted };
 }

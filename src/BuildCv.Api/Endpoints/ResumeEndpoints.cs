@@ -2,6 +2,7 @@ using BuildCv.Api.Common;
 using BuildCv.Api.Contracts;
 using BuildCv.Api.Security;
 using BuildCv.Application.Common.Abstractions;
+using BuildCv.Application.Common.Pagination;
 using BuildCv.Application.Resumes;
 using BuildCv.Domain.Common.ValueObjects;
 using BuildCv.Domain.Resumes;
@@ -32,14 +33,20 @@ public static class ResumeEndpoints
             return result.ToHttpResult(resume => Results.Created($"/resumes/{resume.Id.Value}", resume));
         });
 
+        // Keyset paged, and there is no way to ask for the whole list: limit is clamped to a ceiling
+        // and cursor is the only way forward. `limit` and `cursor` bind from the query string because
+        // they are nullable simple types, which minimal APIs already treat as optional.
         group.MapGet("/", async (
             HttpContext httpContext,
-            IQueryHandler<GetResumesByOwnerQuery, Result<IReadOnlyList<Resume>>> handler,
-            CancellationToken cancellationToken) =>
+            IQueryHandler<GetResumesByOwnerQuery, Result<Page<Resume>>> handler,
+            CancellationToken cancellationToken,
+            int? limit,
+            string? cursor) =>
         {
             var requester = httpContext.User.GetAccountId();
-            var result = await handler.Handle(new GetResumesByOwnerQuery(requester, requester), cancellationToken);
-            return result.ToHttpResult();
+            var result = await handler.Handle(
+                new GetResumesByOwnerQuery(requester, requester, limit, cursor), cancellationToken);
+            return result.ToHttpResult(page => Results.Ok(new PagedResponse<Resume>(page.Items, page.NextCursor)));
         });
 
         group.MapGet("/{id:guid}", async (

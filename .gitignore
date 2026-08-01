@@ -79,3 +79,22 @@ Desktop.ini
 .env
 .env.local
 .env.*.local
+
+## Agent tooling (local scratch — configuration, caches and session state, not source)
+#
+# Every entry below is a directory an assistant creates in the repository root while working. They are
+# machine-local: they hold per-user settings, cached indexes and transcripts of sessions, and two
+# contributors running the same tools produce different contents for the same commit. Left untracked
+# they are worse than noise — a single `git add -A` sweeps them into a commit, and they are the files
+# most likely to carry an absolute home path or a key.
+#
+# Ignored rather than deleted: the tools recreate them, and a contributor who does not use them never
+# sees one. If any of this ever becomes shared project configuration, un-ignore that one path
+# deliberately with a `!` rule rather than dropping the block.
+.agents/
+.atl/
+.claude/
+.kiro/
+.superpowers/
+.mcp.json
+skills-lock.json

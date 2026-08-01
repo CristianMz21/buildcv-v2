@@ -12,7 +12,8 @@ public sealed record ChangePasswordCommand(AccountId RequesterId, string Current
 
 public sealed class ChangePasswordHandler(
     IAccountRepository accountRepository,
-    IPasswordHasher passwordHasher)
+    IPasswordHasher passwordHasher,
+    IRefreshTokenRepository refreshTokenRepository)
     : ICommandHandler<ChangePasswordCommand, Result<AccountDto>>
 {
     public async Task<Result<AccountDto>> Handle(ChangePasswordCommand command, CancellationToken cancellationToken = default)
@@ -42,6 +43,14 @@ public sealed class ChangePasswordHandler(
             account.ChangePassword(Password.Create(passwordHasher.Hash(command.NewPassword)));
             account.ResetLockout();
             await accountRepository.UpdateAsync(account, cancellationToken);
+
+            // Changing a password is the compromise-recovery action users are told to take, so it
+            // has to end the sessions an attacker may already hold. Without this the old refresh
+            // token keeps minting access tokens for up to 30 days and the rotation buys nothing.
+            // Revoking every token for the account (including the caller's own) is deliberate:
+            // the refresh cookie is scoped to /auth/refresh, so no handler can tell which token
+            // belongs to the caller, and "log out everywhere" is the safe reading of the intent.
+            await refreshTokenRepository.RevokeAllForAccountAsync(account.Id, cancellationToken);
 
             return Result<AccountDto>.Success(AccountDto.From(account));
         }

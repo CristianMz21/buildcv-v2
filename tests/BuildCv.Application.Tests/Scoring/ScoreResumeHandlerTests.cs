@@ -1,4 +1,5 @@
 using BuildCv.Application.Scoring;
+using BuildCv.Application.Tests.Common.Pagination;
 using BuildCv.Application.Tests.Fakes;
 using BuildCv.Domain.Common.ValueObjects;
 using BuildCv.Domain.Identity;
@@ -62,7 +63,7 @@ public class ScoreResumeHandlerTests
         result.Value!.Breakdown.SkillsScore.Should().Be(1.0);
         result.Value.Breakdown.ExperienceScore.Should().Be(1.0);
         result.Value.OverallScore.Should().BeGreaterThanOrEqualTo(60);
-        (await _analyses.GetByResumeIdAsync(resume.Id)).Should().HaveCount(1);
+        (await _analyses.GetPageByResumeIdAsync(resume.Id, PageRequests.Of())).Items.Should().HaveCount(1);
     }
 
     [Fact]

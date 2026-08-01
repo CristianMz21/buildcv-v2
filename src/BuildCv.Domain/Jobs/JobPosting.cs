@@ -10,6 +10,9 @@ public sealed class JobPosting
     private const int MaxTitleLength = 200;
     private const int MaxDescriptionLength = 5000;
 
+    private readonly List<JobRequirement> _requirements = [];
+    private readonly List<Responsibility> _responsibilities = [];
+
     public JobPostingId Id { get; }
     public AccountId OwnerId { get; }
     public string Title { get; private set; }
@@ -21,8 +24,8 @@ public sealed class JobPosting
     public DateTimeOffset UpdatedAt { get; private set; }
     public DateTimeOffset? PublishedAt { get; private set; }
     public DateTimeOffset? ClosesAt { get; private set; }
-    public IReadOnlyList<JobRequirement> Requirements { get; private set; }
-    public IReadOnlyList<Responsibility> Responsibilities { get; private set; }
+    public IReadOnlyList<JobRequirement> Requirements => _requirements.AsReadOnly();
+    public IReadOnlyList<Responsibility> Responsibilities => _responsibilities.AsReadOnly();
 
     private JobPosting(
         JobPostingId id,
@@ -41,8 +44,6 @@ public sealed class JobPosting
         Status = JobPostingStatus.Draft;
         CreatedAt = DateTimeOffset.UtcNow;
         UpdatedAt = DateTimeOffset.UtcNow;
-        Requirements = [];
-        Responsibilities = [];
     }
 
     public static JobPosting Create(AccountId ownerId, string title, OrganizationName companyName, string? description = null)
@@ -92,16 +93,17 @@ public sealed class JobPosting
             ArgumentNullException.ThrowIfNull(r);
         if (HasDuplicateSkill(list))
             throw new DuplicateSkillException("Duplicate skill in requirements.");
-        Requirements = list.AsReadOnly();
+        _requirements.Clear();
+        _requirements.AddRange(list);
         Touch();
     }
 
     public void AddRequirement(JobRequirement requirement)
     {
         ArgumentNullException.ThrowIfNull(requirement);
-        if (HasDuplicateSkill(Requirements.Append(requirement)))
+        if (HasDuplicateSkill(_requirements.Append(requirement)))
             throw new DuplicateSkillException($"Skill '{requirement.Skill}' already exists in requirements.");
-        Requirements = [.. Requirements, requirement];
+        _requirements.Add(requirement);
         Touch();
     }
 
@@ -122,14 +124,15 @@ public sealed class JobPosting
         var list = responsibilities.ToList();
         foreach (var r in list)
             ArgumentNullException.ThrowIfNull(r);
-        Responsibilities = list.AsReadOnly();
+        _responsibilities.Clear();
+        _responsibilities.AddRange(list);
         Touch();
     }
 
     public void AddResponsibility(Responsibility responsibility)
     {
         ArgumentNullException.ThrowIfNull(responsibility);
-        Responsibilities = [.. Responsibilities, responsibility];
+        _responsibilities.Add(responsibility);
         Touch();
     }
 

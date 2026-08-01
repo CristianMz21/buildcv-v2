@@ -123,4 +123,25 @@ public class OrganizationTests
         org.Equals(org).Should().BeTrue();
         Build().Equals(org).Should().BeFalse();
     }
+
+    [Fact]
+    public void Organization_members_view_reflects_subsequent_additions()
+    {
+        var org = Build();
+        var view = org.Members;
+
+        org.AddMember(AccountId.New());
+
+        view.Should().HaveCount(2);
+    }
+
+    [Fact]
+    public void Organization_members_view_cannot_be_downcast_to_bypass_invariants()
+    {
+        var org = Build();
+
+        var act = () => ((List<Membership>)org.Members).Add(new Membership(AccountId.New(), MembershipRole.Member, DateTimeOffset.UtcNow));
+
+        act.Should().Throw<InvalidCastException>();
+    }
 }

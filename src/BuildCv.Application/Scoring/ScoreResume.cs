@@ -39,7 +39,7 @@ public sealed class ScoreResumeHandler(
             var referenceDate = DateOnly.FromDateTime(timeProvider.GetUtcNow().DateTime);
             var breakdown = scoringEngine.Score(resume, jobPosting, referenceDate);
 
-            var analysis = new Analysis(
+            var analysis = Analysis.Create(
                 AnalysisId.New(), breakdown, resume.Id, jobPosting.Id, timeProvider.GetUtcNow());
             await analysisRepository.AddAsync(analysis, cancellationToken);
 
