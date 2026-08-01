@@ -17,7 +17,9 @@ namespace BuildCv.Domain.Jobs;
 // the same way and a posting reads back exactly as it was written.
 public sealed record LanguageRequirement
 {
-    private const int MaxNameLength = 100;
+    // Public because JobPostingConfiguration maps the column with it. Two independent 100s that have to
+    // agree is a truncation waiting to happen: widen one and EF silently cuts the value at the other.
+    public const int MaxNameLength = 100;
 
     public string Name { get; }
     public LanguageProficiency MinimumLevel { get; }

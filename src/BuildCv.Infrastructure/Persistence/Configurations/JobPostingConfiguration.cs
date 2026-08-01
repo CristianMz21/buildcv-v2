@@ -15,7 +15,6 @@ internal sealed class JobPostingConfiguration : IEntityTypeConfiguration<JobPost
 {
     private const int TitleMaxLength = 200;
     private const int DescriptionMaxLength = 5000;
-    private const int LanguageNameMaxLength = 100;
 
     public JobPostingConfiguration(IFieldEncryptor encryptor) => ArgumentNullException.ThrowIfNull(encryptor);
 
@@ -101,7 +100,7 @@ internal sealed class JobPostingConfiguration : IEntityTypeConfiguration<JobPost
             language.HasKey(ChildTable.Key);
 
             language.Property(requirement => requirement.Name)
-                .HasMaxLength(LanguageNameMaxLength)
+                .HasMaxLength(LanguageRequirement.MaxNameLength)
                 .IsRequired();
 
             language.Property(requirement => requirement.MinimumLevel)
