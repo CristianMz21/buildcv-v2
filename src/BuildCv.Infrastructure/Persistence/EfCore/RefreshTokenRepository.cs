@@ -62,6 +62,44 @@ internal sealed class RefreshTokenRepository : IRefreshTokenRepository
         await _context.SaveTranslatingFailuresAsync(cancellationToken);
     }
 
+    // Session termination: logout and password change have to kill every token issued to an account,
+    // not just the one on the current request. The refresh cookie is scoped to /auth/refresh, so
+    // /auth/logout never receives it and can only identify the account — there is no token value to
+    // pass to RevokeAsync.
+    //
+    // Deliberately NOT on IRefreshTokenRepository yet. The port declaration belongs to the session
+    // termination branch, which adds it together with the handler and the in-memory adapter; declaring
+    // it here too would leave the other two adapters unimplemented and make the two branches collide in
+    // three files instead of none. The signature matches that declaration exactly, so whichever branch
+    // merges second finds this implementation already satisfying the new interface member.
+    //
+    // The lookup is by AccountId rather than by digest, which is the one place this repository can ask
+    // a question about the plaintext column without going through a blind index: AccountId is a real
+    // foreign key, stored unencrypted, and RefreshTokenConfiguration puts a non-unique index on it.
+    // The predicate below is the only filter, so that index is what the seek uses.
+    //
+    // Load-then-RemoveRange, NOT ExecuteDeleteAsync. ExecuteDeleteAsync does not go through
+    // SaveChanges, so AuditSaveChangesInterceptor never sees the entries and never converts them into
+    // DeletedAt tombstones: the rows would be physically deleted, losing the audit trail that
+    // RevokeAsync above is careful to keep, and stamping nobody as the revoker. The cost is one round
+    // trip and the tokens in memory, which is bounded by the sessions one account can hold.
+    public async Task RevokeAllForAccountAsync(AccountId accountId, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(accountId);
+
+        var tokens = await _context.RefreshTokens.AsTracking()
+            .Where(refreshToken => refreshToken.AccountId == accountId)
+            .ToListAsync(cancellationToken);
+
+        // Not merely an optimization: SaveChanges on an empty change tracker still opens a transaction,
+        // and "log out an account that has no live sessions" is a normal request, not an exception.
+        if (tokens.Count == 0)
+            return;
+
+        _context.RefreshTokens.RemoveRange(tokens);
+        await _context.SaveTranslatingFailuresAsync(cancellationToken);
+    }
+
     private async Task<RefreshToken?> FindAsync(string token, CancellationToken cancellationToken) =>
         await BlindIndexLookup.FirstMatchAsync(
             _tokenIndex.ComputeCandidates(token),

@@ -104,6 +104,100 @@ public sealed class RefreshTokenRepositoryTests
         (await repositoryReader.GetByTokenAsync(second)).Should().NotBeNull();
     }
 
+    // Bulk session termination, and the same tombstone rule as the single-token path — which is the
+    // whole reason this loads the rows and calls RemoveRange instead of ExecuteDeleteAsync. A set-based
+    // delete never reaches SaveChanges, so AuditSaveChangesInterceptor would not see the entries, the
+    // rows would physically disappear, and "who logged this account out, and when" would be gone with
+    // them. The IgnoreQueryFilters assertion below is what distinguishes the two outcomes: a hard delete
+    // and a tombstone are indistinguishable from every filtered read.
+    [Fact]
+    public async Task RevokeAllForAccountAsync_TombstonesEveryTokenTheAccountHolds()
+    {
+        var principal = AccountId.New();
+        var account = await SeedAccountAsync();
+        var tokens = new[] { NewTokenValue(), NewTokenValue(), NewTokenValue() };
+
+        await using (var writer = _fixture.NewApplicationContext())
+        {
+            var repository = TestRepositories.RefreshTokens(writer);
+            foreach (var token in tokens)
+                await repository.AddAsync(NewRefreshToken(token, account.Id));
+        }
+
+        await using (var revoker = _fixture.NewApplicationContext(new StubCurrentUser(principal)))
+            await TestRepositories.RefreshTokens(revoker).RevokeAllForAccountAsync(account.Id);
+
+        await using var reader = _fixture.NewApplicationContext();
+        var repositoryReader = TestRepositories.RefreshTokens(reader);
+
+        foreach (var token in tokens)
+        {
+            (await repositoryReader.GetByTokenAsync(token))
+                .Should().BeNull("every session the account held has to stop authenticating");
+        }
+
+        var rows = await reader.RefreshTokens.AsTracking()
+            .IgnoreQueryFilters()
+            .Where(entity => entity.AccountId == account.Id)
+            .ToListAsync();
+
+        rows.Should().HaveCount(tokens.Length, "the rows survive for audit; only the tombstone hides them");
+
+        foreach (var entry in rows.Select(reader.Entry))
+        {
+            entry.Property(ShadowColumns.DeletedAt).CurrentValue.Should().NotBeNull();
+            entry.Property(ShadowColumns.DeletedBy).CurrentValue.Should().Be(principal.Value);
+        }
+    }
+
+    // The predicate is the only thing standing between "log this account out" and "log everyone out",
+    // and the failure would be silent: the caller gets no count back, so a dropped WHERE clause looks
+    // exactly like a successful revocation until the support tickets arrive.
+    [Fact]
+    public async Task RevokeAllForAccountAsync_LeavesAnotherAccountsTokensAlone()
+    {
+        var revoked = await SeedAccountAsync();
+        var untouched = await SeedAccountAsync();
+        var revokedToken = NewTokenValue();
+        var survivingToken = NewTokenValue();
+
+        await using (var writer = _fixture.NewApplicationContext())
+        {
+            var repository = TestRepositories.RefreshTokens(writer);
+            await repository.AddAsync(NewRefreshToken(revokedToken, revoked.Id));
+            await repository.AddAsync(NewRefreshToken(survivingToken, untouched.Id));
+        }
+
+        await using (var revoker = _fixture.NewApplicationContext())
+            await TestRepositories.RefreshTokens(revoker).RevokeAllForAccountAsync(revoked.Id);
+
+        await using var reader = _fixture.NewApplicationContext();
+        var repositoryReader = TestRepositories.RefreshTokens(reader);
+
+        (await repositoryReader.GetByTokenAsync(revokedToken)).Should().BeNull();
+        (await repositoryReader.GetByTokenAsync(survivingToken))
+            .Should().NotBeNull("one account logging out must not end anybody else's session");
+    }
+
+    // Logging out an account with no live sessions is a normal request — a fresh registration, a second
+    // logout, a password change on an account that only ever used bearer tokens. It must not throw and
+    // must not write.
+    [Fact]
+    public async Task RevokeAllForAccountAsync_ForAnAccountWithNoTokens_IsANoOp()
+    {
+        var account = await SeedAccountAsync();
+
+        await using var context = _fixture.NewApplicationContext();
+
+        var act = async () => await TestRepositories.RefreshTokens(context).RevokeAllForAccountAsync(account.Id);
+
+        await act.Should().NotThrowAsync();
+
+        (await context.RefreshTokens.IgnoreQueryFilters()
+            .CountAsync(entity => entity.AccountId == account.Id))
+            .Should().Be(0);
+    }
+
     [Fact]
     public async Task RevokeAsync_ForAValueNobodyIssued_IsANoOp()
     {
