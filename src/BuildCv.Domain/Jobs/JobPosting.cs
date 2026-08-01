@@ -145,7 +145,7 @@ public sealed class JobPosting
         foreach (var r in list)
             ArgumentNullException.ThrowIfNull(r);
         if (HasDuplicateLanguage(list))
-            throw new DuplicateSkillException("Duplicate language in requirements.");
+            throw new DuplicateEntryException("Duplicate language in requirements.");
         _languageRequirements.Clear();
         _languageRequirements.AddRange(list);
         Touch();
@@ -155,7 +155,7 @@ public sealed class JobPosting
     {
         ArgumentNullException.ThrowIfNull(requirement);
         if (HasDuplicateLanguage(_languageRequirements.Append(requirement)))
-            throw new DuplicateSkillException($"Language '{requirement.Name}' already exists in requirements.");
+            throw new DuplicateEntryException($"Language '{requirement.Name}' already exists in requirements.");
         _languageRequirements.Add(requirement);
         Touch();
     }
@@ -163,6 +163,11 @@ public sealed class JobPosting
     // OrdinalIgnoreCase, exactly as HasDuplicateSkill compares skill names. LanguageRequirement stores
     // its name as typed, so record equality alone would let "English" and "english" both onto one
     // posting -- and PR 3 would then score the candidate against whichever it happened to read first.
+    //
+    // The guard SHAPE mirrors HasDuplicateSkill; the exception type deliberately does not. A duplicate
+    // language is not a duplicate skill, and DuplicateEntryException is already what Resume.AddLanguage
+    // throws for this same invariant on the candidate's side. An exception should name the invariant
+    // violated, not the method it was copied from.
     private static bool HasDuplicateLanguage(IEnumerable<LanguageRequirement> requirements)
     {
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);

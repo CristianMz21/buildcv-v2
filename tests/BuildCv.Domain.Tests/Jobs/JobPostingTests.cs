@@ -161,7 +161,7 @@ public class JobPostingTests
         var act = () => job.AddLanguageRequirement(
             LanguageRequirement.Create("ENGLISH", LanguageProficiency.Basic));
 
-        act.Should().Throw<DuplicateSkillException>();
+        act.Should().Throw<DuplicateEntryException>();
         job.LanguageRequirements.Should().ContainSingle();
     }
 
@@ -178,7 +178,7 @@ public class JobPostingTests
             LanguageRequirement.Create("english", LanguageProficiency.Basic),
         ]);
 
-        act.Should().Throw<DuplicateSkillException>();
+        act.Should().Throw<DuplicateEntryException>();
         job.LanguageRequirements.Should().BeEmpty("a rejected set must not leave a partial write behind");
     }
 
