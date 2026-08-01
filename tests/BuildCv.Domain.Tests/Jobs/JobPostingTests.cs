@@ -200,6 +200,29 @@ public class JobPostingTests
         JobPosting.Create(OwnerId, "Dev", OrganizationName.Create("TechCorp"))
             .EducationLevel.Should().BeNull();
 
+    [Fact]
+    public void JobPosting_records_the_education_level_it_is_given()
+    {
+        var job = JobPosting.Create(OwnerId, "Dev", OrganizationName.Create("TechCorp"));
+
+        job.SetEducationLevel(EducationLevel.Master);
+
+        job.EducationLevel.Should().Be(EducationLevel.Master);
+    }
+
+    // Withdrawing a requirement and demanding the lowest rung are different claims. Only one of them
+    // is "no opinion", and HighSchool = 0 is not it — so clearing has to reach null, not default.
+    [Fact]
+    public void JobPosting_education_level_can_be_cleared_back_to_unstated()
+    {
+        var job = JobPosting.Create(OwnerId, "Dev", OrganizationName.Create("TechCorp"));
+        job.SetEducationLevel(EducationLevel.Doctorate);
+
+        job.SetEducationLevel(null);
+
+        job.EducationLevel.Should().BeNull();
+    }
+
     // The numbers are not arbitrary: they are exactly what ScoringEngine.ComputeSkillsScore has always
     // computed inline from Priority. Changing either one here moves every skills score in the product,
     // which is why they are asserted as literals rather than derived from the enum.

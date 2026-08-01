@@ -31,9 +31,7 @@ public sealed class JobPosting
 
     // Nullable because most postings state no degree requirement at all, and "not stated" has to stay
     // distinguishable from "high school": PR 3 penalises a candidate for missing a stated requirement
-    // and must not invent one. There is no Domain mutator yet on purpose -- job-side authoring is
-    // recruiter-facing and this phase is candidate-first, so the column exists for the scorer to read
-    // and the write path arrives with the "bring your own job offer" phase. EF materializes it.
+    // and must not invent one.
     public EducationLevel? EducationLevel { get; private set; }
 
     private JobPosting(
@@ -125,6 +123,19 @@ public sealed class JobPosting
                 return true;
         }
         return false;
+    }
+
+    // Domain-only, matching SetLanguageRequirements: there is no endpoint behind either of them, because
+    // authoring a posting is recruiter-facing and this phase is candidate-first. It exists so the column
+    // has a producer that is not EF materialization -- a schema column nothing can write is untestable,
+    // and its first real write would otherwise happen in production.
+    //
+    // Takes a nullable so a posting can go back to stating nothing. Clearing a requirement and demanding
+    // the lowest rung are different claims, and only one of them is "no opinion".
+    public void SetEducationLevel(EducationLevel? level)
+    {
+        EducationLevel = level;
+        Touch();
     }
 
     public void SetLanguageRequirements(IEnumerable<LanguageRequirement> requirements)

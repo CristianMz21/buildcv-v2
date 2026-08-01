@@ -264,6 +264,7 @@ public sealed class SchemaRoundTripTests
             LanguageRequirement.Create("Español", LanguageProficiency.Native),
         ]);
         posting.SetResponsibilities([Responsibility.Create("Ship features."), Responsibility.Create("Review code.")]);
+        posting.SetEducationLevel(EducationLevel.Bachelor);
         posting.Publish();
 
         await using (var context = _fixture.NewContext())
@@ -283,14 +284,18 @@ public sealed class SchemaRoundTripTests
         reloaded.Description.Should().Be(posting.Description);
         reloaded.CompanyName.Should().Be(posting.CompanyName);
         reloaded.Status.Should().Be(JobPostingStatus.Published);
+        reloaded.EducationLevel.Should().Be(EducationLevel.Bachelor);
         reloaded.Requirements.Should().BeEquivalentTo(posting.Requirements);
         reloaded.LanguageRequirements.Should().BeEquivalentTo(posting.LanguageRequirements);
         reloaded.Responsibilities.Should().BeEquivalentTo(posting.Responsibilities);
 
-        // The classification, proved rather than asserted about the model: this filter runs on the
-        // SERVER. Both columns had to be plaintext for it to translate, and PR 3's engine needs
-        // exactly this — "postings requiring Spanish at native level" is not a question anything can
-        // ask through an envelope. BeEquivalentTo above cannot show it; it only reads bytes back.
+        // The classification, proved rather than asserted about the model: both columns really are
+        // MATCHABLE in SQL. Translation is not the signal and never was — an encrypted column
+        // translates perfectly well and then silently returns nothing, because the operand is sealed
+        // under a fresh nonce. What this asserts is that the rows come back. Seal either column and
+        // this stops matching, and the failure names the feature that was lost: PR 3 needs exactly
+        // this question — "postings requiring Spanish at native level" — and BeEquivalentTo above
+        // cannot show it, because it only reads bytes back through the converter.
         var demanding = await reader.JobPostings
             .Where(entity => entity.LanguageRequirements.Any(requirement =>
                 requirement.Name == "Español" && requirement.MinimumLevel == LanguageProficiency.Native))
