@@ -64,8 +64,11 @@ public class ScoreBreakdownTests
     }
 
     // The guard on the theory above: at languagesScore 0.0 it asserts "unchanged", which is also what a
-    // dropped Languages term produces. Two of its three rows would stay green against the very
-    // regression it exists to catch, so the discrimination is stated once, separately, and loudly.
+    // dropped Languages term produces, so THAT ROW stays green against the very regression the theory
+    // exists to catch. Measured, not assumed — deleting the Languages term from WeightedTotal fails the
+    // 0.5 and 1.0 rows and leaves the 0.0 row passing. One green row out of three is not a hole while
+    // the other two bite; this test exists so the discrimination is stated once, on its own, where
+    // deleting it is a visible act rather than a theory row quietly going away.
     [Fact]
     public void WeightedTotal_underTheShippedWeights_differsAcrossLanguagesScores()
     {

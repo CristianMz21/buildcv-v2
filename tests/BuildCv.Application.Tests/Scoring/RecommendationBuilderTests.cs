@@ -232,6 +232,34 @@ public class RecommendationBuilderTests
         advice.Priority.Should().Be(RecommendationPriority.Critical);
     }
 
+    // A posting that weights every requirement at zero scores the neutral 0.5 whatever the resume holds,
+    // so nothing a candidate does moves the section — and the advice is still emitted, with an impact of
+    // exactly zero rather than a flattering guess.
+    //
+    // The must-have keeps its Critical label anyway. The gate is about what the posting SCREENS on, not
+    // about what the score pays, and a recruiter reading "must have Go" does not care that this
+    // deployment's weights made it worth nothing.
+    [Fact]
+    public void ZeroWeightedRequirements_stillProduceAdviceWithAnHonestZeroImpact()
+    {
+        var resume = BuildResume("C#");
+        var jobPosting = JobPosting.Create(AccountId.New(), "Backend Developer", OrganizationName.Create("Acme"));
+        jobPosting.AddRequirement(JobRequirement.Create(Technology.Create("C#"), RequirementPriority.MustHave, 0.0));
+        jobPosting.AddRequirement(JobRequirement.Create(Technology.Create("Go"), RequirementPriority.MustHave, 0.0));
+        jobPosting.AddRequirement(JobRequirement.Create(Technology.Create("Rust"), RequirementPriority.NiceToHave, 0.0));
+
+        var advice = AdviceFor(resume, jobPosting).Where(r => r.Section == SectionType.Skills).ToList();
+
+        advice.Should().HaveCount(2, "C# is matched; Go and Rust are not");
+        advice.Should().OnlyContain(r => r.Impact == 0.0,
+            "the section is pinned at its neutral score, so no fix can move it");
+
+        advice.Single(r => r.Kind == RecommendationKind.MissingMustHaveSkill)
+            .Priority.Should().Be(RecommendationPriority.Critical, "the posting still screens on it");
+        advice.Single(r => r.Kind == RecommendationKind.MissingNiceToHaveSkill)
+            .Priority.Should().Be(RecommendationPriority.NiceToHave, "nothing gates it and it is worth nothing");
+    }
+
     [Fact]
     public void Recommendations_AreReturnedInATotalDeterministicOrder()
     {
@@ -254,12 +282,12 @@ public class RecommendationBuilderTests
     // Ten is a reading limit. Past it a candidate is handed a backlog rather than advice, and the total
     // order is what makes the ten that survive the ten worth most.
     //
-    // The empty resume against fifteen unmatched must-haves produces seventeen pieces of advice: fifteen
-    // skills at 0.45/15 = 0.03 each (gated Critical by the must-have rule) plus the missing education at
-    // 0.10, all Critical, then one Important (certifications) and one NiceToHave (projects). The ten
-    // kept are the highest-impact Critical followed by nine skills — and WHICH nine is decided by the
-    // message tiebreak, the one part of the total order nothing else in this file ties hard enough to
-    // reach.
+    // The empty resume against fifteen unmatched must-haves produces EIGHTEEN pieces of advice, measured
+    // by raising the cap and counting rather than by adding them up in prose: sixteen Critical (fifteen
+    // skills at 0.45/15 = 0.03 each, gated Critical by the must-have rule, plus the missing education at
+    // 0.10), one Important (certifications) and one NiceToHave (projects). The ten kept are the
+    // highest-impact Critical followed by nine skills — and WHICH nine is decided by the message
+    // tiebreak, the one part of the total order nothing else in this file ties hard enough to reach.
     [Fact]
     public void Recommendations_AreCappedAtTen()
     {

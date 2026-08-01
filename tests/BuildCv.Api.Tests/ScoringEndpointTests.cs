@@ -85,6 +85,15 @@ public sealed class ScoringEndpointTests
 
         json.RootElement.GetProperty("breakdown").GetProperty("weights")
             .GetProperty("schemaVersion").GetInt32().Should().Be(2);
+
+        // The DTO's own premise, executed against the APP's serializer rather than a test-local one:
+        // nothing registers a global JsonStringEnumConverter, so an enum reaching the wire off a type
+        // that does not name it ships as a number. That is why `band` is 0 here and why the new
+        // recommendation fields state their names themselves. If this ever comes back a string, the
+        // two-encoding compromise in ScoringContracts should be revisited rather than left standing.
+        json.RootElement.GetProperty("band").ValueKind.Should().Be(JsonValueKind.Number);
+        json.RootElement.GetProperty("breakdown").GetProperty("sections")[0]
+            .GetProperty("section").ValueKind.Should().Be(JsonValueKind.Number);
     }
 
     // The pre-existing Enum.TryParse hole on ExperienceType, followed through to what a candidate sees

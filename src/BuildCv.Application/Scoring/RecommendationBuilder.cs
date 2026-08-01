@@ -60,9 +60,15 @@ internal static class RecommendationBuilder
     // evaluated through the engine's own SkillsScore rather than restated as w/total, so a change to
     // the formula cannot leave the advice quoting the old one.
     //
-    // A posting whose requirements are all weighted zero produces impacts of zero, and the advice is
-    // still emitted: the posting asked for the skill, so it is still worth adding. The number honestly
-    // says it will not move the score, and the priority rule turns that into NiceToHave by itself.
+    // A posting whose requirements are all weighted zero scores the neutral 0.5 no matter what the
+    // resume holds, so every impact here is exactly zero — and the advice is STILL emitted, because the
+    // posting asked for the skill and a recruiter reads it whatever the arithmetic does. The number says
+    // honestly that acting on it will not move the score.
+    //
+    // Such advice is NOT automatically demoted: a zero-impact nice-to-have falls to NiceToHave on the
+    // impact thresholds, but a zero-impact MUST-HAVE stays Critical, because the gate is about what the
+    // posting screens on and not about what the score pays. Pinned by
+    // RecommendationBuilderTests.ZeroWeightedRequirements_stillProduceAdviceWithAnHonestZeroImpact.
     private static IEnumerable<Recommendation> ForSkills(
         Resume resume, JobPosting jobPosting, ScoreBreakdown breakdown)
     {
@@ -99,9 +105,10 @@ internal static class RecommendationBuilder
     // five years, so per-entry impacts would not sum to the group's -- the last entry to be re-tagged
     // is often worth nothing. The group Δ is the honest number.
     //
-    // Emitted only when the section is genuinely below its cap, which is the same "score < 1.0" test
-    // the other counted sections use. Advice to re-label work for zero gain is not advice, and here it
-    // would be advice to re-label VOLUNTEER work for zero gain.
+    // Emitted only when re-tagging would actually pay. That guard is written on the impact rather than
+    // on the section score because it has to catch two cases, not one: the section already sitting at
+    // its five-year cap, and mis-tagged entries that carry no days at all. Advice to re-label work for
+    // zero gain is not advice, and here it would be advice to re-label VOLUNTEER work for zero gain.
     private static IEnumerable<Recommendation> ForExperience(
         Resume resume, ScoreBreakdown breakdown, DateOnly referenceDate)
     {
