@@ -165,8 +165,8 @@ internal sealed class ResumeConfiguration : IEntityTypeConfiguration<Resume>
 
             education.Property(entry => entry.Period).IsRequired();
 
-            // PLAINTEXT, and the one column on this table that is. A rung on a ladder is not a
-            // description of a person: it is what the engine compares against a posting's required
+            // PLAINTEXT, joining Period as the second column here that is. A rung on a ladder is not
+            // a description of a person: it is what the engine compares against a posting's required
             // level, and it could not do that from behind the envelope Degree sits in.
             education.Property(entry => entry.Level).HasColumnType("tinyint");
         });
