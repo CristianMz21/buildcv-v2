@@ -11,9 +11,17 @@ public sealed record ScoreResumeRequest(Guid ResumeId, Guid JobPostingId);
 // client binds to them they are a public API contract too, and renumbering becomes a breaking change.
 // So the DTO lands in the same release that first emits a recommendation, not after it.
 //
-// THE PRE-CHAIN RESPONSE IS REPRODUCED VERBATIM. Everything this chain added carries enum NAMES; only
-// the fields that predate it keep their old encoding.
+// THE PRE-CHAIN RESPONSE IS REPRODUCED KEY FOR KEY, AND ONE PRE-CHAIN FIELD CHANGED ITS ENCODING.
+// Everything this chain added carries enum NAMES; the fields that predate it keep their old encoding,
+// with exactly one exception, named first because it is the one a client can be broken by.
 //
+//   - `recommendations` IS A WIRE-TYPE CHANGE, and it is the point of the release rather than a cost of
+//     it. Pre-chain Analysis.Recommendations was IReadOnlyList<string>, so the field shipped as
+//     string[]; it is now an array of objects ({section, priority, kind, message, impact}), and any
+//     client with a typed model breaks the first time the array is non-empty. Nothing before this chain
+//     ever emitted a recommendation, so the array was always [] and no deployed client has observed the
+//     difference yet — which is what makes this the cheap moment to make the change, NOT a reason to
+//     describe the response as unchanged.
 //   - Ids stay wrapped as {"value": guid} and `band` stays an integer. Both predate this chain and have
 //     clients. Flipping either convention on one endpoint out of five is worse than a consistent bad
 //     convention; that is its own repo-wide change.
