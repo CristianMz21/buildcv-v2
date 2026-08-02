@@ -264,8 +264,27 @@ internal sealed class ResumeConfiguration : IEntityTypeConfiguration<Resume>
         UseBackingField(builder, resume => resume.Certificates);
     }
 
-    // PLAINTEXT. A language and a fluency level are scoring inputs on postings that require them,
-    // and the set of values is small and public.
+    // PLAINTEXT, and for two different reasons that must not be collapsed into one.
+    //
+    // Name and Level are the scoring inputs: ScoringRules.EvaluateLanguage compares the candidate's
+    // Level against the posting's MinimumLevel, and it could not do that from behind an envelope.
+    // Their value sets are small, closed and public.
+    //
+    // FLUENCY IS NOT A SCORING INPUT AND IS NOT A CLOSED SET. It is up to 50 characters of free text
+    // the engine is FORBIDDEN to read -- stated on Domain.Resumes.Language.Level, on
+    // ScoringRules.EvaluateLanguage, and beside the Level mapping below -- because parsing prose into
+    // a level would read an unrecognised word as "not proficient" and score a native speaker zero. It
+    // is display-only. It stays plaintext because CLAUDE.md classifies "a skill, a level or a span of
+    // time" as readable and Fluency is a level DESCRIPTOR, which is the rule this mapping follows.
+    //
+    // THE OPEN QUESTION, recorded rather than resolved here: a level descriptor that is free text is
+    // not the same object the rule was written about. Nothing stops a candidate typing something
+    // personal into it, and its structural twins one section over -- Education.Degree and
+    // Education.Grade, same shape, same display-only role -- are ENCRYPTED. Whether the rule should
+    // cover free-text level descriptors is a classification decision, and changing it here would make
+    // that decision by side effect. ModelConfigurationTests names the same residual next to
+    // "Language.Fluency" in HighValueAnalyticalColumns, whose heading claim -- that the scoring engine
+    // reads every column listed there -- is true of Level and Name and NOT of Fluency.
     private static void ConfigureLanguages(EntityTypeBuilder<Resume> builder)
     {
         builder.OwnsMany(resume => resume.Languages, language =>

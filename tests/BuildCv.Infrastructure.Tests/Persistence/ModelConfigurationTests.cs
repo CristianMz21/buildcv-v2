@@ -96,6 +96,11 @@ public sealed class ModelConfigurationTests
     // The other half of the same requirement. Encrypting any of these would silently end a feature:
     // the scoring engine reads them, and internal analytics groups by them.
     //
+    // ONE EXCEPTION, and it is the one the residual below is about: Language.Fluency is display-only
+    // free text the engine is forbidden to read, so encrypting it would end a DISPLAY feature and
+    // nothing in the engine. It is on this list because of what it is classified as, not because
+    // anything queries it.
+    //
     // A deliberate SPOT-CHECK, not an exhaustive set — it names the highest-value analytical columns
     // and omits the ones whose loss would be obvious or harmless (audit timestamps, the four
     // ScoreBreakdown scores not named below, Membership, the opaque Guid foreign keys). Completeness
