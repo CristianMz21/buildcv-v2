@@ -33,11 +33,18 @@ public sealed record ScoreResumeRequest(Guid ResumeId, Guid JobPostingId);
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>A section the posting did not ask about carries a weight of 0</b> — in
+/// <b>A section that expressed no weighted requirement carries a weight of 0</b> — in
 /// <c>Breakdown.Weights</c> and beside its score in <c>Breakdown.Sections</c>. It neither helped nor
 /// hurt this score, and the score printed next to it measures nothing. There is deliberately NO
 /// separate "applicable" flag: the weight IS the signal, so the two can never disagree about the same
 /// fact.
+/// </para>
+/// <para>
+/// <b><c>Weights.Skills</c> and <c>Weights.Languages</c> are 0 on every analysis this build can
+/// produce</b>, and that is a missing feature rather than anything a recruiter chose. No endpoint puts
+/// a skill or language requirement on a posting: <c>POST /jobs</c> carries only a title, company and
+/// description, and there is no update endpoint. A UI that renders those two zeros as "this job listed
+/// no skill requirements" would say it about every job in the product.
 /// </para>
 /// <para>
 /// The remaining weights are RENORMALIZED to still total 1.0, so the ceiling is 100 for every posting.
@@ -145,10 +152,17 @@ public sealed record ScoringWeightsResponse(
 /// </param>
 /// <param name="Weight">
 /// The share of the overall score this section carried, 0..1, after renormalization. <b>0 means the
-/// posting stated no requirement for this section</b>, so it neither helped nor hurt — this is the
-/// only signal a client needs to explain "why is this section not counted", and there is deliberately
-/// no parallel flag saying the same thing a second time. The weights across all six sections total
-/// 1.0, the unasked ones having been redistributed proportionally over the rest.
+/// posting expressed no weighted requirement for this section</b>, so it neither helped nor hurt —
+/// this is the only signal a client needs to explain "why is this section not counted", and there is
+/// deliberately no parallel flag saying the same thing a second time. The weights across all six
+/// sections total 1.0, the zero-weighted ones having been redistributed proportionally over the rest.
+/// <para>
+/// "Expressed no weighted requirement" is not the same claim as "stated no requirement", and the
+/// difference is reachable: a posting may state requirements and weight every one of them 0.0, which
+/// renormalizes the section out while <c>Recommendations</c> still names those requirements with an
+/// <c>Impact</c> of 0. So a weight of 0 does not license a client to say the posting asked nothing —
+/// only that nothing it asked could move the total.
+/// </para>
 /// </param>
 public sealed record SectionScoreResponse(string Section, double Score, double Weight)
 {

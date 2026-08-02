@@ -68,11 +68,25 @@ public static class ScoringEndpoints
 
     // Stated on every endpoint that returns an AnalysisResponse, because this is the one field pairing a
     // client developer will otherwise read as a bug report from the candidate.
+    //
+    // "Expressed no weighted requirement" rather than "stated no requirement", and the difference is
+    // reachable rather than pedantic: a posting may state requirements and weight all of them 0.0, which
+    // renormalizes the section out while `recommendations[]` still names those requirements. That case is
+    // executed by RecommendationBuilderTests.ZeroWeightedRequirements_stillProduceAdviceWithAnHonestZero
+    // Impact, so "the posting asked nothing" would be a false explanation of a state the domain reaches.
     private const string ZeroWeightContract =
-        "A section whose `breakdown.weights.<section>` is 0 was NOT ASKED ABOUT by the posting: it "
-        + "neither helped nor hurt the score, and the `score` beside it measures nothing. There is no "
-        + "separate flag for this — the weight IS the signal, deliberately, so the two can never "
+        "A section whose `breakdown.weights.<section>` is 0 EXPRESSED NO WEIGHTED REQUIREMENT: it "
+        + "neither helped nor hurt the score, and the `score` beside it measures nothing. Two different "
+        + "postings land there — one that asked nothing of the section, and one that asked and weighted "
+        + "every requirement 0.0. In the second, `recommendations[]` still names those requirements, each "
+        + "with an `impact` of 0, so a section can carry no weight and still carry advice. There is no "
+        + "separate flag for any of this — the weight IS the signal, deliberately, so the two can never "
         + "disagree. The remaining weights are renormalized to still total 1.0, which is why an "
         + "`overallScore` of 0 with only three recommendations is a complete answer rather than a "
-        + "truncated one.";
+        + "truncated one. "
+        + "TODAY `weights.skills` AND `weights.languages` ARE 0 ON EVERY ANALYSIS, and neither is a "
+        + "recruiter's decision: no endpoint can put a skill or language requirement on a posting yet — "
+        + "`POST /jobs` carries only a title, company and description, and there is no update endpoint. "
+        + "Rendering those two zeros as 'this job listed no skill requirements' would say it about every "
+        + "job in the product; it reports a feature that does not exist yet.";
 }
