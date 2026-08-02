@@ -27,6 +27,31 @@ public sealed record ScoreResumeRequest(Guid ResumeId, Guid JobPostingId);
 // Every encoding here is decided in this file: enum names come from ToString() and `band` from an int
 // property, so a JsonStringEnumConverter registered globally later cannot silently change any of it.
 // That makes the response converter-proof, which is the property that matters — not the numbering.
+/// <summary>
+/// One scoring run, as returned by <c>POST /scoring/score</c>, <c>GET /scoring/{analysisId}</c> and
+/// each entry of <c>GET /resumes/{id}/analyses</c>. One shape for one aggregate, on purpose.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <b>A section the posting did not ask about carries a weight of 0</b> — in
+/// <c>Breakdown.Weights</c> and beside its score in <c>Breakdown.Sections</c>. It neither helped nor
+/// hurt this score, and the score printed next to it measures nothing. There is deliberately NO
+/// separate "applicable" flag: the weight IS the signal, so the two can never disagree about the same
+/// fact.
+/// </para>
+/// <para>
+/// The remaining weights are RENORMALIZED to still total 1.0, so the ceiling is 100 for every posting.
+/// That is why an <see cref="OverallScore"/> of 0 accompanied by only three recommendations is a
+/// complete answer and not a truncated one: the sections that were asked about all scored zero, and
+/// the ones that were not are absent from both the total and the advice.
+/// </para>
+/// <para>
+/// Two analyses can therefore report the same <c>Weights.SchemaVersion</c> and still have been scored
+/// under different weightings, because each posting asks about a different set of sections. The
+/// version names the weighting RULE; the snapshot names the RESULT. Compare the weights before
+/// comparing two <see cref="OverallScore"/> values across postings.
+/// </para>
+/// </remarks>
 public sealed record AnalysisResponse(
     IdEnvelope Id,
     ScoreBreakdownResponse Breakdown,
@@ -109,10 +134,22 @@ public sealed record ScoringWeightsResponse(
             weights.SchemaVersion);
 }
 
-// `Weight` is what tells a client whether this section was ASKED ABOUT AT ALL. A weight of 0.0 means
-// the posting stated no requirement for it, so the score beside it measures nothing and should not be
-// rendered as a result — that pairing is the whole reason SectionScore carries both numbers together,
-// and it is the only signal a client needs to explain "why is this section not counted".
+/// <summary>
+/// One section's score paired with the weight it carried in this analysis. The pairing is the whole
+/// reason the type exists: neither number explains the total on its own.
+/// </summary>
+/// <param name="Section">The section name — <c>"Skills"</c>, never <c>0</c>.</param>
+/// <param name="Score">
+/// How well the resume matched this section, 0..1. <b>Meaningless when <paramref name="Weight"/> is
+/// 0</b>: nothing was asked, so nothing was measured, and a client should not render it as a result.
+/// </param>
+/// <param name="Weight">
+/// The share of the overall score this section carried, 0..1, after renormalization. <b>0 means the
+/// posting stated no requirement for this section</b>, so it neither helped nor hurt — this is the
+/// only signal a client needs to explain "why is this section not counted", and there is deliberately
+/// no parallel flag saying the same thing a second time. The weights across all six sections total
+/// 1.0, the unasked ones having been redistributed proportionally over the rest.
+/// </param>
 public sealed record SectionScoreResponse(string Section, double Score, double Weight)
 {
     public static SectionScoreResponse From(SectionScore section) =>
