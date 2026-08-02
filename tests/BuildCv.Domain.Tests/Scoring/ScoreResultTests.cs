@@ -3,9 +3,11 @@ using FluentAssertions;
 
 namespace BuildCv.Domain.Tests.Scoring;
 
-// Nothing constructs a ScoreResult in production yet — PR 3's engine is the first caller. It is
-// covered here anyway: a public Domain type whose guards have never executed is a type whose guards
-// are unproven, and "the next PR will exercise it" is how an untested factory reaches production.
+// ScoringEngine.Score is the production caller (ScoringEngine.cs, the ScoreResult.Create at the end
+// of Score) — it landed in the same chain as this file, so the note that used to sit here saying
+// nothing constructs one "yet" was stale by the time anyone read it. These tests still earn their
+// place: the engine only ever hands Create a well-formed pair, so every guard below is reachable from
+// the type's public surface and from nowhere the engine goes.
 public class ScoreResultTests
 {
     private static readonly ScoringWeightsSnapshot DefaultWeights = ScoringWeightsSnapshot.Default();
