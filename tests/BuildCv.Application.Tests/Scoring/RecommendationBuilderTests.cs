@@ -139,15 +139,11 @@ public class RecommendationBuilderTests
         AdviceFor(resume, jobPosting).Should().NotContain(r => r.Section == SectionType.Languages);
     }
 
-    // A posting that asks for no language asks for no advice about languages either. The section still
-    // scores 0.5, and there is nothing a candidate could do about a question nobody put.
-    [Fact]
-    public void NoLanguagesRecommendation_WhenThePostingStatesNoRequirement()
-    {
-        var resume = BuildResume();
-
-        AdviceFor(resume, BuildJobPosting()).Should().NotContain(r => r.Section == SectionType.Languages);
-    }
+    // DELIBERATELY NOT TESTED: "a posting that states no language requirement produces no language
+    // advice". That test existed here and CANNOT FAIL — with no requirements the rule's loop never runs,
+    // so it stays green with the early return removed and with the entire languages rule deleted. A test
+    // that cannot go red is not coverage, it is a claim about coverage. The case above is the real one:
+    // requirements stated, all satisfied, nothing to say.
 
     // The one experience rule fires only on a mis-tagged entry, never on "you are short of five years".
     // A resume with nothing but professional work and two years on it gets no experience advice at all,
@@ -234,9 +230,9 @@ public class RecommendationBuilderTests
         advice.Priority.Should().Be(RecommendationPriority.Critical);
     }
 
-    // A posting that weights every requirement at zero scores the neutral 0.5 whatever the resume holds,
-    // so nothing a candidate does moves the section — and the advice is still emitted, with an impact of
-    // exactly zero rather than a flattering guess.
+    // A posting that weights every requirement at zero does not APPLY: the skills section is
+    // renormalized out and carries no weight, so nothing a candidate does moves the total — and the
+    // advice is still emitted, with an impact of exactly zero rather than a flattering guess.
     //
     // The must-have keeps its Critical label anyway. The gate is about what the posting SCREENS on, not
     // about what the score pays, and a recruiter reading "must have Go" does not care that this
@@ -254,7 +250,7 @@ public class RecommendationBuilderTests
 
         advice.Should().HaveCount(2, "C# is matched; Go and Rust are not");
         advice.Should().OnlyContain(r => r.Impact == 0.0,
-            "the section is pinned at its neutral score, so no fix can move it");
+            "the section carries no weight once renormalized, so no fix can move the total");
 
         advice.Single(r => r.Kind == RecommendationKind.MissingMustHaveSkill)
             .Priority.Should().Be(RecommendationPriority.Critical, "the posting still screens on it");
@@ -285,11 +281,18 @@ public class RecommendationBuilderTests
     // order is what makes the ten that survive the ten worth most.
     //
     // The empty resume against fifteen unmatched must-haves produces EIGHTEEN pieces of advice, measured
-    // by raising the cap and counting rather than by adding them up in prose: sixteen Critical (fifteen
-    // skills at 0.45/15 = 0.03 each, gated Critical by the must-have rule, plus the missing education at
-    // 0.10), one Important (certifications) and one NiceToHave (projects). The ten kept are the
-    // highest-impact Critical followed by nine skills — and WHICH nine is decided by the message
-    // tiebreak, the one part of the total order nothing else in this file ties hard enough to reach.
+    // by raising the cap and counting rather than by adding them up in prose: sixteen Critical, one
+    // Important (certifications) and one NiceToHave (projects).
+    //
+    // The posting states skills but no language, so the weights are renormalized over five sections with
+    // a divisor of 0.90 — Skills 0.45/0.90 = 0.50, Education 0.10/0.90 = 0.1111. That makes each of the
+    // fifteen skills worth 0.50/15 = 0.0333 (gated Critical by the must-have rule, since 0.0333 alone
+    // would only be Important) and the missing education worth 0.1111, which is Critical on impact and
+    // the largest of the sixteen.
+    //
+    // So the ten kept are that education recommendation followed by nine skills — and WHICH nine is
+    // decided by the message tiebreak, the one part of the total order nothing else in this file ties
+    // hard enough to reach.
     [Fact]
     public void Recommendations_AreCappedAtTen()
     {

@@ -144,13 +144,17 @@ public class ValueObjectConverterTests
 
     }
 
-    // THE ROLLBACK CLIFF, executed in both directions rather than described — and it is NARROWER than
-    // it first appears, which is worth stating precisely because "every row is unreadable" is the kind
-    // of claim that gets repeated into a deployment plan.
+    // THE ROLLBACK CLIFF, executed in both directions rather than described — and narrower on BOTH axes
+    // than the obvious phrasing, which is worth stating precisely because "every row is unreadable after
+    // v2" is the kind of claim that gets repeated into a deployment plan.
     //
-    // A build older than v2 does not know the Languages member and skips it (System.Text.Json defaults
-    // JsonUnmappedMemberHandling to Skip), so it sees only five weights and re-runs the sum invariant
-    // over them. Renormalization decides whether that sum still reaches 1.00:
+    // WHICH READER: one built before the Languages MEMBER existed, i.e. before PR 1 — not merely before
+    // v2. A PR 2 build has the six-member type and reads a v2 payload fine; it just sees weights that
+    // differ from its own Default(). The payload below is what a PRE-PR-1 deserializer produces, because
+    // it is the only one that drops the member (System.Text.Json defaults JsonUnmappedMemberHandling to
+    // Skip) and then re-runs the sum invariant over the five it can see.
+    //
+    // WHICH ROWS: renormalization decides whether that sum still reaches 1.00.
     //
     //   - Posting stated a language requirement -> Languages carries weight -> the five sum to LESS
     //     than 1.00 and Create throws. The row is UNREADABLE to that build.
@@ -158,8 +162,8 @@ public class ValueObjectConverterTests
     //     and the row loads, correctly: a section weighted zero contributed nothing to the total, so
     //     the old reader reproduces the same number.
     //
-    // So the cliff is real and there is still no rolling back past the first write — but the rows it
-    // strands are exactly the ones scored against a posting that asked for a language.
+    // So the cliff is real and there is no rolling back past PR 1 once a row of the first kind exists —
+    // but the rows it strands are exactly those scored against a posting that asked for a language.
     [Fact]
     public void ScoringWeights_AVersionTwoPayloadIsUnreadableToAnOldReaderOnlyWhenLanguagesCarriesWeight()
     {

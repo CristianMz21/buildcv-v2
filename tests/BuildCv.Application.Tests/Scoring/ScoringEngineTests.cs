@@ -446,14 +446,13 @@ public class ScoringEngineTests
         result.ProjectsScore.Should().BeGreaterThan(0.0);
     }
 
-    // The ceiling, stated on its own. A perfect resume has to be able to reach 1.00 - a section
-    // carrying weight that the resume cannot fully satisfy caps it below that, which is a bug no
+    // The ceiling, on a posting that asks about everything. A perfect resume has to be able to reach
+    // 1.00 - a section carrying weight the resume cannot satisfy caps it below that, which is a bug no
     // per-section assertion would name.
     //
-    // NOTE WHAT PERFECT NOW REQUIRES: the posting has to state a language requirement and the resume
-    // has to meet it. Against a posting that asks for no language the Languages section returns the
-    // neutral 0.5 and NO resume can exceed 0.95 - see the test immediately below, which pins that as
-    // deliberate rather than letting it be discovered.
+    // This is the case where renormalization is the IDENTITY: every section applies, so the divisor is
+    // 1.00 and the weights are Default() bit-for-bit. The two tests below take the same ceiling through
+    // the cases where it is not - a posting that asks about less, which is where the old design failed.
     [Fact]
     public void Weighted_total_can_still_reach_one_for_a_resume_that_scores_perfectly()
     {

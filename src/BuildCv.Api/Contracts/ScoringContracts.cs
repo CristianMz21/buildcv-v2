@@ -11,20 +11,22 @@ public sealed record ScoreResumeRequest(Guid ResumeId, Guid JobPostingId);
 // client binds to them they are a public API contract too, and renumbering becomes a breaking change.
 // So the DTO lands in the same release that first emits a recommendation, not after it.
 //
-// TODAY'S RESPONSE IS REPRODUCED VERBATIM and only added to. Two consequences are deliberate and both
-// look like inconsistencies:
+// THE PRE-CHAIN RESPONSE IS REPRODUCED VERBATIM. Everything this chain added carries enum NAMES; only
+// the fields that predate it keep their old encoding.
 //
-//   - Ids stay wrapped as {"value": guid} and `band` stays an integer. Flipping either convention on
-//     one endpoint out of five is worse than a consistent bad convention; that is its own repo-wide
-//     change.
-//   - `breakdown.sections[].section` stays an integer while `recommendations[].section` is the string
-//     "Skills". Same enum, same response, two encodings. The sections projection is the shape this
-//     endpoint already ships; the recommendations are new, and new fields get names because names are
-//     what stop the numbering becoming a contract. A follow-up can register JsonStringEnumConverter
-//     globally and flip `band` and `sections[].section` together, deliberately and in one place.
+//   - Ids stay wrapped as {"value": guid} and `band` stays an integer. Both predate this chain and have
+//     clients. Flipping either convention on one endpoint out of five is worse than a consistent bad
+//     convention; that is its own repo-wide change.
+//   - `breakdown.sections[]` and `recommendations[]` BOTH name their sections: "Skills", not 0. The
+//     sections projection looks pre-existing but is not — it was added by PR 1, is unmerged and has no
+//     clients, so it is this chain's shape rather than the endpoint's. Shipping a raw enum integer
+//     inside the very DTO that exists to stop enum numbers becoming a public contract is the one
+//     inconsistency that gets harder to justify with every release, so it was corrected while it was
+//     still free.
 //
-// Enum names are produced by ToString() here rather than by a serializer converter, so the wire
-// contract is stated in this file and cannot be changed by an option added elsewhere.
+// Every encoding here is decided in this file: enum names come from ToString() and `band` from an int
+// property, so a JsonStringEnumConverter registered globally later cannot silently change any of it.
+// That makes the response converter-proof, which is the property that matters — not the numbering.
 public sealed record AnalysisResponse(
     IdEnvelope Id,
     ScoreBreakdownResponse Breakdown,
@@ -107,12 +109,14 @@ public sealed record ScoringWeightsResponse(
             weights.SchemaVersion);
 }
 
-// `Section` is an int here and a string on RecommendationResponse. That is the shape this array already
-// ships in, kept rather than corrected — see the note on AnalysisResponse.
-public sealed record SectionScoreResponse(int Section, double Score, double Weight)
+// `Weight` is what tells a client whether this section was ASKED ABOUT AT ALL. A weight of 0.0 means
+// the posting stated no requirement for it, so the score beside it measures nothing and should not be
+// rendered as a result — that pairing is the whole reason SectionScore carries both numbers together,
+// and it is the only signal a client needs to explain "why is this section not counted".
+public sealed record SectionScoreResponse(string Section, double Score, double Weight)
 {
     public static SectionScoreResponse From(SectionScore section) =>
-        new((int)section.Section, section.Score, section.Weight);
+        new(section.Section.ToString(), section.Score, section.Weight);
 }
 
 // Impact is on the same 0..1 scale as every score in this response, NOT the 0..100 scale OverallScore

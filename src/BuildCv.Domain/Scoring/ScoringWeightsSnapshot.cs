@@ -8,14 +8,18 @@ public sealed record ScoringWeightsSnapshot
     // weights is NOT the score the five-section model produced for the same resume, and a row that
     // could not say which model explained it would make every historical comparison a lie.
     //
-    // THIS IS THE ONE-WAY DOOR the v1 comment promised, and renormalization makes it NARROWER than a
-    // flat "every row is unreadable" — a distinction worth keeping straight, because that sentence
-    // ends up in a deployment plan.
+    // THE ONE-WAY DOOR, stated precisely, because this sentence ends up in a deployment plan and both
+    // of its obvious phrasings are wrong.
     //
-    // Version 1's payload was rollback-safe: a reader built before Languages existed skipped the
-    // unmapped member (System.Text.Json defaults JsonUnmappedMemberHandling to Skip), saw five weights
-    // summing to 1.0, and worked. That same old reader re-runs the sum invariant over five members
-    // today, and whether it still reaches 1.00 depends on what the posting asked for:
+    // WHICH READER BREAKS: one built before the Languages MEMBER existed — i.e. before PR 1, not merely
+    // before v2. A PR 2 build already has the six-member type, deserializes a v2 payload without
+    // complaint, and merely reports weights that differ from its own Default(). So the boundary is
+    // "no rolling back past PR 1", which is operationally the same thing only while this chain merges
+    // as one release, and misleading the moment it ships in pieces.
+    //
+    // WHICH ROWS IT STRANDS: not all of them. A pre-PR-1 reader skips the unmapped member
+    // (System.Text.Json defaults JsonUnmappedMemberHandling to Skip) and re-runs the sum invariant over
+    // the five it can see, so renormalization decides the outcome:
     //
     //   - Posting stated a language requirement -> Languages carries weight -> the five it can see sum
     //     to less than 1.00, Create throws, and the row is UNREADABLE to that build.
@@ -23,8 +27,7 @@ public sealed record ScoringWeightsSnapshot
     //     1.00, and the row loads and reproduces the same total, because a zero-weighted section
     //     contributed nothing to it.
     //
-    // So there is still no rolling back past the first write, and the rows it strands are exactly the
-    // ones scored against a posting that asked for a language. Both directions are executed by
+    // Both directions are executed by
     // ValueObjectConverterTests.ScoringWeights_AVersionTwoPayloadIsUnreadableToAnOldReaderOnlyWhenLanguagesCarriesWeight
     // rather than reasoned about from the deserializer's documented default.
     public const int CurrentSchemaVersion = 2;

@@ -78,10 +78,10 @@ public class ScoringContractTests
         recommendation.GetProperty("impact").GetDouble().Should().Be(0.15);
     }
 
-    // The pre-existing shape, reproduced verbatim rather than tidied. Every assertion here is a
-    // deliberate inconsistency with the one above, and each is cheaper than breaking a client.
+    // The fields that genuinely PREDATE this chain keep their old encoding, and only those. Each is a
+    // deliberate inconsistency with the named enums above, and each is cheaper than breaking a client.
     [Fact]
-    public void Serialized_PreExistingFieldsKeepTheirOldEncoding()
+    public void Serialized_PreChainFieldsKeepTheirOldEncoding()
     {
         var analysis = BuildAnalysis();
 
@@ -94,11 +94,28 @@ public class ScoringContractTests
         root.GetProperty("id").GetProperty("value").ValueKind.Should().Be(JsonValueKind.String);
         root.GetProperty("resumeId").GetProperty("value").ValueKind.Should().Be(JsonValueKind.String);
         root.GetProperty("jobPostingId").GetProperty("value").ValueKind.Should().Be(JsonValueKind.String);
+    }
 
-        root.GetProperty("breakdown").GetProperty("sections")[0]
-            .GetProperty("section").ValueKind.Should().Be(JsonValueKind.Number,
-                "the same enum is a name on a recommendation and a number here, and that is the price "
-                + "of not moving a field this endpoint already ships");
+    // Both arrays that carry a SectionType name it. `sections[]` looks pre-existing and is not — it was
+    // added by PR 1, is unmerged and has no clients, so it belongs to this chain and was corrected while
+    // that was still free. One enum, one encoding, in the DTO whose whole purpose is stopping those
+    // numbers becoming a public contract.
+    [Fact]
+    public void Serialized_EverySectionTypeOnTheWireIsANameNotANumber()
+    {
+        var analysis = BuildAnalysis(
+            Advice(SectionType.Languages, RecommendationPriority.Critical,
+                RecommendationKind.LanguageMissing, "Add English.", 0.10));
+
+        using var json = JsonDocument.Parse(
+            JsonSerializer.Serialize(AnalysisResponse.From(analysis), WebOptions));
+
+        var sections = json.RootElement.GetProperty("breakdown").GetProperty("sections");
+        sections.EnumerateArray().Select(s => s.GetProperty("section").GetString()).Should().Equal(
+            "Skills", "Experience", "Education", "Certifications", "Projects", "Languages");
+
+        json.RootElement.GetProperty("recommendations")[0]
+            .GetProperty("section").GetString().Should().Be("Languages");
     }
 
     // The full property list, in order, at both levels. A field silently disappearing is the failure a

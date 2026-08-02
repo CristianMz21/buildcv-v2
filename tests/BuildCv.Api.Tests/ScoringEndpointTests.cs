@@ -70,6 +70,20 @@ public sealed class ScoringEndpointTests
         using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         var recommendations = json.RootElement.GetProperty("recommendations").EnumerateArray().ToList();
 
+        // THE MOST VISIBLE SCORE MOVEMENT IN THE RELEASE, and asserted FIRST on purpose.
+        //
+        // This exact request returned 28 before renormalization and returns 0 now. The 28 was two
+        // fabricated neutral halves: the posting states no skill and no language requirement, so both
+        // sections were handed 0.5 and 0.45*0.5 + 0.10*0.5 = 0.275 of score arrived from questions
+        // nobody asked. An empty resume against a posting demanding nothing genuinely matches nothing,
+        // and the four sections that do apply all score zero.
+        //
+        // It leads the test because a full revert of renormalization moves the priorities below TOO, and
+        // only the first failing assertion is ever observed — asserted last, this line could never be
+        // the one that goes red, which makes it documentation rather than a guard.
+        json.RootElement.GetProperty("overallScore").GetInt32().Should().Be(0,
+            "the previous 28 came entirely from two unasked sections scoring a fabricated 0.5");
+
         // An empty resume is below the cap on education, certifications and projects, and the posting
         // states no skill or language requirement — so exactly those three fire.
         recommendations.Select(r => r.GetProperty("kind").GetString()).Should().Equal(
@@ -107,14 +121,14 @@ public sealed class ScoringEndpointTests
             .Sum(name => weights.GetProperty(name).GetDouble())
             .Should().BeApproximately(1.0, 1e-9);
 
-        // The DTO's own premise, executed against the APP's serializer rather than a test-local one:
-        // nothing registers a global JsonStringEnumConverter, so an enum reaching the wire off a type
-        // that does not name it ships as a number. That is why `band` is 0 here and why the new
-        // recommendation fields state their names themselves. If this ever comes back a string, the
-        // two-encoding compromise in ScoringContracts should be revisited rather than left standing.
+        // The wire contract for the one field that predates this chain, asserted against the APP's
+        // serializer rather than a test-local one. `band` is an int on the DTO, so this is a statement
+        // about what clients receive and NOT evidence about converter registration — nothing in this
+        // response is an enum type any more, which is exactly what makes it converter-proof.
         json.RootElement.GetProperty("band").ValueKind.Should().Be(JsonValueKind.Number);
         json.RootElement.GetProperty("breakdown").GetProperty("sections")[0]
-            .GetProperty("section").ValueKind.Should().Be(JsonValueKind.Number);
+            .GetProperty("section").GetString().Should().Be("Skills",
+                "every SectionType on the wire is a name, in both arrays that carry one");
     }
 
     // The pre-existing Enum.TryParse hole on ExperienceType, followed through to what a candidate sees

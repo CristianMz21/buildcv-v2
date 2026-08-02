@@ -265,7 +265,8 @@ public class ScoreBreakdownTests
     // Scoped precisely: both sides read the SAME weights, so this is self-consistent by construction
     // and can never catch a weight regression — it catches Sections drifting from WeightedTotal, and
     // nothing else. The weights themselves are pinned by
-    // ScoringWeightsSnapshot_default_leaves_the_five_scored_sections_exactly_as_they_were.
+    // ScoreBreakdown_default_snapshot_has_expected_weights and
+    // ScoringWeightsSnapshot_v2_moved_weight_from_education_to_languages_and_nowhere_else.
     [Fact]
     public void Sections_reproduce_the_weighted_total_when_summed()
     {

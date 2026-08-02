@@ -60,10 +60,10 @@ internal static class RecommendationBuilder
     // evaluated through the engine's own SkillsScore rather than restated as w/total, so a change to
     // the formula cannot leave the advice quoting the old one.
     //
-    // A posting whose requirements are all weighted zero scores the neutral 0.5 no matter what the
-    // resume holds, so every impact here is exactly zero — and the advice is STILL emitted, because the
-    // posting asked for the skill and a recruiter reads it whatever the arithmetic does. The number says
-    // honestly that acting on it will not move the score.
+    // A posting whose requirements are all weighted zero does not APPLY: the section is renormalized out
+    // and carries no weight, so every impact here is exactly zero no matter what the resume holds — and
+    // the advice is STILL emitted, because the posting asked for the skill and a recruiter reads it
+    // whatever the arithmetic does. The number says honestly that acting on it will not move the score.
     //
     // Such advice is NOT automatically demoted: a zero-impact nice-to-have falls to NiceToHave on the
     // impact thresholds, but a zero-impact MUST-HAVE stays Critical, because the gate is about what the
