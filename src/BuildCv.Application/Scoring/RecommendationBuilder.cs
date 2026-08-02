@@ -218,9 +218,14 @@ internal static class RecommendationBuilder
 
             var (kind, message) = gap switch
             {
+                // "at <level> or above" belongs in the INSTRUCTION, not only in the sentence after it.
+                // Adding the language with no Level recorded moves the gap from Missing to
+                // LevelNotRecorded, which still does not satisfy the requirement -- so a candidate who
+                // did literally what the old wording said ("add it to your languages") was paid 0 and
+                // handed a second recommendation, against an Impact this advice promised in full.
                 LanguageGap.Missing => (
                     RecommendationKind.LanguageMissing,
-                    $"Add '{requirement.Name}' to your languages: this posting requires {requirement.MinimumLevel} or above."),
+                    $"Add '{requirement.Name}' at {requirement.MinimumLevel} or above to your languages: an entry with no level recorded does not satisfy this requirement."),
                 LanguageGap.BelowRequiredLevel => (
                     RecommendationKind.LanguageBelowRequiredLevel,
                     $"Raise your recorded level for '{requirement.Name}': this posting requires {requirement.MinimumLevel} or above."),

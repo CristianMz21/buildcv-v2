@@ -64,6 +64,12 @@ public sealed class ModelConfigurationTests
         ["Certificate.CredentialId"] = "Certificate.CredentialId",
         ["Certificate.CredentialUrl"] = "Certificate.CredentialUrl",
 
+        // Free text a candidate wrote about THEMSELVES -- "nativo, aprendido de mi abuela colombiana"
+        // describes the person, not a level. Sealing it costs no query: PR #16 made Language.Level the
+        // scoring input and forbade the engine from reading this, so it is display-only. Its
+        // structural twins Education.Degree and Education.Grade were already here; it was not.
+        ["Language.Fluency"] = "Language.Fluency",
+
         ["Award.Title"] = "Award.Title",
         ["Award.Awarder"] = "Award.Awarder",
         ["Award.Summary"] = "Award.Summary",
@@ -94,7 +100,9 @@ public sealed class ModelConfigurationTests
     };
 
     // The other half of the same requirement. Encrypting any of these would silently end a feature:
-    // the scoring engine reads them, and internal analytics groups by them.
+    // the scoring engine reads them, and internal analytics groups by them. Every entry here is a
+    // column something really queries — Language.Fluency used to be the exception and has been moved
+    // to ExpectedEncryptedColumns above, which is where it belongs now that it is sealed.
     //
     // A deliberate SPOT-CHECK, not an exhaustive set — it names the highest-value analytical columns
     // and omits the ones whose loss would be obvious or harmless (audit timestamps, the four
@@ -105,27 +113,21 @@ public sealed class ModelConfigurationTests
     private static readonly string[] HighValueAnalyticalColumns =
     [
         "Skill.Name", "Skill.Level", "Skill.YearsOfExperience", "Skill.Keywords",
-        "Language.Name", "Language.Fluency",
+        "Language.Name",
         "Project.Technologies", "Project.Period",
         "Experience.Type", "Experience.Period",
         "Education.Period",
 
         // The two dimensions the scorer could not previously see, on the candidate's side. Both are
-        // levels, which is the plaintext half of the classification rule, and each sits beside the
-        // free-text column saying roughly the same thing in prose. Those two neighbours are classified
-        // DIFFERENTLY, and the difference is the rule, not an inconsistency:
+        // levels, which is the plaintext half of the classification rule, and each sits beside a
+        // free-text column saying roughly the same thing in prose. Both of those neighbours --
+        // Education.Degree and Language.Fluency -- are now ENCRYPTED, and the pairing is the rule
+        // rather than an accident: the LEVEL is the closed, comparable value the engine reads, and the
+        // prose beside it is a sentence a person wrote about themselves.
         //
-        //   Education.Degree  -- ENCRYPTED. It names a qualification, which describes a person.
-        //   Language.Fluency  -- PLAINTEXT, four lines above. It describes a level, and CLAUDE.md puts
-        //                        "a skill, a level or a span of time" on the readable side.
-        //
-        // Sealing either LEVEL would leave the engine with only the prose -- which it must never
-        // parse -- and the section would silently score zero for everyone.
-        //
-        // Residual worth naming, and a follow-up rather than a change here: Fluency is FREE TEXT
-        // classified as a level, so nothing stops a candidate typing something personal into it. The
-        // current mapping follows the stated rule; whether the rule should cover free-text level
-        // descriptors is the open question.
+        // Sealing either LEVEL would leave the engine with only that prose -- which it must never
+        // parse -- and the section would silently score zero for everyone. That is why these two are
+        // on this list and their neighbours are not.
         "Language.Level", "Education.Level",
         "Certificate.ValidityPeriod",
         "Award.Date",

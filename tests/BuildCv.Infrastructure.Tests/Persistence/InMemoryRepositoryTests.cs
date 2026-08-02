@@ -18,6 +18,14 @@ public class InMemoryRepositoryTests
     private static Resume CreateResume(AccountId ownerId) =>
         Resume.Create(ownerId, new ContactInformation(PersonName.Create("Jane Doe"), Email.Create("jane@example.com")));
 
+    private static Analysis NewAnalysis(ResumeId resumeId) =>
+        Analysis.Create(
+            AnalysisId.New(),
+            ScoreBreakdown.Create(0.5, 0.5, 0.5, 0.5, 0.5, 0.5, ScoringWeightsSnapshot.Default()),
+            resumeId,
+            JobPostingId.New(),
+            DateTimeOffset.UtcNow);
+
     [Fact]
     public async Task Account_add_and_get_by_id_roundtrip()
     {
@@ -272,6 +280,35 @@ public class InMemoryRepositoryTests
         var page = await repository.GetPageByOwnerIdAsync(ownerId, PageRequests.Of());
 
         page.Items.Select(resume => resume.Id).Should().Equal(second.Id, first.Id);
+    }
+
+    [Fact]
+    public async Task Analysis_add_and_get_by_id_roundtrip()
+    {
+        var repository = new InMemoryAnalysisRepository();
+        var analysis = NewAnalysis(ResumeId.New());
+        await repository.AddAsync(analysis);
+
+        (await repository.GetByIdAsync(analysis.Id)).Should().Be(analysis);
+    }
+
+    // The EF twin answers null for an id that was never stored AND for one whose row is tombstoned, and
+    // both arrive at the same caller as the same nothing.
+    //
+    // This store can only reproduce the first case, and the reason is stated in the repository: an
+    // Analysis has no Delete() and no Status, and the only writer of its DeletedAt column is
+    // ResumeRepository's cascade, which has no counterpart here — so a tombstoned row cannot exist for
+    // an IsLive filter to hide. The second case is closed one layer up instead, by
+    // GetAnalysisByIdHandler answering "Analysis not found." when the resume behind an analysis is gone;
+    // GetAnalysisByIdHandlerTests pins that, and AnalysisRepositoryTests pins the EF half against a real
+    // database.
+    [Fact]
+    public async Task Analysis_get_by_id_unknown_returns_null()
+    {
+        var repository = new InMemoryAnalysisRepository();
+        await repository.AddAsync(NewAnalysis(ResumeId.New()));
+
+        (await repository.GetByIdAsync(AnalysisId.New())).Should().BeNull();
     }
 
     // Score history reads forwards, unlike every other paged list, so the in-memory store has to flip

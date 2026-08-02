@@ -2,6 +2,7 @@ using BuildCv.Application.Common.Pagination;
 using BuildCv.Application.Common.Repositories;
 using BuildCv.Domain.Resumes;
 using BuildCv.Domain.Scoring;
+using Microsoft.EntityFrameworkCore;
 
 namespace BuildCv.Infrastructure.Persistence.EfCore;
 
@@ -24,6 +25,27 @@ internal sealed class AnalysisRepository : IAnalysisRepository
         ArgumentNullException.ThrowIfNull(analysis);
         _context.Analyses.Add(analysis);
         await _context.SaveTranslatingFailuresAsync(cancellationToken);
+    }
+
+    // One analysis, by its own key.
+    //
+    // NO AsSplitQuery, unlike ResumeRepository.GetByIdAsync, and the difference is the collection count
+    // rather than a preference. Split query exists here to stop a CARTESIAN PRODUCT between two or more
+    // owned collections joined onto the same principal; Analysis owns exactly one (Recommendations —
+    // Breakdown is an owned REFERENCE table-split into the Analyses row, so it costs no join at all).
+    // One collection is one LEFT JOIN, and the rows shipped are its count, not a product of anything.
+    // Splitting it would buy a second round trip and cost this read its atomicity — one statement for
+    // the analysis and another for its recommendations, with a write free to land between them. On the
+    // paged path that trade is worth making because the fan-out there is unbounded; for a single row
+    // whose one collection is capped at ten there is nothing to buy.
+    //
+    // Tombstoned analyses come back as null through the global query filter — the same filter that makes
+    // ResumeRepository.DeleteAsync's cascade observable, so "delete my resume" also hides every score
+    // derived from it. Nothing in this method says so, which is the point of a filter on the model.
+    public Task<Analysis?> GetByIdAsync(AnalysisId id, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(id);
+        return _context.Analyses.FirstOrDefaultAsync(analysis => analysis.Id == id, cancellationToken);
     }
 
     // Score history for one resume, oldest first, walking the (ResumeId, Seq) index in its own order.

@@ -209,14 +209,72 @@ public sealed class SchemaRoundTripTests
         reloaded.Interests.Should().BeEquivalentTo(resume.Interests);
         reloaded.References.Should().BeEquivalentTo(resume.References);
 
-        // The two new level columns, named where a failure says which one broke. Each sits beside the
-        // free text that says roughly the same thing in prose, and the two neighbours are classified
-        // differently on purpose: Education.Degree is ENCRYPTED because a qualification names a
-        // person, while Language.Fluency is PLAINTEXT because it describes a level, which CLAUDE.md
-        // puts on the readable side. Either way the engine reads the LEVEL and never parses the prose,
-        // and a level lost on the way to disk would leave only prose behind.
+        // The two new level columns, named where a failure says which one broke. Each sits beside free
+        // text that says roughly the same thing in prose, and the two are classified differently on
+        // purpose: the LEVEL is plaintext because it is the closed, comparable value the engine reads,
+        // and the prose beside it — Education.Degree, Language.Fluency — is sealed because it is a
+        // sentence a person wrote about themselves. A level lost on the way to disk would leave only
+        // prose behind, which the engine must never parse.
         reloaded.Languages.Single().Level.Should().Be(LanguageProficiency.Native);
         reloaded.Educations.Single().Level.Should().Be(EducationLevel.Bachelor);
+    }
+
+    // The Language.Fluency ruling, checked at the only layer where it is true or false: the bytes on
+    // disk. BeEquivalentTo in the round-trip test above reads the column back THROUGH the converter,
+    // which a passthrough would satisfy — it proves the conversion is symmetric, not that anything was
+    // ever encrypted. Same shape as Account_StoresEmailAsCiphertext.
+    //
+    // The plaintext is deliberately the kind of sentence the ruling is about: prose a candidate wrote
+    // about themselves that happens to sit in a field named after a level.
+    //
+    // Level and Name are asserted in the SAME statement, read raw, because they are what the
+    // encryption is traded against. Sealing either would leave the engine with only the prose it is
+    // forbidden to parse, and this test would then be pinning half a classification.
+    [Fact]
+    public async Task Resume_StoresLanguageFluencyAsCiphertext_ButKeepsItsNameAndLevelQueryable()
+    {
+        var fluency = $"nativo, aprendido de mi abuela colombiana-{Guid.NewGuid():N}";
+        var resume = Resume.Create(AccountId.New(), MinimalContact("fluency"));
+        resume.AddLanguage(new Language("Español", fluency, LanguageProficiency.Native));
+
+        await using (var context = _fixture.NewContext())
+        {
+            context.Resumes.Add(resume);
+            await context.SaveChangesAsync();
+        }
+
+        await using var reader = _fixture.NewContext();
+        var stored = await reader.Database
+            .SqlQuery<byte[]>(
+                $"SELECT [Fluency] AS [Value] FROM [resumes].[Languages] WHERE [ResumeId] = {resume.Id.Value}")
+            .SingleAsync();
+
+        Encoding.UTF8.GetString(stored).Should().NotContain(fluency,
+            "a sentence a candidate wrote about themselves must not be readable in a dump");
+        Encoding.Unicode.GetString(stored).Should().NotContain(fluency,
+            "an ALTERed nvarchar column would leave exactly these UTF-16 bytes behind");
+        stored.Should().NotBeEquivalentTo(Encoding.UTF8.GetBytes(fluency));
+
+        // The plaintext half, read raw rather than through EF, so it cannot be satisfied by a
+        // converter. Level is a tinyint the scoring engine compares; Name carries the index it joins on.
+        var level = await reader.Database
+            .SqlQuery<byte>(
+                $"SELECT [Level] AS [Value] FROM [resumes].[Languages] WHERE [ResumeId] = {resume.Id.Value}")
+            .SingleAsync();
+        level.Should().Be((byte)LanguageProficiency.Native);
+
+        var name = await reader.Database
+            .SqlQuery<string>(
+                $"SELECT [Name] AS [Value] FROM [resumes].[Languages] WHERE [ResumeId] = {resume.Id.Value}")
+            .SingleAsync();
+        name.Should().Be("Español");
+
+        // And it still comes back. An envelope that cannot be reopened under its own AAD would leave
+        // the assertions above passing while the feature was gone.
+        var reloadedResume = await reader.Resumes
+            .Include(entity => entity.Languages)
+            .SingleAsync(entity => entity.Id == resume.Id);
+        reloadedResume.Languages.Single().Fluency.Should().Be(fluency);
     }
 
     // The other half of the classification, proved rather than asserted about the model: the skill

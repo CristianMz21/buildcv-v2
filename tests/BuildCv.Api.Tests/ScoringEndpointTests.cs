@@ -72,17 +72,26 @@ public sealed class ScoringEndpointTests
 
         // THE MOST VISIBLE SCORE MOVEMENT IN THE RELEASE, and asserted FIRST on purpose.
         //
-        // This exact request returned 28 before renormalization and returns 0 now. The 28 was two
-        // fabricated neutral halves: the posting states no skill and no language requirement, so both
-        // sections were handed 0.5 and 0.45*0.5 + 0.10*0.5 = 0.275 of score arrived from questions
-        // nobody asked. An empty resume against a posting demanding nothing genuinely matches nothing,
-        // and the four sections that do apply all score zero.
+        // THE NUMBER A RELEASE NOTE SHOULD QUOTE IS 22, NOT 28, because 28 is a value only a mid-chain
+        // build ever produced. On main (a7cb736) this exact request scored 22: five sections, no
+        // Languages term, an empty resume, and a posting stating no requirement, so Skills alone was
+        // handed a fabricated neutral 0.5 -- 0.45 * 0.5 = 0.225, and (int)Math.Round(22.5) is 22 under
+        // the banker's rounding Analysis.OverallScore uses. That was run rather than reasoned about;
+        // the pre-change capture in pr-3-report.md shows the same 0.225 / 22 off the live endpoint.
+        //
+        // The 28 arrives only after Languages is weighted 0.10 and before renormalization lands, when
+        // BOTH unasked sections are handed 0.5: 0.45*0.5 + 0.10*0.5 = 0.275 -> 28. Quoting it as the
+        // "before" measures this release against a weighting that never shipped anywhere.
+        //
+        // It returns 0 now, and that is the fabrication removed rather than points lost: the posting
+        // states no skill and no language requirement, so neither section is scored at all, and an
+        // empty resume genuinely matches nothing in the four that do apply.
         //
         // It leads the test because a full revert of renormalization moves the priorities below TOO, and
         // only the first failing assertion is ever observed — asserted last, this line could never be
         // the one that goes red, which makes it documentation rather than a guard.
         json.RootElement.GetProperty("overallScore").GetInt32().Should().Be(0,
-            "the previous 28 came entirely from two unasked sections scoring a fabricated 0.5");
+            "22 on main and 28 mid-chain both came entirely from unasked sections scoring a fabricated 0.5");
 
         // An empty resume is below the cap on education, certifications and projects, and the posting
         // states no skill or language requirement — so exactly those three fire.

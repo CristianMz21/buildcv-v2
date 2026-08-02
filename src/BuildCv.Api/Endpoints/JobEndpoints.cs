@@ -11,6 +11,9 @@ namespace BuildCv.Api.Endpoints;
 
 public static class JobEndpoints
 {
+    // All four routes map through JobPostingResponse, not just the GET. Publish and close returned the
+    // aggregate too -- ToHttpResult() with no projection is Results.Ok(result.Value) -- so mapping only
+    // the read would have left the same two enum integers on the two endpoints a recruiter hits most.
     public static RouteGroupBuilder MapJobEndpoints(this IEndpointRouteBuilder app)
     {
         var group = app.MapGroup("/jobs").WithTags("Jobs");
@@ -27,7 +30,8 @@ public static class JobEndpoints
                 request.CompanyName,
                 request.CompanyId is { } companyId ? new OrganizationId(companyId) : null,
                 request.Description), cancellationToken);
-            return result.ToHttpResult(job => Results.Created($"/jobs/{job.Id.Value}", job));
+            return result.ToHttpResult(job =>
+                Results.Created($"/jobs/{job.Id.Value}", JobPostingResponse.From(job)));
         })
         .RequireAuthorization(AuthorizationPolicies.Recruiter);
 
@@ -39,7 +43,7 @@ public static class JobEndpoints
         {
             var result = await handler.Handle(
                 new PublishJobPostingCommand(httpContext.User.GetAccountId(), new JobPostingId(id)), cancellationToken);
-            return result.ToHttpResult();
+            return result.ToHttpResult(job => Results.Ok(JobPostingResponse.From(job)));
         });
 
         group.MapPost("/{id:guid}/close", async (
@@ -50,7 +54,7 @@ public static class JobEndpoints
         {
             var result = await handler.Handle(
                 new CloseJobPostingCommand(httpContext.User.GetAccountId(), new JobPostingId(id)), cancellationToken);
-            return result.ToHttpResult();
+            return result.ToHttpResult(job => Results.Ok(JobPostingResponse.From(job)));
         });
 
         group.MapGet("/{id:guid}", async (
@@ -61,7 +65,7 @@ public static class JobEndpoints
         {
             var result = await handler.Handle(
                 new GetJobPostingQuery(httpContext.User.GetAccountId(), new JobPostingId(id)), cancellationToken);
-            return result.ToHttpResult();
+            return result.ToHttpResult(job => Results.Ok(JobPostingResponse.From(job)));
         });
 
         return group;

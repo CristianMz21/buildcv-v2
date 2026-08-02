@@ -32,8 +32,61 @@ public static class ScoringEndpoints
             // this repo documents as an append-only persistence detail. AnalysisResponse states the
             // contract instead, and the ordering the aggregate deliberately does not guarantee.
             return result.ToHttpResult(analysis => Results.Ok(AnalysisResponse.From(analysis)));
-        });
+        })
+        .WithSummary("Scores a resume against a job posting and stores the result.")
+        .WithDescription(ZeroWeightContract);
+
+        // Reading one score back. Same DTO as /scoring/score, deliberately: a second shape for the same
+        // aggregate is how two contracts for one thing start, and a candidate comparing what they were
+        // told last week with what they are told today must be comparing like with like.
+        //
+        // AnalysisResponse.From is also where the recommendations get their order. It matters more here
+        // than on the POST: a freshly built Analysis still carries the order the Application layer sorted
+        // it into, while one loaded from the database is an honest SET — the Recommendations table has no
+        // Rank column by design — so without that call this endpoint would render whatever order the
+        // server happened to return, differently between two reads of the same row.
+        group.MapGet("/{analysisId:guid}", async (
+            Guid analysisId,
+            IQueryHandler<GetAnalysisByIdQuery, Result<Analysis>> handler,
+            HttpContext httpContext,
+            CancellationToken cancellationToken) =>
+        {
+            var result = await handler.Handle(new GetAnalysisByIdQuery(
+                httpContext.User.GetAccountId(), new AnalysisId(analysisId)), cancellationToken);
+
+            return result.ToHttpResult(analysis => Results.Ok(AnalysisResponse.From(analysis)));
+        })
+        .WithSummary("Returns one stored analysis, readable only by the owner of the resume it scored.")
+        .WithDescription(
+            "An analysis has no owner of its own: it belongs to a resume, and that resume's owner is the "
+            + "only account that may read it. Deleting the resume hides every score derived from it, so a "
+            + "previously readable id then answers 404. "
+            + ZeroWeightContract);
 
         return group;
     }
+
+    // Stated on every endpoint that returns an AnalysisResponse, because this is the one field pairing a
+    // client developer will otherwise read as a bug report from the candidate.
+    //
+    // "Expressed no weighted requirement" rather than "stated no requirement", and the difference is
+    // reachable rather than pedantic: a posting may state requirements and weight all of them 0.0, which
+    // renormalizes the section out while `recommendations[]` still names those requirements. That case is
+    // executed by RecommendationBuilderTests.ZeroWeightedRequirements_stillProduceAdviceWithAnHonestZero
+    // Impact, so "the posting asked nothing" would be a false explanation of a state the domain reaches.
+    private const string ZeroWeightContract =
+        "A section whose `breakdown.weights.<section>` is 0 EXPRESSED NO WEIGHTED REQUIREMENT: it "
+        + "neither helped nor hurt the score, and the `score` beside it measures nothing. Two different "
+        + "postings land there — one that asked nothing of the section, and one that asked and weighted "
+        + "every requirement 0.0. In the second, `recommendations[]` still names those requirements, each "
+        + "with an `impact` of 0, so a section can carry no weight and still carry advice. There is no "
+        + "separate flag for any of this — the weight IS the signal, deliberately, so the two can never "
+        + "disagree. The remaining weights are renormalized to still total 1.0, which is why an "
+        + "`overallScore` of 0 with only three recommendations is a complete answer rather than a "
+        + "truncated one. "
+        + "TODAY `weights.skills` AND `weights.languages` ARE 0 ON EVERY ANALYSIS, and neither is a "
+        + "recruiter's decision: no endpoint can put a skill or language requirement on a posting yet — "
+        + "`POST /jobs` carries only a title, company and description, and there is no update endpoint. "
+        + "Rendering those two zeros as 'this job listed no skill requirements' would say it about every "
+        + "job in the product; it reports a feature that does not exist yet.";
 }

@@ -264,21 +264,51 @@ internal sealed class ResumeConfiguration : IEntityTypeConfiguration<Resume>
         UseBackingField(builder, resume => resume.Certificates);
     }
 
-    // PLAINTEXT. A language and a fluency level are scoring inputs on postings that require them,
-    // and the set of values is small and public.
-    private static void ConfigureLanguages(EntityTypeBuilder<Resume> builder)
+    // MIXED, and the two halves must not be collapsed into one. Name and Level are PLAINTEXT scoring
+    // inputs; Fluency is CONFIDENTIAL free text.
+    //
+    // Name and Level are what ScoringRules.EvaluateLanguage compares against the posting's
+    // MinimumLevel, and it could not do that from behind an envelope. Their value sets are small,
+    // closed and public, and Name carries the index every scoring join walks.
+    //
+    // FLUENCY IS ENCRYPTED, by ruling, and the ruling closed an inconsistency rather than adding
+    // caution. Three reasons, in the order that makes it correct:
+    //
+    //   1. It is free text A PERSON WROTE ABOUT THEMSELVES. A candidate can type "nativo, aprendido de
+    //      mi abuela colombiana", which describes the person, not a level. Nothing constrains it.
+    //   2. It STOPPED BEING A SCORING INPUT in PR #16. Level is what the engine reads, and the engine
+    //      is FORBIDDEN to read Fluency -- stated on Domain.Resumes.Language, on
+    //      ScoringRules.EvaluateLanguage, and beside the Level mapping below -- because parsing prose
+    //      into a level would read an unrecognised word as "not proficient" and score a native speaker
+    //      zero. So sealing it costs no query. That is what makes this cheap now and would not have
+    //      been before; it is display-only, and encrypting it ends no feature.
+    //   3. Its STRUCTURAL TWINS one section over -- Education.Degree and Education.Grade, same shape,
+    //      same display-only role -- were already encrypted. Fluency sitting in plaintext beside them
+    //      was the finding.
+    //
+    // The rule in this file's header is unchanged and still decides it: "a skill, a level or a span of
+    // time" is readable, and Level is exactly that. Fluency is not a level, it is prose ABOUT one.
+    private void ConfigureLanguages(EntityTypeBuilder<Resume> builder)
     {
         builder.OwnsMany(resume => resume.Languages, language =>
         {
             ChildTableOf(language, "Languages");
 
             language.Property(entry => entry.Name).HasMaxLength(100).IsRequired();
-            language.Property(entry => entry.Fluency).HasMaxLength(50);
+
+            // varbinary(max), not a pinned width, and the nvarchar(50) this replaces is genuinely
+            // gone. That cap was persistence-only -- nothing in the Domain bounds Fluency -- and
+            // EncryptedColumn pins a width only where the Domain bounds the plaintext, because a
+            // guessed cap truncates an AES-GCM envelope, and a truncated envelope destroys the row
+            // rather than the tail of a string: the tag lives in the last 16 bytes.
+            language.Property(entry => entry.Fluency)
+                .IsEncryptedText(_encryptor, "Language.Fluency");
 
             // Level is the column the engine reads; Fluency stays beside it as free text for display
             // and is never parsed into it. See the comment on Language.Level for why that direction
             // matters -- an unrecognized word would read as "not proficient" and score a native
-            // speaker zero.
+            // speaker zero. Sealing the LEVEL would leave the engine with only the prose it must
+            // never parse, and the section would silently score zero for everyone.
             language.Property(entry => entry.Level).HasColumnType("tinyint");
 
             language.HasIndex(nameof(Language.Name));

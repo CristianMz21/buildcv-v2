@@ -78,12 +78,23 @@ public class ScoringContractTests
         recommendation.GetProperty("impact").GetDouble().Should().Be(0.15);
     }
 
-    // The fields that genuinely PREDATE this chain keep their old encoding, and only those. Each is a
-    // deliberate inconsistency with the named enums above, and each is cheaper than breaking a client.
+    // Four pre-chain fields keep their old encoding, and a fifth deliberately does NOT — asserted in the
+    // same test so the exception cannot be read off as an omission. `band`, `id`, `resumeId` and
+    // `jobPostingId` are deliberate inconsistencies with the named enums above, each cheaper than
+    // breaking a client. `recommendations` is the opposite trade and the point of the release: pre-chain
+    // Analysis.Recommendations was IReadOnlyList<string>, so the field shipped as string[], and it is an
+    // array of OBJECTS now. Every other assertion in this file is about a field this chain added; without
+    // the last one, the file would document a response as unchanged while changing a client's type.
+    //
+    // Measured, not assumed: shipping recommendations as strings again (a JsonConverter writing
+    // v.Message) fails SIX tests, this one among them. So the last line is not the encoding's only
+    // guard — it is what makes this test's own stated scope true, which is the defect it closes.
     [Fact]
-    public void Serialized_PreChainFieldsKeepTheirOldEncoding()
+    public void Serialized_PreChainFieldsKeepTheirOldEncodingExceptRecommendations()
     {
-        var analysis = BuildAnalysis();
+        var analysis = BuildAnalysis(
+            Advice(SectionType.Skills, RecommendationPriority.Critical,
+                RecommendationKind.MissingMustHaveSkill, "Add SQL.", 0.15));
 
         using var json = JsonDocument.Parse(
             JsonSerializer.Serialize(AnalysisResponse.From(analysis), WebOptions));
@@ -94,6 +105,10 @@ public class ScoringContractTests
         root.GetProperty("id").GetProperty("value").ValueKind.Should().Be(JsonValueKind.String);
         root.GetProperty("resumeId").GetProperty("value").ValueKind.Should().Be(JsonValueKind.String);
         root.GetProperty("jobPostingId").GetProperty("value").ValueKind.Should().Be(JsonValueKind.String);
+
+        root.GetProperty("recommendations")[0].ValueKind.Should().Be(JsonValueKind.Object,
+            "the one pre-chain field whose wire type this chain changes — it was string[] and a typed "
+            + "client breaks on the first non-empty array");
     }
 
     // Both arrays that carry a SectionType name it. `sections[]` looks pre-existing and is not — it was

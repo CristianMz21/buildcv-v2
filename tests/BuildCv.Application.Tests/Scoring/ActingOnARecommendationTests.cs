@@ -156,6 +156,37 @@ public class ActingOnARecommendationTests
             r => r.AddLanguage(new Language("English", "Working proficiency", LanguageProficiency.Professional)));
     }
 
+    // Why LanguageMissing names the required level in its INSTRUCTION and not only in the clause after
+    // it. The same scenario as above, acting on the shorter reading of the advice -- add the language,
+    // say nothing about the level -- and the promised impact is not paid: the gap moves from Missing to
+    // LevelNotRecorded, which still does not satisfy the requirement. Executed here so the wording is
+    // pinned by a consequence rather than by a string comparison, which would break on any rephrasing
+    // and prove nothing about what the candidate gets.
+    [Fact]
+    public void AddingAMissingLanguageWithoutALevel_PaysNothingAndBecomesADifferentGap()
+    {
+        var resume = BuildResume("C#");
+        resume.AddLanguage(new Language("German", "A little", LanguageProficiency.Basic));
+        var jobPosting = WithLanguages(
+            BuildJobPosting(),
+            ("English", LanguageProficiency.Professional),
+            ("German", LanguageProficiency.Professional));
+
+        var before = _engine.Score(resume, jobPosting, ReferenceDate);
+        var advice = before.Recommendations
+            .Should().ContainSingle(r => r.Kind == RecommendationKind.LanguageMissing).Subject;
+        advice.Impact.Should().BeGreaterThan(0.0, "the advice promises a real gain");
+
+        resume.AddLanguage(new Language("English", "Bilingue", Level: null));
+
+        var after = _engine.Score(resume, jobPosting, ReferenceDate);
+
+        (after.WeightedTotal - before.WeightedTotal).Should().Be(0.0,
+            "a language held with no recorded level satisfies nothing, so the shorter reading of the "
+            + "advice pays none of what it promised");
+        after.Recommendations.Should().Contain(r => r.Kind == RecommendationKind.LanguageLevelNotRecorded);
+    }
+
     [Fact]
     public void ActingOnALanguageBelowTheRequiredLevel_RaisesTheScoreByExactlyItsImpact()
     {

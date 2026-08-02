@@ -133,6 +133,8 @@ public static class DependencyInjection
 
         // Scoring
         services.AddScoped<ICommandHandler<ScoreResumeCommand, Result<Analysis>>, ScoreResumeHandler>();
+        services.AddScoped<IQueryHandler<GetAnalysisByIdQuery, Result<Analysis>>, GetAnalysisByIdHandler>();
+        services.AddScoped<IQueryHandler<GetAnalysisHistoryQuery, Result<Page<Analysis>>>, GetAnalysisHistoryHandler>();
 
         return services;
     }

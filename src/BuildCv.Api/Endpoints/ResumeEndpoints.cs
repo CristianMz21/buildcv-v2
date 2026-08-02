@@ -4,8 +4,10 @@ using BuildCv.Api.Security;
 using BuildCv.Application.Common.Abstractions;
 using BuildCv.Application.Common.Pagination;
 using BuildCv.Application.Resumes;
+using BuildCv.Application.Scoring;
 using BuildCv.Domain.Common.ValueObjects;
 using BuildCv.Domain.Resumes;
+using BuildCv.Domain.Scoring;
 
 namespace BuildCv.Api.Endpoints;
 
@@ -59,6 +61,41 @@ public static class ResumeEndpoints
                 new GetResumeQuery(httpContext.User.GetAccountId(), new ResumeId(id)), cancellationToken);
             return result.ToHttpResult();
         });
+
+        // Score history hangs off the CV that owns it, not off /scoring, for the same reason
+        // /{id}/skills does: it is part of this resource, and the ownership check is the one every
+        // handler in this file already makes.
+        //
+        // OLDEST FIRST — the single exception to this repo's newest-first paging convention, and the
+        // reason it exists is the product: a candidate reads a history forwards, from the first run
+        // through what each edit changed. Walking it with `cursor` therefore moves FORWARD IN TIME.
+        group.MapGet("/{id:guid}/analyses", async (
+            Guid id,
+            HttpContext httpContext,
+            IQueryHandler<GetAnalysisHistoryQuery, Result<Page<Analysis>>> handler,
+            CancellationToken cancellationToken,
+            int? limit,
+            string? cursor) =>
+        {
+            var result = await handler.Handle(new GetAnalysisHistoryQuery(
+                httpContext.User.GetAccountId(), new ResumeId(id), limit, cursor), cancellationToken);
+
+            // Mapped through the same AnalysisResponse the score endpoint returns. Each entry is
+            // therefore identical in shape to what /scoring/score answered when it was created,
+            // recommendations included and in the same order — which is what makes "did my edit help"
+            // a comparison a client can just do.
+            return result.ToHttpResult(page => Results.Ok(new PagedResponse<AnalysisResponse>(
+                [.. page.Items.Select(AnalysisResponse.From)], page.NextCursor)));
+        })
+        .WithSummary("Returns this resume's score history, OLDEST FIRST, keyset paginated.")
+        .WithDescription(
+            "The one list in this API that pages oldest first: a score history is read forwards, so "
+            + "`cursor` walks toward the present. Entries are the same shape /scoring/score returns. "
+            + "A section whose `breakdown.weights.<section>` is 0 was not asked about by the posting "
+            + "that entry was scored against — it neither helped nor hurt, and the remaining weights are "
+            + "renormalized to still total 1.0. Two entries can both report `schemaVersion` 2 and still "
+            + "have been scored under different weightings, because each posting asks about a different "
+            + "set of sections; compare `weights` before comparing `overallScore`.");
 
         group.MapPut("/{id:guid}/contact", async (
             Guid id,
