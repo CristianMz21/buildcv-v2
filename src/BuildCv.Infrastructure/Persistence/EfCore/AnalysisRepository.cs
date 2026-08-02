@@ -34,7 +34,10 @@ internal sealed class AnalysisRepository : IAnalysisRepository
     // owned collections joined onto the same principal; Analysis owns exactly one (Recommendations —
     // Breakdown is an owned REFERENCE table-split into the Analyses row, so it costs no join at all).
     // One collection is one LEFT JOIN, and the rows shipped are its count, not a product of anything.
-    // Splitting it would buy a second round trip and a page that is no longer one atomic read.
+    // Splitting it would buy a second round trip and cost this read its atomicity — one statement for
+    // the analysis and another for its recommendations, with a write free to land between them. On the
+    // paged path that trade is worth making because the fan-out there is unbounded; for a single row
+    // whose one collection is capped at ten there is nothing to buy.
     //
     // Tombstoned analyses come back as null through the global query filter — the same filter that makes
     // ResumeRepository.DeleteAsync's cascade observable, so "delete my resume" also hides every score

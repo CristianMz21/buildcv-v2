@@ -105,6 +105,9 @@ public sealed class AnalysisReadTests
 
     // 404, not 400. The handler's message ends in "not found." and ResultExtensions routes on that exact
     // suffix — a message ending any other way would report a malformed request instead of a missing row.
+    //
+    // The DETAIL is asserted too, because the status alone cannot tell "Analysis not found." from
+    // "Resume not found." and that is exactly the distinction the deleted-resume test below turns on.
     [Fact]
     public async Task GetAnalysis_ForAnIdThatWasNeverScored_Returns404()
     {
@@ -115,6 +118,80 @@ public sealed class AnalysisReadTests
         var read = await GetAnalysisAsync(client, token, Guid.NewGuid());
 
         read.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        (await DetailOf(read)).Should().Be("Analysis not found.");
+    }
+
+    // THE PROVIDER-PARITY TEST, and it runs through the composed in-memory provider the whole Api suite
+    // sits on rather than through a hand-written fake.
+    //
+    // Deleting a resume must hide every score derived from it. Under EF that is
+    // ResumeRepository.CascadeToAnalysesAsync tombstoning the analyses in the same unit of work, so the
+    // global query filter makes them vanish at the first read. The in-memory store has no cascade to run
+    // — Analysis has no Delete(), the port has no delete, and InMemoryResumeRepository touches only its
+    // own dictionary — so the analysis survives and the miss happens at the SECOND read, where
+    // GetAnalysisByIdHandler turns a missing resume into "Analysis not found.".
+    //
+    // Both providers therefore answer the same status AND the same message, which is the claim the
+    // in-memory store's missing cascade rests on. It was pinned at the handler (against fakes, which
+    // hard-remove) and at EF (against a real database), and neither of those is this: the fakes' and the
+    // in-memory store's agreement was itself unpinned, and a provider divergence certifying behaviour
+    // production does not have was found twice in the previous phase.
+    //
+    // Costs no auth budget — the delete and the two reads reuse the candidate's existing token.
+    [Fact]
+    public async Task GetAnalysis_AfterTheResumeWasDeleted_Answers404OnBothTheScoreAndItsHistory()
+    {
+        using var factory = new ApiTestFactory();
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        var (candidateToken, _, resumeId, jobId) = await ArrangeScorableAsync(client);
+
+        var scored = await ScoringEndpointTests.ScoreAsync(client, candidateToken, resumeId, jobId);
+        var analysisId = IdOf(await scored.Content.ReadAsStringAsync());
+        (await GetAnalysisAsync(client, candidateToken, analysisId)).StatusCode.Should().Be(HttpStatusCode.OK,
+            "the score has to be readable first, or the 404 below proves nothing");
+
+        using var delete = new HttpRequestMessage(HttpMethod.Delete, $"/resumes/{resumeId}")
+            .WithBearer(candidateToken);
+        (await client.SendAsync(delete)).StatusCode.Should().Be(HttpStatusCode.NoContent);
+
+        var readScore = await GetAnalysisAsync(client, candidateToken, analysisId);
+        readScore.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        (await DetailOf(readScore)).Should().Be("Analysis not found.",
+            "the caller named an analysis, so it is told about an analysis");
+
+        using var readHistory = new HttpRequestMessage(HttpMethod.Get, $"/resumes/{resumeId}/analyses")
+            .WithBearer(candidateToken);
+        var history = await client.SendAsync(readHistory);
+        history.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        (await DetailOf(history)).Should().Be("Resume not found.",
+            "this route names a resume, and that resume is the thing that is gone");
+    }
+
+    // Anonymous reads are refused. The /scoring group carries no RequireAuthorization of its own and
+    // leans on the fallback policy Program.cs sets, and nothing asserted the outcome until now.
+    //
+    // WHAT THIS TEST DOES NOT DO, stated because the obvious stronger claim is false and was measured to
+    // be false: it does not isolate the fallback policy. This endpoint is gated TWICE. Adding
+    // AllowAnonymous to the group still answers 401, because the handler lambda calls
+    // ClaimsPrincipalExtensions.GetAccountId, which throws UnauthorizedAccessException on a principal
+    // with no `sub` claim, and DomainExceptionHandler maps that to 401. So a stray AllowAnonymous here
+    // would NOT open stored analyses — a useful thing to know, and the reason this test cannot be sold
+    // as the guard against one.
+    //
+    // The two 401s are distinguishable, just not durably: the policy rejection carries
+    // "type":"about:blank" (ASP.NET filling in a status-code ProblemDetails) and the exception handler's
+    // does not, because it constructs its own. Asserting on that would couple this test to an ASP.NET
+    // detail and break the day somebody sets Type on the handler, so it is recorded here rather than
+    // asserted. Needs no auth-window budget: it sends no credential at all.
+    [Fact]
+    public async Task GetAnalysis_WithNoCredential_Returns401()
+    {
+        using var factory = new ApiTestFactory();
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+
+        var response = await client.GetAsync($"/scoring/{Guid.NewGuid()}");
+
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
     }
 
     // OLDEST FIRST over HTTP, walked the way a client walks it: three scores of one resume, one page at

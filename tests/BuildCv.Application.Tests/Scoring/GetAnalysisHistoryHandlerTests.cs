@@ -79,9 +79,13 @@ public sealed class GetAnalysisHistoryHandlerTests
     //
     // The literal: written as HaveCount(PageRequest.MaxLimit) over a seed of MaxLimit + 1, this test
     // stays GREEN when the ceiling is changed from 100 to 50 — measured, not supposed — because both
-    // sides of the comparison move together. PageRequestTests carries the same tautology
-    // ([InlineData(1000, PageRequest.MaxLimit)]), so nothing in the repo pinned the number. It is
-    // written out here, which makes this the one place a silent change to a public page ceiling is red.
+    // sides of the comparison move together.
+    //
+    // PageRequestTests does bound the constant, but only from the outside: [InlineData(20, 20)] goes red
+    // if the ceiling drops below 20, and [InlineData(100, PageRequest.MaxLimit)] goes red if it rises
+    // above 100, while its remaining rows compare MaxLimit against itself. So the uncovered hole is
+    // precisely a ceiling LOWERED INTO [20, 100] — which is the mutation above. The literal here closes
+    // that band.
     [Fact]
     public async Task Handle_WithALimitBeyondTheCeiling_ClampsItToOneHundred()
     {
