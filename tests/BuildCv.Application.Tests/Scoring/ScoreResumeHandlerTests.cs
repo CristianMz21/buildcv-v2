@@ -75,9 +75,10 @@ public class ScoreResumeHandlerTests
         result.Value!.Breakdown.SkillsScore.Should().Be(1.0);
         result.Value.Breakdown.ExperienceScore.Should().Be(1.0);
 
-        // 0.45*1.0 (skills) + 0.20*1.0 (experience) + 0.10*0.5 (languages: the posting states no
-        // language requirement, so the section is neutral) = 0.70. Nothing else on this resume scores.
-        result.Value.OverallScore.Should().Be(70);
+        // The posting states no language requirement, so Languages is renormalized out and the other
+        // five are scored out of 0.90: Skills 0.45/0.90 = 0.50, Experience 0.20/0.90 = 0.2222.
+        // 0.50*1.0 + 0.2222*1.0 = 0.65/0.90 = 0.7222 -> 72. Nothing else on this resume scores.
+        result.Value.OverallScore.Should().Be(72);
         (await _analyses.GetPageByResumeIdAsync(resume.Id, PageRequests.Of())).Items.Should().HaveCount(1);
     }
 
@@ -96,8 +97,10 @@ public class ScoreResumeHandlerTests
         result.IsSuccess.Should().BeTrue();
         result.Value!.Breakdown.SkillsScore.Should().Be(0.0);
 
-        // 0.20*1.0 (experience) + 0.10*0.5 (neutral languages) = 0.25.
-        result.Value.OverallScore.Should().Be(25);
+        // Experience alone, renormalized: 0.20/0.90 = 0.2222 -> 22. The unmatched skills section still
+        // carries its full renormalized 0.50 and scores zero against it, which is what a candidate who
+        // matches nothing the posting asked for should see.
+        result.Value.OverallScore.Should().Be(22);
     }
 
     [Fact]
@@ -146,6 +149,46 @@ public class ScoreResumeHandlerTests
         stored.Recommendations.Should().Equal(result.Value.Recommendations);
         stored.Recommendations.Should().BeInAscendingOrder(RecommendationOrder.Display,
             "the ten that survive the cap are chosen by this order, so the stored set is already in it");
+    }
+
+    // THE PERSISTED SNAPSHOT IS THE ONE THE SCORE WAS COMPUTED UNDER, not the defaults.
+    //
+    // This is the half of renormalization that must not be got wrong. ScoreBreakdown.Weights is what
+    // makes a past analysis self-explaining and arithmetically reproducible — nothing on a read path
+    // consults default or organization-level weights, so the row is the only record of how its own
+    // number was reached. Renormalizing at score time and persisting Default() would leave every
+    // historical analysis holding six weights that do not explain its own total.
+    //
+    // Asserted by REPRODUCING the total from the stored parts rather than by comparing to a literal: if
+    // the stored weights were the wrong set, the reconstruction would miss.
+    [Fact]
+    public async Task Score_persists_the_weights_it_actually_scored_under()
+    {
+        var ownerId = AccountId.New();
+        var resume = BuildResume(ownerId, "C#");
+        await _resumes.AddAsync(resume);
+        var jobPosting = BuildJobPosting(AccountId.New(), "C#");
+        await _jobPostings.AddAsync(jobPosting);
+
+        var result = await _handler.Handle(new ScoreResumeCommand(ownerId, resume.Id, jobPosting.Id));
+
+        var stored = (await _analyses.GetPageByResumeIdAsync(resume.Id, PageRequests.Of())).Items
+            .Should().ContainSingle().Subject;
+        var weights = stored.Breakdown.Weights;
+
+        weights.Should().NotBe(ScoringWeightsSnapshot.Default(),
+            "this posting states no language requirement, so it was NOT scored under the defaults");
+        weights.Languages.Should().Be(0.0);
+        weights.Skills.Should().BeApproximately(0.45 / 0.90, 1e-9);
+
+        Enum.GetValues<SectionType>().Sum(weights.WeightFor).Should().BeApproximately(1.0, 0.0001);
+
+        Enum.GetValues<SectionType>()
+            .Sum(section => weights.WeightFor(section) * stored.Breakdown.ScoreFor(section))
+            .Should().BeApproximately(stored.Breakdown.WeightedTotal, 1e-9,
+                "the stored weights and the stored scores must reproduce the stored total");
+
+        result.Value!.Breakdown.Weights.Should().Be(weights, "and the caller was shown the same set");
     }
 
     // The three corners of published-or-owned. The first is the normal candidate flow; the second is

@@ -43,6 +43,13 @@ public sealed record Recommendation
     {
         if (string.IsNullOrWhiteSpace(message))
             throw new InvalidRecommendationException("Recommendation message is required.");
+
+        // FINITE first. Both comparisons below are false for NaN, so a NaN impact would sail through the
+        // range check and be persisted as advice worth an unknowable amount — and it would sort
+        // arbitrarily against every other recommendation. Not a theoretical case any more: Impact is a
+        // section weight times a score delta, and section weights are now produced by a division.
+        if (!double.IsFinite(impact))
+            throw new InvalidRecommendationException($"Recommendation impact must be a finite number (actual: {impact}).");
         if (impact < 0 || impact > 1)
             throw new InvalidRecommendationException($"Recommendation impact must be between 0 and 1 (actual: {impact}).");
 

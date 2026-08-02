@@ -28,6 +28,17 @@ public sealed class ScoringEngine : IScoringEngine
     private static ScoreBreakdown BuildBreakdown(Resume resume, JobPosting jobPosting, DateOnly referenceDate)
     {
         var (matchedWeight, totalWeight) = ScoringRules.SkillWeights(resume, jobPosting);
+        var languageRequirementCount = jobPosting.LanguageRequirements.Count;
+
+        // The weights this posting is scored under, not the defaults. A section the posting asks nothing
+        // of is renormalized out, so the ceiling is 1.00 for every posting.
+        //
+        // THE RENORMALIZED SET IS WHAT GETS PERSISTED, because ScoreBreakdown carries it into Analysis.
+        // Scoring under one set of weights and storing another would leave every historical row holding
+        // numbers that do not add up — the snapshot exists precisely so a past analysis stays
+        // self-explaining and arithmetically reproducible from the row alone.
+        var weights = ScoringWeightsSnapshot.Default()
+            .RenormalizedTo(ScoringRules.ApplicableSections(totalWeight, languageRequirementCount));
 
         return ScoreBreakdown.Create(
             ScoringRules.SkillsScore(matchedWeight, totalWeight),
@@ -37,7 +48,7 @@ public sealed class ScoringEngine : IScoringEngine
             ScoringRules.ProjectsScore(ScoringRules.QualifyingProjectCount(resume)),
             ScoringRules.LanguagesScore(
                 ScoringRules.SatisfiedLanguageCount(resume, jobPosting),
-                jobPosting.LanguageRequirements.Count),
-            ScoringWeightsSnapshot.Default());
+                languageRequirementCount),
+            weights);
     }
 }

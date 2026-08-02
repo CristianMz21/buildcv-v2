@@ -120,10 +120,7 @@ public class ValueObjectConverterTests
     // equality is now false on purpose — and stating that it is false is what stops a future
     // redistribution from being reverted by accident and passing silently.
     //
-    // It also names the rollback cliff in the place a reader meets the payload. A build older than v2
-    // deserializing a v2 row sees five weights summing to 0.90, and Create throws on the sum invariant:
-    // every row written after v2 deploys is unreadable to it, which is why there is no rolling back
-    // past the first write.
+    // The rollback cliff is named in the sibling test below, which is where it is executed.
     [Fact]
     public void ScoringWeights_AVersionOnePayloadNoLongerMatchesTodaysWeighting()
     {
@@ -145,16 +142,50 @@ public class ValueObjectConverterTests
         stored.SchemaVersion.Should().NotBe(ScoringWeightsSnapshot.CurrentSchemaVersion,
             "and the row says so rather than leaving the difference to be inferred from the numbers");
 
-        // The other direction of the cliff, executed rather than described: drop the sixth member from
-        // a v2 payload — which is precisely what an older reader's deserializer does with a member it
-        // does not know — and the factory refuses it.
-        const string v2SeenByAnOldReader =
+    }
+
+    // THE ROLLBACK CLIFF, executed in both directions rather than described — and it is NARROWER than
+    // it first appears, which is worth stating precisely because "every row is unreadable" is the kind
+    // of claim that gets repeated into a deployment plan.
+    //
+    // A build older than v2 does not know the Languages member and skips it (System.Text.Json defaults
+    // JsonUnmappedMemberHandling to Skip), so it sees only five weights and re-runs the sum invariant
+    // over them. Renormalization decides whether that sum still reaches 1.00:
+    //
+    //   - Posting stated a language requirement -> Languages carries weight -> the five sum to LESS
+    //     than 1.00 and Create throws. The row is UNREADABLE to that build.
+    //   - Posting stated none -> Languages is renormalized to 0.0 -> the other five already sum to 1.00
+    //     and the row loads, correctly: a section weighted zero contributed nothing to the total, so
+    //     the old reader reproduces the same number.
+    //
+    // So the cliff is real and there is still no rolling back past the first write — but the rows it
+    // strands are exactly the ones scored against a posting that asked for a language.
+    [Fact]
+    public void ScoringWeights_AVersionTwoPayloadIsUnreadableToAnOldReaderOnlyWhenLanguagesCarriesWeight()
+    {
+        // What an old reader's deserializer produces from a v2 row scored against a posting that DID
+        // state a language requirement: the same five members, Languages dropped on the floor.
+        const string languagesWeighted =
             """{"Skills":0.45,"Experience":0.2,"Education":0.1,"Certifications":0.1,"Projects":0.05,"SchemaVersion":2}""";
 
-        var act = () => ScoringWeightsSnapshotConverter.FromJson(v2SeenByAnOldReader);
+        var act = () => ScoringWeightsSnapshotConverter.FromJson(languagesWeighted);
 
         act.Should().Throw<ArgumentException>()
             .WithMessage("*0.9*", "the five members it can see sum to 0.90, not 1.00");
+
+        // And the same row shape for a posting that stated NO language requirement, taken from the real
+        // renormalization rather than hand-written, so the two halves cannot drift apart.
+        var renormalized = ScoringWeightsSnapshot.Default().RenormalizedTo(
+            [SectionType.Skills, SectionType.Experience, SectionType.Education,
+             SectionType.Certifications, SectionType.Projects]);
+        renormalized.Languages.Should().Be(0.0);
+
+        var seenByAnOldReader = ScoringWeightsSnapshot.Create(
+            renormalized.Skills, renormalized.Experience, renormalized.Education,
+            renormalized.Certifications, renormalized.Projects, 0.0, renormalized.SchemaVersion);
+
+        seenByAnOldReader.Should().Be(renormalized,
+            "a section renormalized to zero is invisible to a reader that cannot see it, and harmless");
     }
 
     [Fact]

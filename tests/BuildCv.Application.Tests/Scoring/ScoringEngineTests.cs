@@ -60,12 +60,16 @@ public class ScoringEngineTests
         return jobPosting;
     }
 
+    // A posting that states no skill requirement does not ASK about skills, so the section scores
+    // nothing and carries no weight — it is renormalized out of the total rather than handed a neutral
+    // 0.5 that quietly cost every candidate half of 0.45.
     [Fact]
-    public void Skills_no_requirements_returns_neutral()
+    public void Skills_no_requirements_does_not_apply()
     {
         var result = ScoreBreakdownOf(BuildResume("C#"), BuildJobPosting(), ReferenceDate);
 
-        result.SkillsScore.Should().Be(0.5);
+        result.SkillsScore.Should().Be(0.0, "nothing was measured");
+        result.Weights.Skills.Should().Be(0.0, "and nothing was measured against");
     }
 
     [Fact]
@@ -355,9 +359,10 @@ public class ScoringEngineTests
 
         var result = ScoreBreakdownOf(resume, jobPosting, ReferenceDate);
 
-        // 0.45*1.0 (skills) + 0.20*1.0 (experience) + 0.10*0.5 (languages: the posting asks for none,
-        // so the section returns the neutral 0.5) = 0.70. Everything else scores zero.
-        result.WeightedTotal.Should().BeApproximately(0.45 + 0.20 + (0.10 * 0.5), 0.0001);
+        // The posting states no language requirement, so that section is renormalized out and the other
+        // five are scored out of 0.90: Skills 0.45/0.90 = 0.50, Experience 0.20/0.90 = 0.2222.
+        // Total = 0.50*1.0 + 0.2222*1.0 = 0.65/0.90 = 0.7222. Everything else on this resume scores zero.
+        result.WeightedTotal.Should().BeApproximately(0.65 / 0.90, 0.0001);
     }
 
     // THE assertion for this release, and it is the INVERSE of the one it replaces.
@@ -373,6 +378,12 @@ public class ScoringEngineTests
     // The resume scores non-zero in all six sections, EDUCATION INCLUDED, which is what makes the
     // difference measurable — the whole of the change is Education losing half its weight and
     // Languages gaining it, and a resume with no education would show only half of that.
+    //
+    // The posting states BOTH a skill and a language requirement, so every section applies and
+    // renormalization is the identity: the weights here are Default() bit-for-bit, asserted below
+    // rather than assumed. That is what lets the six literals stand as the shipped weighting — against
+    // a posting that asked less, the renormalized set would differ and the comparison would be to a
+    // model neither of these two is.
     [Fact]
     public void Weighted_total_now_differs_from_the_five_section_model_it_replaced()
     {
@@ -391,9 +402,16 @@ public class ScoringEngineTests
         {
             Technologies = [Technology.Create("dotnet")],
         });
-        var jobPosting = BuildJobPosting(("C#", RequirementPriority.MustHave), ("SQL", RequirementPriority.NiceToHave));
+        resume.AddLanguage(new Language("English", null, LanguageProficiency.Native));
+        var jobPosting = WithLanguages(
+            BuildJobPosting(("C#", RequirementPriority.MustHave), ("SQL", RequirementPriority.NiceToHave)),
+            ("English", LanguageProficiency.Professional),
+            ("German", LanguageProficiency.Professional));
 
         var result = ScoreBreakdownOf(resume, jobPosting, ReferenceDate);
+
+        result.Weights.Should().Be(ScoringWeightsSnapshot.Default(),
+            "every section applies here, so renormalization divides by 1.0 and changes nothing");
 
         var legacy =
             0.45 * result.SkillsScore +
@@ -413,8 +431,8 @@ public class ScoringEngineTests
         result.WeightedTotal.Should().BeApproximately(shipped, 1e-12);
 
         // The size of the move, stated rather than left as "different". This resume holds a degree
-        // (Education 1.0) and the posting states no language requirement (Languages 0.5), so the
-        // candidate loses 0.10 of Education and regains 0.05 of Languages: exactly -0.05.
+        // (Education 1.0) and satisfies one of the posting's two stated languages (Languages 0.5), so
+        // the candidate loses 0.10 of Education and regains 0.10 * 0.5 of Languages: exactly -0.05.
         (result.WeightedTotal - legacy).Should().BeApproximately(-0.05, 1e-9,
             "Education halved and Languages was funded with what it lost");
 
@@ -440,7 +458,6 @@ public class ScoringEngineTests
     public void Weighted_total_can_still_reach_one_for_a_resume_that_scores_perfectly()
     {
         var resume = BuildPerfectResume();
-        resume.AddLanguage(new Language("English", "Native speaker", LanguageProficiency.Native));
         var jobPosting = WithLanguages(
             BuildJobPosting(("C#", RequirementPriority.MustHave)),
             ("English", LanguageProficiency.Professional));
@@ -451,24 +468,65 @@ public class ScoringEngineTests
             "a section carrying weight that nothing can satisfy lowers the maximum achievable score");
     }
 
-    // The price of the neutral 0.5, named out loud because it is the most surprising consequence of
-    // weighting Languages: a posting that states no language requirement caps every candidate at 0.95.
+    // THE ASSERTION THE PREVIOUS DESIGN COULD NOT SATISFY, and the reason renormalization exists.
     //
-    // Neutral means neither rewarding nor punishing RELATIVE TO THE MIDPOINT of the section, not
-    // relative to its ceiling. The skills section has had the same property since long before this
-    // release - it is only newly visible because Languages is the section most postings say nothing
-    // about.
+    // A posting stating no language requirement is the COMMON case. Under the neutral 0.5 it capped
+    // every candidate at 0.95: a flawless CV scored 95 and the candidate had no way to find out why, in
+    // a product whose entire purpose is explaining their score to them. The unasked section now carries
+    // no weight at all, so the ceiling is 1.00 for every posting.
     [Fact]
-    public void Weighted_total_is_capped_below_one_when_the_posting_states_no_language_requirement()
+    public void Weighted_total_reaches_one_even_when_the_posting_states_no_language_requirement()
     {
         var resume = BuildPerfectResume();
-        resume.AddLanguage(new Language("English", "Native speaker", LanguageProficiency.Native));
 
         var result = ScoreBreakdownOf(resume, BuildJobPosting(("C#", RequirementPriority.MustHave)), ReferenceDate);
 
-        result.LanguagesScore.Should().Be(0.5, "no requirement means no opinion, in either direction");
-        result.WeightedTotal.Should().BeApproximately(0.95, 0.0001,
-            "half of the 0.10 Languages weight is unreachable when the posting asks for no language");
+        result.Weights.Languages.Should().Be(0.0, "the posting asked nothing of it");
+        result.Weights.Skills.Should().BeApproximately(0.45 / 0.90, 0.0001,
+            "the other five share the tenth Languages gave up, in proportion");
+        result.WeightedTotal.Should().BeApproximately(1.0, 0.0001,
+            "an unasked section must not make a perfect score unreachable");
+    }
+
+    // The same property one step further: a posting that asks for NOTHING at all is scored out of the
+    // four sections that read the candidate's own data, and a resume perfect in those four still
+    // reaches 1.00. Under the old design this candidate was capped at 0.775 by two neutral halves.
+    [Fact]
+    public void Weighted_total_reaches_one_when_the_posting_asks_for_nothing_at_all()
+    {
+        var result = ScoreBreakdownOf(BuildPerfectResume(), BuildJobPosting(), ReferenceDate);
+
+        result.Weights.Skills.Should().Be(0.0);
+        result.Weights.Languages.Should().Be(0.0);
+        result.Weights.Experience.Should().BeApproximately(0.20 / 0.45, 0.0001);
+        result.WeightedTotal.Should().BeApproximately(1.0, 0.0001);
+    }
+
+    // Stated as a PROPERTY over every shape of posting rather than as the four cases above, because the
+    // invariant is what the whole design rests on: the persisted weights are what explain the score, so
+    // a set that did not sum to 1.0 would be a row whose numbers cannot add up.
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    public void Weights_alwaysSumToOne_whateverThePostingAsksFor(bool statesSkills, bool statesLanguages)
+    {
+        var jobPosting = statesSkills
+            ? BuildJobPosting(("C#", RequirementPriority.MustHave))
+            : BuildJobPosting();
+        if (statesLanguages)
+            WithLanguages(jobPosting, ("English", LanguageProficiency.Professional));
+
+        var result = ScoreBreakdownOf(BuildPerfectResume(), jobPosting, ReferenceDate);
+
+        Enum.GetValues<SectionType>().Sum(result.Weights.WeightFor)
+            .Should().BeApproximately(1.0, 0.0001);
+
+        // And the ceiling really is reachable in every one of those shapes. BuildPerfectResume satisfies
+        // every section the posting can ask about, including the language requirement when there is one.
+        result.WeightedTotal.Should().BeApproximately(1.0, 0.0001,
+            "a candidate who satisfies every applicable section scores exactly 1.0");
     }
 
     // The engine now reads JobRequirement.Weight, and uses Priority only as the must-have gate on a
@@ -515,11 +573,13 @@ public class ScoringEngineTests
         derivedScore.WeightedTotal.Should().NotBe(statedScore.WeightedTotal);
     }
 
-    // Every requirement weighted 0.0 is a posting that expresses no opinion about skills, exactly like
-    // a posting with no requirements at all - and without the guard it is a division by zero producing
-    // NaN, which ScoreBreakdown.Create does NOT reject (both `NaN < 0` and `NaN > 1` are false).
+    // Every requirement weighted 0.0 expresses no SCOREABLE opinion about skills, exactly like a posting
+    // with no requirements at all, and the same guard covers both — it is also what stops the share
+    // being 0/0. NaN is worth naming because it would sail past ScoreBreakdown's range check (`NaN < 0`
+    // and `NaN > 1` are both false) and poison the whole total; the finiteness guard added alongside
+    // renormalization is the backstop, and this is the input that would reach it.
     [Fact]
-    public void Skills_all_zero_weights_falls_back_to_the_neutral_score()
+    public void Skills_all_zero_weights_does_not_apply()
     {
         var resume = BuildResume("C#");
         var jobPosting = BuildWeightedJobPosting(
@@ -527,19 +587,21 @@ public class ScoringEngineTests
 
         var result = ScoreBreakdownOf(resume, jobPosting, ReferenceDate);
 
-        result.SkillsScore.Should().Be(0.5);
+        result.SkillsScore.Should().Be(0.0);
+        result.Weights.Skills.Should().Be(0.0);
         double.IsNaN(result.WeightedTotal).Should().BeFalse("0/0 would poison the whole total");
     }
 
     [Fact]
-    public void Languages_no_requirements_returns_neutral()
+    public void Languages_no_requirements_does_not_apply()
     {
         var resume = BuildResume();
         resume.AddLanguage(new Language("English", null, LanguageProficiency.Native));
 
         var result = ScoreBreakdownOf(resume, BuildJobPosting(), ReferenceDate);
 
-        result.LanguagesScore.Should().Be(0.5);
+        result.LanguagesScore.Should().Be(0.0, "nothing was measured");
+        result.Weights.Languages.Should().Be(0.0, "and nothing was measured against");
     }
 
     [Fact]
@@ -642,6 +704,10 @@ public class ScoringEngineTests
             {
                 Technologies = [Technology.Create("dotnet")],
             });
+        // Perfect in every section a posting can ask about, LANGUAGES INCLUDED. Without this the resume
+        // is only perfect against postings that state no language requirement, and the ceiling tests
+        // would be asserting the very gap they exist to rule out.
+        resume.AddLanguage(new Language("English", "Native speaker", LanguageProficiency.Native));
         return resume;
     }
 }

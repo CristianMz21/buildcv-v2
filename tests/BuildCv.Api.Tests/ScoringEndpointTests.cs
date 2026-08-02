@@ -71,11 +71,18 @@ public sealed class ScoringEndpointTests
         var recommendations = json.RootElement.GetProperty("recommendations").EnumerateArray().ToList();
 
         // An empty resume is below the cap on education, certifications and projects, and the posting
-        // states no skill or language requirement — so exactly those three fire, one per priority.
+        // states no skill or language requirement — so exactly those three fire.
         recommendations.Select(r => r.GetProperty("kind").GetString()).Should().Equal(
             "NoEducationRecorded", "FewerCertificationsThanExpected", "FewerProjectsThanExpected");
+
+        // Two Importants rather than one Important and one NiceToHave, and the reason is renormalization:
+        // with Skills and Languages asked nothing and weighted out, the four remaining sections are
+        // scored out of 0.45, so Projects rises from 0.05 to 0.05/0.45 = 0.1111 and one more project is
+        // worth 0.0370 instead of 0.0167 — over the 0.03 Important threshold. Advice about a section
+        // that now carries more of the score is genuinely more important, which is the change working.
         recommendations.Select(r => r.GetProperty("priority").GetString()).Should().Equal(
-            "Critical", "Important", "NiceToHave");
+            "Critical", "Important", "Important");
+        recommendations.Select(r => r.GetProperty("impact").GetDouble()).Should().BeInDescendingOrder();
 
         foreach (var recommendation in recommendations)
         {
@@ -83,8 +90,22 @@ public sealed class ScoringEndpointTests
             recommendation.GetProperty("impact").GetDouble().Should().BeInRange(0.0, 1.0);
         }
 
-        json.RootElement.GetProperty("breakdown").GetProperty("weights")
-            .GetProperty("schemaVersion").GetInt32().Should().Be(2);
+        var weights = json.RootElement.GetProperty("breakdown").GetProperty("weights");
+        weights.GetProperty("schemaVersion").GetInt32().Should().Be(2);
+
+        // THE WEIGHTS ON THE WIRE ARE THE ONES THE SCORE WAS COMPUTED UNDER, not the defaults. This is
+        // the same set persisted on the analysis, which is what keeps a past score self-explaining: a
+        // client can multiply these six by the six section scores and get back the weightedTotal it was
+        // shown. Serving Default() here while scoring under something else would make every historical
+        // row a set of numbers that does not add up.
+        weights.GetProperty("skills").GetDouble().Should().Be(0.0, "the posting stated no skill requirement");
+        weights.GetProperty("languages").GetDouble().Should().Be(0.0, "nor any language requirement");
+        weights.GetProperty("experience").GetDouble().Should().BeApproximately(0.20 / 0.45, 1e-9);
+        weights.GetProperty("education").GetDouble().Should().BeApproximately(0.10 / 0.45, 1e-9);
+
+        new[] { "skills", "experience", "education", "certifications", "projects", "languages" }
+            .Sum(name => weights.GetProperty(name).GetDouble())
+            .Should().BeApproximately(1.0, 1e-9);
 
         // The DTO's own premise, executed against the APP's serializer rather than a test-local one:
         // nothing registers a global JsonStringEnumConverter, so an enum reaching the wire off a type

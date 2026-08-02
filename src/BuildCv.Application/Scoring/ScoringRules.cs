@@ -2,6 +2,7 @@ namespace BuildCv.Application.Scoring;
 
 using BuildCv.Domain.Jobs;
 using BuildCv.Domain.Resumes;
+using BuildCv.Domain.Scoring;
 
 // Every section formula and every predicate it is built from, in ONE place, because two consumers
 // read them and a disagreement between those two consumers is invisible.
@@ -15,9 +16,45 @@ using BuildCv.Domain.Resumes;
 // Static and pure: ScoringEngine is registered as a singleton and shared across every request.
 internal static class ScoringRules
 {
-    // What a section is worth when the posting states nothing about it. It must neither reward nor
-    // punish, and half the section's weight is the only answer with that property.
-    internal const double NeutralScore = 0.5;
+    // What a section scores when the posting asks nothing of it. NOTHING WAS MEASURED, so the honest
+    // answer is zero and the weight is zero beside it — the section is renormalized out of the total by
+    // ScoringWeightsSnapshot.RenormalizedTo and cannot move it in either direction.
+    //
+    // This replaces a neutral 0.5. That number was a fabrication whose only justification was "neither
+    // reward nor punish inside the total", and once the section stops contributing to the total it has
+    // no justification left. It also cost every candidate half of the unasked section's weight, because
+    // "neutral" was relative to the section's midpoint and never to its ceiling.
+    //
+    // A caller reading this score without its weight will misread it. That is exactly what SectionScore
+    // exists to prevent: the two travel together and a weight of 0.0 says "not asked".
+    internal const double NotApplicableScore = 0.0;
+
+    // The four sections scored entirely from the candidate's own data, which is why they apply to every
+    // posting. Verified rather than assumed: SkillWeights and SatisfiedLanguageCount are the ONLY
+    // members here that take a JobPosting at all. JobPosting.EducationLevel exists but nothing in this
+    // layer reads it, so Education still scores on what the candidate recorded.
+    private static readonly SectionType[] AlwaysApplicable =
+    [
+        SectionType.Experience, SectionType.Education, SectionType.Certifications, SectionType.Projects
+    ];
+
+    // Which sections this posting actually asks about. The weights are renormalized across exactly
+    // these, so a posting that states no skill and no language requirement is scored out of Experience,
+    // Education, Certifications and Projects alone — and a candidate perfect in those four scores 1.00.
+    internal static IReadOnlyList<SectionType> ApplicableSections(double skillWeightTotal, int languageRequirementCount)
+    {
+        List<SectionType> applicable = [.. AlwaysApplicable];
+
+        // Total weight of zero covers two different postings — one with no requirements at all, and one
+        // whose requirements are all weighted 0.0 — and both mean the same thing: this posting expresses
+        // no scoreable opinion about skills. It is also the guard that stops the share being 0/0.
+        if (skillWeightTotal > 0.0)
+            applicable.Add(SectionType.Skills);
+        if (languageRequirementCount > 0)
+            applicable.Add(SectionType.Languages);
+
+        return applicable;
+    }
 
     // The counts a resume is scored against. They are caps, not targets to exceed: a fourth
     // certification is worth nothing, which is exactly why a recommendation to add one is only
@@ -32,15 +69,14 @@ internal static class ScoringRules
     internal const double EducationWithoutDegreeScore = 0.7;
     internal const double EducationWithDegreeScore = 1.0;
 
-    // Σ(weight of matched) / Σ(weight of all). The magnitude now comes from JobRequirement.Weight,
-    // which defaults from Priority, so a posting that states nothing scores exactly as it did when
+    // Σ(weight of matched) / Σ(weight of all). The magnitude comes from JobRequirement.Weight, which
+    // defaults from Priority, so a posting that states no explicit weight scores exactly as it did when
     // the engine derived the number from Priority inline.
     //
-    // Total weight of zero covers two different postings -- one with no requirements at all, and one
-    // whose requirements are all weighted 0.0 -- and both mean the same thing: this posting expresses
-    // no opinion about skills. Without the guard the second one divides by zero.
+    // Total weight of zero means the section does not apply -- ApplicableSections uses the same test --
+    // so it scores NotApplicableScore and is renormalized out of the total rather than divided by zero.
     internal static double SkillsScore(double matchedWeight, double totalWeight) =>
-        totalWeight <= 0.0 ? NeutralScore : Math.Clamp(matchedWeight / totalWeight, 0.0, 1.0);
+        totalWeight <= 0.0 ? NotApplicableScore : Math.Clamp(matchedWeight / totalWeight, 0.0, 1.0);
 
     internal static (double Matched, double Total) SkillWeights(Resume resume, JobPosting jobPosting)
     {
@@ -103,11 +139,11 @@ internal static class ScoringRules
     internal static int QualifyingProjectCount(Resume resume) =>
         resume.Projects.Count(p => p.Technologies.Count > 0 || p.Highlights.Count > 0);
 
-    // Satisfied share, one vote per stated language. A posting that asks for no language gets the same
-    // neutral 0.5 the skills section gives an empty requirement list -- it must neither reward the
-    // monolingual candidate nor punish them for a question nobody asked.
+    // Satisfied share, one vote per stated language. A posting that asks for no language does not apply,
+    // exactly as an empty skill requirement list does not: the section scores nothing, carries no weight
+    // and cannot punish a candidate for a question nobody put to them.
     internal static double LanguagesScore(double satisfiedCount, double requirementCount) =>
-        requirementCount <= 0.0 ? NeutralScore : Math.Clamp(satisfiedCount / requirementCount, 0.0, 1.0);
+        requirementCount <= 0.0 ? NotApplicableScore : Math.Clamp(satisfiedCount / requirementCount, 0.0, 1.0);
 
     internal static int SatisfiedLanguageCount(Resume resume, JobPosting jobPosting) =>
         jobPosting.LanguageRequirements.Count(r => EvaluateLanguage(r, resume) == LanguageGap.Satisfied);

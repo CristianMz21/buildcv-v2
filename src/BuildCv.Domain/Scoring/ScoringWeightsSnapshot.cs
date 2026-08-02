@@ -8,14 +8,25 @@ public sealed record ScoringWeightsSnapshot
     // weights is NOT the score the five-section model produced for the same resume, and a row that
     // could not say which model explained it would make every historical comparison a lie.
     //
-    // THIS IS THE ONE-WAY DOOR the v1 comment promised. Version 1's payload was rollback-safe: a
-    // reader built before Languages existed skipped the unmapped member (System.Text.Json does that
-    // by default), saw five weights summing to 1.0, and worked. That same old reader now sees five
-    // weights summing to 0.90 and Create throws on the sum invariant — so every analysis row written
-    // after this deploys is UNREADABLE to any build older than it, not merely differently explained.
-    // There is no rolling back past the first write. Verified by reading FromJson's deserialization
-    // path rather than assuming the default, and pinned by
-    // ValueObjectConverterTests.ScoringWeights_AVersionOnePayloadNoLongerMatchesTodaysWeighting.
+    // THIS IS THE ONE-WAY DOOR the v1 comment promised, and renormalization makes it NARROWER than a
+    // flat "every row is unreadable" — a distinction worth keeping straight, because that sentence
+    // ends up in a deployment plan.
+    //
+    // Version 1's payload was rollback-safe: a reader built before Languages existed skipped the
+    // unmapped member (System.Text.Json defaults JsonUnmappedMemberHandling to Skip), saw five weights
+    // summing to 1.0, and worked. That same old reader re-runs the sum invariant over five members
+    // today, and whether it still reaches 1.00 depends on what the posting asked for:
+    //
+    //   - Posting stated a language requirement -> Languages carries weight -> the five it can see sum
+    //     to less than 1.00, Create throws, and the row is UNREADABLE to that build.
+    //   - Posting stated none -> RenormalizedTo drops Languages to 0.0, the other five already sum to
+    //     1.00, and the row loads and reproduces the same total, because a zero-weighted section
+    //     contributed nothing to it.
+    //
+    // So there is still no rolling back past the first write, and the rows it strands are exactly the
+    // ones scored against a posting that asked for a language. Both directions are executed by
+    // ValueObjectConverterTests.ScoringWeights_AVersionTwoPayloadIsUnreadableToAnOldReaderOnlyWhenLanguagesCarriesWeight
+    // rather than reasoned about from the deserializer's documented default.
     public const int CurrentSchemaVersion = 2;
 
     public double Skills { get; }
@@ -53,6 +64,14 @@ public sealed record ScoringWeightsSnapshot
         double languages,
         int schemaVersion = CurrentSchemaVersion)
     {
+        // FINITE first, and this ordering matters. Every comparison below is false for NaN, so a NaN
+        // weight passes the non-negative check AND passes the sum check (Math.Abs(NaN - 1.0) > 0.0001
+        // is false), and would be persisted as a snapshot whose arithmetic can never be reproduced.
+        // Reachable since RenormalizedTo divides.
+        if (!double.IsFinite(skills) || !double.IsFinite(experience) || !double.IsFinite(education)
+            || !double.IsFinite(certifications) || !double.IsFinite(projects) || !double.IsFinite(languages))
+            throw new ArgumentException("Weights must be finite numbers.");
+
         if (skills < 0 || experience < 0 || education < 0 || certifications < 0 || projects < 0 || languages < 0)
             throw new ArgumentException("Weights must be non-negative.");
 
@@ -84,6 +103,67 @@ public sealed record ScoringWeightsSnapshot
     // a fifth of their score now carries a tenth of it. SchemaVersion 2 is what keeps an old analysis
     // explainable under the model that produced it.
     public static ScoringWeightsSnapshot Default() => Create(0.45, 0.20, 0.10, 0.10, 0.05, 0.10);
+
+    // A SECTION THAT DOES NOT APPLY DOES NOT CONSUME WEIGHT.
+    //
+    // The weight of every section the posting asks nothing of is redistributed PROPORTIONALLY across
+    // the sections it does ask about, so the ceiling is 1.00 for every posting and the score means
+    // "how well you match what you were actually asked" rather than "how well you match a fixed
+    // six-part template".
+    //
+    // This replaces a neutral 0.5 that used to be handed to an unasked section. That number was
+    // defensible as "neither reward nor punish" only relative to the MIDPOINT of the section, never
+    // relative to its ceiling: half of an unasked section's weight was simply unreachable. A posting
+    // stating no language requirement is the common case, not the rare one, so a flawless CV scored 95
+    // and the candidate had no way to find out why — in a product whose whole purpose is explaining
+    // their score to them.
+    //
+    // Renormalizing rather than special-casing Languages fixes both instances at once: the skills
+    // section has had the identical defect since long before Languages existed.
+    //
+    // Identity when every section applies: the divisor is 1.0, so each weight is returned bit-for-bit
+    // and a fully-specified posting is scored under exactly Default().
+    //
+    // SchemaVersion is CARRIED, NOT BUMPED. It names which weighting RULE produced the numbers; the
+    // snapshot itself names the RESULT. Every v2 analysis is explained by "v2 weights, renormalized to
+    // what this posting asked", and the row stores the actual divisor's output, so the arithmetic is
+    // reproducible from the row alone. Bumping per posting would make the version vary within one
+    // model, which is the one thing it exists not to do.
+    //
+    // The consequence that follows from that: A PERSISTED v2 SNAPSHOT IS NO LONGER NECESSARILY
+    // Default(). Anything comparing the two to decide "was this scored under the current model" must
+    // read SchemaVersion instead.
+    public ScoringWeightsSnapshot RenormalizedTo(IEnumerable<SectionType> applicableSections)
+    {
+        ArgumentNullException.ThrowIfNull(applicableSections);
+
+        var applicable = new HashSet<SectionType>(applicableSections);
+
+        // The degenerate case: nothing applies, or everything that does carries zero weight. It is
+        // unreachable today — Experience, Education, Certifications and Projects are scored from the
+        // candidate's own data and always apply, and they carry 0.45 between them — but there is no
+        // renormalized set to return, and silently falling back to the unrenormalized weights would
+        // reintroduce the unreachable ceiling this method exists to remove.
+        var applicableTotal = applicable.Sum(WeightFor);
+        if (applicableTotal <= 0.0)
+            throw new ArgumentException(
+                "At least one applicable section must carry weight.", nameof(applicableSections));
+
+        double ShareFor(SectionType section) =>
+            applicable.Contains(section) ? WeightFor(section) / applicableTotal : 0.0;
+
+        // Create re-checks the sum, which is what makes this arithmetically sound rather than merely
+        // plausible: the shares are w/T summed over exactly the sections that contributed T, so they
+        // total 1.0 by construction, and the invariant catches it here if that ever stops being true.
+        return Create(
+            ShareFor(SectionType.Skills),
+            ShareFor(SectionType.Experience),
+            ShareFor(SectionType.Education),
+            ShareFor(SectionType.Certifications),
+            ShareFor(SectionType.Projects),
+            ShareFor(SectionType.Languages),
+            SchemaVersion);
+    }
 
     public double WeightFor(SectionType section) => section switch
     {

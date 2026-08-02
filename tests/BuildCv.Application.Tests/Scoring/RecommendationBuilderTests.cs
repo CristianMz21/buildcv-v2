@@ -210,8 +210,10 @@ public class RecommendationBuilderTests
             "a scenario where every rule lands on one priority would prove nothing about the function");
     }
 
-    // The must-have gate, isolated. This requirement is worth 0.45 x (1/11) = 0.041, which the impact
-    // thresholds alone would call Important — it is Critical because the posting screens on it.
+    // The must-have gate, isolated. The posting states no language requirement, so Skills is
+    // renormalized from 0.45 to 0.45/0.90 = 0.50, and this requirement is worth 0.50 x (1/11) = 0.045 —
+    // which the impact thresholds alone would call Important. It is Critical because the posting
+    // screens on it.
     [Fact]
     public void AnUnmatchedMustHave_isCriticalEvenWhenItsImpactIsNot()
     {
@@ -227,7 +229,7 @@ public class RecommendationBuilderTests
         var advice = AdviceFor(resume, jobPosting)
             .Should().ContainSingle(r => r.Kind == RecommendationKind.MissingMustHaveSkill).Subject;
 
-        advice.Impact.Should().BeApproximately(0.45 * (1.0 / 11.0), 1e-9);
+        advice.Impact.Should().BeApproximately((0.45 / 0.90) * (1.0 / 11.0), 1e-9);
         advice.Impact.Should().BeLessThan(0.10, "or the gate would not be what made this Critical");
         advice.Priority.Should().Be(RecommendationPriority.Critical);
     }
