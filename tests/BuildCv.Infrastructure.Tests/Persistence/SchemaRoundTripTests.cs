@@ -301,11 +301,11 @@ public sealed class SchemaRoundTripTests
     {
         var analysis = Analysis.Create(
             AnalysisId.New(),
-            ScoreBreakdown.Create(0.9, 0.8, 0.7, 0.6, 0.5, ScoringWeightsSnapshot.Default()),
+            ScoreBreakdown.Create(0.9, 0.8, 0.7, 0.6, 0.5, 0.4, ScoringWeightsSnapshot.Default()),
             ResumeId.New(),
             JobPostingId.New(),
             DateTimeOffset.UtcNow,
-            ["Add more C# projects.", "Mention SQL explicitly."]);
+            NewRecommendations());
 
         await using (var context = _fixture.NewContext())
         {
@@ -314,11 +314,65 @@ public sealed class SchemaRoundTripTests
         }
 
         await using var reader = _fixture.NewContext();
-        var reloaded = await reader.Analyses.SingleAsync(entity => entity.Id == analysis.Id);
+        var reloaded = await reader.Analyses
+            .Include(entity => entity.Recommendations)
+            .SingleAsync(entity => entity.Id == analysis.Id);
 
         reloaded.Breakdown.Should().Be(analysis.Breakdown);
-        reloaded.Recommendations.Should().Equal(analysis.Recommendations);
+        reloaded.Breakdown.LanguagesScore.Should().Be(0.4, "the sixth section has a column of its own");
+        reloaded.Breakdown.Weights.Should().Be(ScoringWeightsSnapshot.Default(),
+            "the six-member snapshot has to survive the JSON column intact");
+
+        // BeEquivalentTo rather than Equal: Recommendations is a SET on disk with a surrogate key and
+        // no stored position, so the reload order is the server's to choose.
+        reloaded.Recommendations.Should().BeEquivalentTo(analysis.Recommendations);
         reloaded.OverallScore.Should().Be(analysis.OverallScore);
+    }
+
+    // The classification for the one encrypted column on this aggregate, checked where it is true or
+    // false: the bytes on disk. Reading it back through EF only proves the converter is symmetric.
+    //
+    // The structure beside it must stay READABLE, and that is asserted in the same statement — sealing
+    // Kind or Section would end "which advice do we give most often", which is the question the
+    // encrypted Message is traded against.
+    [Fact]
+    public async Task Analysis_StoresRecommendationMessagesAsCiphertext_AndTheirStructureInPlaintext()
+    {
+        var message = $"Mention SQL explicitly-{Guid.NewGuid():N}";
+        var analysis = Analysis.Create(
+            AnalysisId.New(),
+            ScoreBreakdown.Create(0.9, 0.8, 0.7, 0.6, 0.5, 0.4, ScoringWeightsSnapshot.Default()),
+            ResumeId.New(),
+            JobPostingId.New(),
+            DateTimeOffset.UtcNow,
+            [
+                Recommendation.Create(
+                    SectionType.Skills, RecommendationPriority.Critical,
+                    RecommendationKind.MissingMustHaveSkill, message, 0.45),
+            ]);
+
+        await using (var context = _fixture.NewContext())
+        {
+            context.Analyses.Add(analysis);
+            await context.SaveChangesAsync();
+        }
+
+        await using var reader = _fixture.NewContext();
+        var stored = await reader.Database
+            .SqlQuery<byte[]>(
+                $"SELECT [Message] AS [Value] FROM [scoring].[Recommendations] WHERE [AnalysisId] = {analysis.Id.Value}")
+            .SingleAsync();
+
+        Encoding.UTF8.GetString(stored).Should().NotContain(message, "the sentence quotes the candidate's resume");
+        stored.Should().NotBeEquivalentTo(Encoding.UTF8.GetBytes(message));
+
+        // Plaintext tinyints, queryable by the rollup the (Section, Priority) index exists for.
+        var kind = await reader.Database
+            .SqlQuery<byte>(
+                $"SELECT [Kind] AS [Value] FROM [scoring].[Recommendations] WHERE [AnalysisId] = {analysis.Id.Value}")
+            .SingleAsync();
+
+        kind.Should().Be((byte)RecommendationKind.MissingMustHaveSkill);
     }
 
     [Fact]
@@ -480,31 +534,56 @@ public sealed class SchemaRoundTripTests
         tombstoned.References.Should().ContainSingle();
     }
 
-    // The fifth root, and the second table-split owned reference in the model. ScoreBreakdown's five
+    // The fifth root, and the second table-split owned reference in the model. ScoreBreakdown's six
     // score columns and its Weights column are all IsRequired(), and Navigation(a => a.Breakdown) is
     // required too — the identical shape that produced the Contact_Email NOT NULL crash. Nothing
     // pinned it until now.
+    //
+    // Analysis now also owns a child TABLE, which puts it in the same category as the three tombstone
+    // tests above: loading the root pulls the recommendations into the change tracker, where marking
+    // the root Deleted cascade-marks every one of them Deleted too. A tombstone that kept the header
+    // and issued real DELETEs for the advice would leave a score no one can explain.
     [Fact]
-    public async Task SoftDeletingAnAnalysis_KeepsItsScoreBreakdown()
+    public async Task SoftDeletingAnAnalysis_KeepsItsScoreBreakdownAndItsRecommendations()
     {
         var analysis = Analysis.Create(
             AnalysisId.New(),
-            ScoreBreakdown.Create(0.9, 0.8, 0.7, 0.6, 0.5, ScoringWeightsSnapshot.Default()),
+            ScoreBreakdown.Create(0.9, 0.8, 0.7, 0.6, 0.5, 0.4, ScoringWeightsSnapshot.Default()),
             ResumeId.New(),
             JobPostingId.New(),
             DateTimeOffset.UtcNow,
-            ["Add more C# projects."]);
+            NewRecommendations());
 
         await SaveThenSoftDelete(analysis, (context, id) => context.Analyses.SingleAsync(e => e.Id == id), analysis.Id);
 
         await using var reader = _fixture.NewContext();
         var tombstoned = await reader.Analyses
             .IgnoreQueryFilters()
+            .Include(entity => entity.Recommendations)
             .SingleAsync(entity => entity.Id == analysis.Id);
 
         tombstoned.Breakdown.Should().Be(analysis.Breakdown);
-        tombstoned.Recommendations.Should().Equal(analysis.Recommendations);
+        tombstoned.Recommendations.Should().BeEquivalentTo(analysis.Recommendations);
+
+        // Raw, because child rows carry no DeletedAt and no query filter to see through: the advice is
+        // really still on disk rather than merely still in the change tracker.
+        var surviving = await reader.Database
+            .SqlQuery<int>(
+                $"SELECT COUNT(*) AS [Value] FROM [scoring].[Recommendations] WHERE [AnalysisId] = {analysis.Id.Value}")
+            .SingleAsync();
+
+        surviving.Should().Be(2);
     }
+
+    private static IReadOnlyList<Recommendation> NewRecommendations() =>
+    [
+        Recommendation.Create(
+            SectionType.Projects, RecommendationPriority.Important,
+            RecommendationKind.FewerProjectsThanExpected, "Add more C# projects.", 0.05),
+        Recommendation.Create(
+            SectionType.Skills, RecommendationPriority.Critical,
+            RecommendationKind.MissingMustHaveSkill, "Mention SQL explicitly.", 0.45),
+    ];
 
     // The other side of the same rule, and the reason the fix has to be scoped to the root being
     // tombstoned rather than to every cascaded owned entry. Taking a skill off a LIVE resume is not a

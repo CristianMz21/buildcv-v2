@@ -327,4 +327,86 @@ public class ScoringEngineTests
 
         result.WeightedTotal.Should().BeApproximately(0.45 + 0.20, 0.0001);
     }
+
+    // THE assertion for this PR: adding a sixth section changed nobody's score.
+    //
+    // The legacy weights are written out as literals rather than read back off the snapshot — a test
+    // that asked the weights what the weights are would only ever agree with itself. These five
+    // numbers are what shipped before Languages existed, and the total the engine produces today has
+    // to equal the total that formula produces, exactly.
+    //
+    // The resume scores non-zero in all five sections, EDUCATION INCLUDED. That is what makes the
+    // test bite: the regression this guards against moved Education from 0.20 to 0.10 against a
+    // hard-coded 0.0 Languages score, so a resume with no education would have sailed through it
+    // while every educated candidate silently lost up to ten points and a band with them.
+    [Fact]
+    public void Weighted_total_is_identical_to_the_five_section_model_it_replaced()
+    {
+        var resume = BuildResume("C#", "SQL");
+        resume.AddExperience(new Experience(
+            ExperienceType.Professional,
+            OrganizationName.Create("Acme"),
+            "Backend Developer",
+            DateRange.Create(ReferenceDate.AddYears(-3))));
+        resume.AddEducation(new Education(
+            OrganizationName.Create("MIT"), "BSc", "Computer Science",
+            DateRange.Create(ReferenceDate.AddYears(-8), ReferenceDate.AddYears(-4)), null));
+        resume.AddCertificate(new Certificate(
+            "Azure Architect", OrganizationName.Create("Microsoft"), null, null, null));
+        resume.AddProject(new Project("Side project", DateRange.Create(ReferenceDate.AddYears(-1)))
+        {
+            Technologies = [Technology.Create("dotnet")],
+        });
+        var jobPosting = BuildJobPosting(("C#", RequirementPriority.MustHave), ("SQL", RequirementPriority.NiceToHave));
+
+        var result = _engine.Score(resume, jobPosting, ReferenceDate);
+
+        var legacy =
+            0.45 * result.SkillsScore +
+            0.20 * result.ExperienceScore +
+            0.20 * result.EducationScore +
+            0.10 * result.CertificationsScore +
+            0.05 * result.ProjectsScore;
+
+        // Exact, not approximate. Adding `+ 0.0 * languagesScore` to a sum leaves every bit of it
+        // alone, so anything less than exact equality would tolerate a weight that really did move.
+        result.WeightedTotal.Should().Be(legacy);
+
+        // And the five sections it is built from really are all in play, or the equality above would
+        // hold for an empty resume too.
+        result.EducationScore.Should().BeGreaterThan(0.0, "the regression is invisible without education");
+        result.SkillsScore.Should().BeGreaterThan(0.0);
+        result.ExperienceScore.Should().BeGreaterThan(0.0);
+        result.CertificationsScore.Should().BeGreaterThan(0.0);
+        result.ProjectsScore.Should().BeGreaterThan(0.0);
+    }
+
+    // The ceiling, stated on its own. A perfect resume has to be able to reach 1.00 — weighting an
+    // uncomputed section caps it below that, which is a bug no per-section assertion would name.
+    [Fact]
+    public void Weighted_total_can_still_reach_one_for_a_resume_that_scores_perfectly()
+    {
+        var resume = BuildResume("C#");
+        resume.AddExperience(new Experience(
+            ExperienceType.Professional,
+            OrganizationName.Create("Acme"),
+            "Backend Developer",
+            DateRange.Create(ReferenceDate.AddYears(-6))));
+        resume.AddEducation(new Education(
+            OrganizationName.Create("MIT"), "BSc", "Computer Science",
+            DateRange.Create(ReferenceDate.AddYears(-10), ReferenceDate.AddYears(-6)), null));
+        foreach (var issuer in new[] { "Amazon", "Microsoft", "Google" })
+            resume.AddCertificate(new Certificate($"Cert {issuer}", OrganizationName.Create(issuer), null, null, null));
+        foreach (var name in new[] { "Project A", "Project B", "Project C" })
+            resume.AddProject(new Project(name, DateRange.Create(ReferenceDate.AddYears(-1)))
+            {
+                Technologies = [Technology.Create("dotnet")],
+            });
+        var jobPosting = BuildJobPosting(("C#", RequirementPriority.MustHave));
+
+        var result = _engine.Score(resume, jobPosting, ReferenceDate);
+
+        result.WeightedTotal.Should().BeApproximately(1.0, 0.0001,
+            "a section carrying weight that nothing computes lowers the maximum achievable score");
+    }
 }

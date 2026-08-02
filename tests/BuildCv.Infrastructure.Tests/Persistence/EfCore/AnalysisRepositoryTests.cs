@@ -115,9 +115,16 @@ public sealed class AnalysisRepositoryTests
     private static Analysis NewAnalysis(ResumeId resumeId, double skills, DateTimeOffset? scoredAt = null) =>
         Analysis.Create(
             AnalysisId.New(),
-            ScoreBreakdown.Create(skills, 0.8, 0.7, 0.6, 0.5, ScoringWeightsSnapshot.Default()),
+            ScoreBreakdown.Create(skills, 0.8, 0.7, 0.6, 0.5, 0.4, ScoringWeightsSnapshot.Default()),
             resumeId,
             JobPostingId.New(),
             scoredAt ?? DateTimeOffset.UtcNow,
-            ["Add more C# projects.", "Mention SQL explicitly."]);
+            [
+                Recommendation.Create(
+                    SectionType.Projects, RecommendationPriority.Important,
+                    RecommendationKind.FewerProjectsThanExpected, "Add more C# projects.", 0.05),
+                Recommendation.Create(
+                    SectionType.Skills, RecommendationPriority.Critical,
+                    RecommendationKind.MissingMustHaveSkill, "Mention SQL explicitly.", 0.45),
+            ]);
 }

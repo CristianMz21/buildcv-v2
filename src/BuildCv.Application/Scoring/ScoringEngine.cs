@@ -24,6 +24,9 @@ public sealed class ScoringEngine : IScoringEngine
             educationScore,
             certificationsScore,
             projectsScore,
+            // Languages is shaped but not yet computed: the engine still scores exactly the five
+            // sections it always has, and a 0.0 here says so honestly rather than inventing a number.
+            0.0,
             ScoringWeightsSnapshot.Default());
     }
 

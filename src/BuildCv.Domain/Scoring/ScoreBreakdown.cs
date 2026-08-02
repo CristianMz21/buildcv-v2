@@ -2,11 +2,15 @@ namespace BuildCv.Domain.Scoring;
 
 public sealed record ScoreBreakdown
 {
+    // Numeric order, which is the order Sections projects them in.
+    private static readonly SectionType[] AllSections = Enum.GetValues<SectionType>();
+
     public double SkillsScore { get; }
     public double ExperienceScore { get; }
     public double EducationScore { get; }
     public double CertificationsScore { get; }
     public double ProjectsScore { get; }
+    public double LanguagesScore { get; }
     public ScoringWeightsSnapshot Weights { get; }
 
     private ScoreBreakdown(
@@ -15,6 +19,7 @@ public sealed record ScoreBreakdown
         double educationScore,
         double certificationsScore,
         double projectsScore,
+        double languagesScore,
         ScoringWeightsSnapshot weights)
     {
         SkillsScore = skillsScore;
@@ -22,6 +27,7 @@ public sealed record ScoreBreakdown
         EducationScore = educationScore;
         CertificationsScore = certificationsScore;
         ProjectsScore = projectsScore;
+        LanguagesScore = languagesScore;
         Weights = weights;
     }
 
@@ -31,6 +37,7 @@ public sealed record ScoreBreakdown
         double educationScore,
         double certificationsScore,
         double projectsScore,
+        double languagesScore,
         ScoringWeightsSnapshot weights)
     {
         ArgumentNullException.ThrowIfNull(weights);
@@ -39,7 +46,9 @@ public sealed record ScoreBreakdown
         ValidateScore(educationScore, nameof(educationScore));
         ValidateScore(certificationsScore, nameof(certificationsScore));
         ValidateScore(projectsScore, nameof(projectsScore));
-        return new ScoreBreakdown(skillsScore, experienceScore, educationScore, certificationsScore, projectsScore, weights);
+        ValidateScore(languagesScore, nameof(languagesScore));
+        return new ScoreBreakdown(
+            skillsScore, experienceScore, educationScore, certificationsScore, projectsScore, languagesScore, weights);
     }
 
     private static void ValidateScore(double score, string paramName)
@@ -53,5 +62,28 @@ public sealed record ScoreBreakdown
         Weights.Experience * ExperienceScore +
         Weights.Education * EducationScore +
         Weights.Certifications * CertificationsScore +
-        Weights.Projects * ProjectsScore;
+        Weights.Projects * ProjectsScore +
+        Weights.Languages * LanguagesScore;
+
+    // The six stored doubles paired with the weights they were counted under, so a caller never has to
+    // pair a score with a weight by hand and cannot pair it with the wrong snapshot's.
+    //
+    // COMPUTED, and the persistence layer Ignores it. Left mapped, EF discovers SectionScore as an
+    // entity type and the model build fails somewhere far from here.
+    public IReadOnlyList<SectionScore> Sections =>
+        [.. AllSections.Select(section => SectionScore.Create(section, ScoreFor(section), Weights.WeightFor(section)))];
+
+    // THE enum-to-column switch, deliberately the only one. Every consumer that wants "the score for
+    // this section" reads through here, so adding a SectionType member without a column to back it
+    // fails loudly in one place instead of quietly reading zero in several.
+    public double ScoreFor(SectionType section) => section switch
+    {
+        SectionType.Skills => SkillsScore,
+        SectionType.Experience => ExperienceScore,
+        SectionType.Education => EducationScore,
+        SectionType.Certifications => CertificationsScore,
+        SectionType.Projects => ProjectsScore,
+        SectionType.Languages => LanguagesScore,
+        _ => throw new ArgumentOutOfRangeException(nameof(section), section, "Unknown scoring section.")
+    };
 }

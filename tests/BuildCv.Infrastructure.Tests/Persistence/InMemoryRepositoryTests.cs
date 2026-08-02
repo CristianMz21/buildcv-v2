@@ -205,7 +205,7 @@ public class InMemoryRepositoryTests
     {
         var repository = new InMemoryAnalysisRepository();
         var resumeId = ResumeId.New();
-        var breakdown = ScoreBreakdown.Create(0.5, 0.5, 0.5, 0.5, 0.5, ScoringWeightsSnapshot.Default());
+        var breakdown = ScoreBreakdown.Create(0.5, 0.5, 0.5, 0.5, 0.5, 0.5, ScoringWeightsSnapshot.Default());
         var matching = Analysis.Create(AnalysisId.New(), breakdown, resumeId, JobPostingId.New(), DateTimeOffset.UtcNow);
         var other = Analysis.Create(AnalysisId.New(), breakdown, ResumeId.New(), JobPostingId.New(), DateTimeOffset.UtcNow);
         await repository.AddAsync(matching);
@@ -281,7 +281,7 @@ public class InMemoryRepositoryTests
     {
         var repository = new InMemoryAnalysisRepository();
         var resumeId = ResumeId.New();
-        var breakdown = ScoreBreakdown.Create(0.5, 0.5, 0.5, 0.5, 0.5, ScoringWeightsSnapshot.Default());
+        var breakdown = ScoreBreakdown.Create(0.5, 0.5, 0.5, 0.5, 0.5, 0.5, ScoringWeightsSnapshot.Default());
         var history = new List<AnalysisId>();
         for (var index = 0; index < 3; index++)
         {

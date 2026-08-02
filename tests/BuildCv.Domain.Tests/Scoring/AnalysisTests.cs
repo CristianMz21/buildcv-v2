@@ -12,15 +12,23 @@ public class AnalysisTests
     [Fact]
     public void Analysis_with_low_band_can_be_created()
     {
-        var breakdown = ScoreBreakdown.Create(0.3, 0.4, 0.2, 0.5, 0.8, DefaultWeights);
+        var breakdown = ScoreBreakdown.Create(0.3, 0.4, 0.2, 0.5, 0.8, 0.25, DefaultWeights);
         var analysis = Analysis.Create(
             id: AnalysisId.New(),
             breakdown: breakdown,
             resumeId: ResumeId.New(),
             jobPostingId: JobPostingId.New(),
             scoredAt: DateTimeOffset.Now,
-            recommendations: ["Add more skills", "Improve summary"]);
+            recommendations: [Advice("Add more skills"), Advice("Improve summary")]);
 
+        // 0.45*0.3 + 0.20*0.4 + 0.20*0.2 + 0.10*0.5 + 0.05*0.8 + 0.00*0.25 = 0.345, which is EXACTLY
+        // 34.5 as a double — a rounding midpoint. It lands on 34 rather than 35 because Math.Round
+        // defaults to MidpointRounding.ToEven, not because the value is below the halfway point. That
+        // is deterministic, and it is the number this input produced before the sixth section existed.
+        //
+        // Still 34, and that is the point of this PR rather than a coincidence: Languages ships at
+        // weight 0.0, so the sixth section cannot move a score that already existed. The 0.25 handed
+        // to it here is deliberately non-zero and deliberately makes no difference.
         analysis.OverallScore.Should().Be(34);
         analysis.Band.Should().Be(ScoreBand.Low);
         analysis.Recommendations.Should().HaveCount(2);
@@ -29,7 +37,7 @@ public class AnalysisTests
     [Fact]
     public void Analysis_with_defaults_can_be_created()
     {
-        var breakdown = ScoreBreakdown.Create(0.5, 0.5, 0.5, 0.5, 0.5, DefaultWeights);
+        var breakdown = ScoreBreakdown.Create(0.5, 0.5, 0.5, 0.5, 0.5, 0.5, DefaultWeights);
         var analysis = Analysis.Create(
             id: AnalysisId.New(),
             breakdown: breakdown,
@@ -40,12 +48,14 @@ public class AnalysisTests
         analysis.Recommendations.Should().BeEmpty();
     }
 
+    // Every section scores the same, so the weights sum to one and the total IS that score — the band
+    // boundaries are being tested, not the arithmetic above them.
     [Fact]
     public void Analysis_band_thresholds()
     {
-        var medium = BuildAnalysis(ScoreBreakdown.Create(0.45, 0.45, 0.45, 0.45, 0.45, DefaultWeights));
-        var good = BuildAnalysis(ScoreBreakdown.Create(0.65, 0.65, 0.65, 0.65, 0.65, DefaultWeights));
-        var strong = BuildAnalysis(ScoreBreakdown.Create(0.9, 0.9, 0.9, 0.9, 0.9, DefaultWeights));
+        var medium = BuildAnalysis(ScoreBreakdown.Create(0.45, 0.45, 0.45, 0.45, 0.45, 0.45, DefaultWeights));
+        var good = BuildAnalysis(ScoreBreakdown.Create(0.65, 0.65, 0.65, 0.65, 0.65, 0.65, DefaultWeights));
+        var strong = BuildAnalysis(ScoreBreakdown.Create(0.9, 0.9, 0.9, 0.9, 0.9, 0.9, DefaultWeights));
 
         medium.Band.Should().Be(ScoreBand.Medium);
         good.Band.Should().Be(ScoreBand.Good);
@@ -63,16 +73,44 @@ public class AnalysisTests
     [Fact]
     public void Recommendations_are_set_at_creation()
     {
+        var advice = Advice("Add more skills");
         var analysis = Analysis.Create(
             id: AnalysisId.New(),
-            breakdown: ScoreBreakdown.Create(0.5, 0.5, 0.5, 0.5, 0.5, DefaultWeights),
+            breakdown: ScoreBreakdown.Create(0.5, 0.5, 0.5, 0.5, 0.5, 0.5, DefaultWeights),
             resumeId: ResumeId.New(),
             jobPostingId: JobPostingId.New(),
             scoredAt: DateTimeOffset.Now,
-            recommendations: ["Add more skills"]);
+            recommendations: [advice]);
 
-        analysis.Recommendations.Should().HaveCount(1);
-        analysis.Recommendations.Should().ContainSingle().Which.Should().Be("Add more skills");
+        analysis.Recommendations.Should().ContainSingle().Which.Should().Be(advice);
+    }
+
+    // The structure travels with the sentence. It is what the analytics group by, and it is the half
+    // that survives the sentence being encrypted at rest.
+    [Fact]
+    public void Recommendations_keep_their_section_priority_and_kind()
+    {
+        var analysis = Analysis.Create(
+            id: AnalysisId.New(),
+            breakdown: ScoreBreakdown.Create(0.5, 0.5, 0.5, 0.5, 0.5, 0.5, DefaultWeights),
+            resumeId: ResumeId.New(),
+            jobPostingId: JobPostingId.New(),
+            scoredAt: DateTimeOffset.Now,
+            recommendations:
+            [
+                Recommendation.Create(
+                    SectionType.Languages,
+                    RecommendationPriority.Critical,
+                    RecommendationKind.LanguageMissing,
+                    "This role requires English.",
+                    0.10),
+            ]);
+
+        var recommendation = analysis.Recommendations.Should().ContainSingle().Subject;
+        recommendation.Section.Should().Be(SectionType.Languages);
+        recommendation.Priority.Should().Be(RecommendationPriority.Critical);
+        recommendation.Kind.Should().Be(RecommendationKind.LanguageMissing);
+        recommendation.Impact.Should().Be(0.10);
     }
 
     [Fact]
@@ -80,7 +118,7 @@ public class AnalysisTests
     {
         var act = () => Analysis.Create(
             id: null!,
-            breakdown: ScoreBreakdown.Create(0.5, 0.5, 0.5, 0.5, 0.5, DefaultWeights),
+            breakdown: ScoreBreakdown.Create(0.5, 0.5, 0.5, 0.5, 0.5, 0.5, DefaultWeights),
             resumeId: ResumeId.New(),
             jobPostingId: JobPostingId.New(),
             scoredAt: DateTimeOffset.Now);
@@ -106,7 +144,7 @@ public class AnalysisTests
     {
         var act = () => Analysis.Create(
             id: AnalysisId.New(),
-            breakdown: ScoreBreakdown.Create(0.5, 0.5, 0.5, 0.5, 0.5, DefaultWeights),
+            breakdown: ScoreBreakdown.Create(0.5, 0.5, 0.5, 0.5, 0.5, 0.5, DefaultWeights),
             resumeId: null!,
             jobPostingId: JobPostingId.New(),
             scoredAt: DateTimeOffset.Now);
@@ -119,7 +157,7 @@ public class AnalysisTests
     {
         var act = () => Analysis.Create(
             id: AnalysisId.New(),
-            breakdown: ScoreBreakdown.Create(0.5, 0.5, 0.5, 0.5, 0.5, DefaultWeights),
+            breakdown: ScoreBreakdown.Create(0.5, 0.5, 0.5, 0.5, 0.5, 0.5, DefaultWeights),
             resumeId: ResumeId.New(),
             jobPostingId: null!,
             scoredAt: DateTimeOffset.Now);
@@ -130,16 +168,16 @@ public class AnalysisTests
     [Fact]
     public void Analysis_recommendations_are_defensively_copied()
     {
-        var source = new List<string> { "Add more skills" };
+        var source = new List<Recommendation> { Advice("Add more skills") };
         var analysis = Analysis.Create(
             id: AnalysisId.New(),
-            breakdown: ScoreBreakdown.Create(0.5, 0.5, 0.5, 0.5, 0.5, DefaultWeights),
+            breakdown: ScoreBreakdown.Create(0.5, 0.5, 0.5, 0.5, 0.5, 0.5, DefaultWeights),
             resumeId: ResumeId.New(),
             jobPostingId: JobPostingId.New(),
             scoredAt: DateTimeOffset.Now,
             recommendations: source);
 
-        source.Add("Improve summary");
+        source.Add(Advice("Improve summary"));
 
         analysis.Recommendations.Should().HaveCount(1);
     }
@@ -147,7 +185,7 @@ public class AnalysisTests
     [Fact]
     public void Analysis_equality_by_id()
     {
-        var breakdown = ScoreBreakdown.Create(0.5, 0.5, 0.5, 0.5, 0.5, DefaultWeights);
+        var breakdown = ScoreBreakdown.Create(0.5, 0.5, 0.5, 0.5, 0.5, 0.5, DefaultWeights);
         var id = AnalysisId.New();
         var a1 = Analysis.Create(id, breakdown, ResumeId.New(), JobPostingId.New(), DateTimeOffset.Now);
         var a2 = Analysis.Create(id, breakdown, ResumeId.New(), JobPostingId.New(), DateTimeOffset.Now);
@@ -156,4 +194,8 @@ public class AnalysisTests
         a1.Should().Be(a2);
         a1.Should().NotBe(a3);
     }
+
+    private static Recommendation Advice(string message) =>
+        Recommendation.Create(
+            SectionType.Skills, RecommendationPriority.Important, RecommendationKind.MissingMustHaveSkill, message, 0.2);
 }
