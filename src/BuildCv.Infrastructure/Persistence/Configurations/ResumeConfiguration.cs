@@ -164,6 +164,11 @@ internal sealed class ResumeConfiguration : IEntityTypeConfiguration<Resume>
                 .IsEncryptedText(_encryptor, "Education.Grade");
 
             education.Property(entry => entry.Period).IsRequired();
+
+            // PLAINTEXT, joining Period as the second column here that is. A rung on a ladder is not
+            // a description of a person: it is what the engine compares against a posting's required
+            // level, and it could not do that from behind the envelope Degree sits in.
+            education.Property(entry => entry.Level).HasColumnType("tinyint");
         });
 
         UseBackingField(builder, resume => resume.Educations);
@@ -269,6 +274,12 @@ internal sealed class ResumeConfiguration : IEntityTypeConfiguration<Resume>
 
             language.Property(entry => entry.Name).HasMaxLength(100).IsRequired();
             language.Property(entry => entry.Fluency).HasMaxLength(50);
+
+            // Level is the column the engine reads; Fluency stays beside it as free text for display
+            // and is never parsed into it. See the comment on Language.Level for why that direction
+            // matters -- an unrecognized word would read as "not proficient" and score a native
+            // speaker zero.
+            language.Property(entry => entry.Level).HasColumnType("tinyint");
 
             language.HasIndex(nameof(Language.Name));
         });

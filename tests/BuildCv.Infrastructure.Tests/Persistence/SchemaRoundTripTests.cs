@@ -133,7 +133,8 @@ public sealed class SchemaRoundTripTests
         { Highlights = ["Shipped v1", "Halved build times"] });
 
         resume.AddEducation(new Education(
-            OrganizationName.Create("University of London"), "BSc", "Mathematics", period, "First"));
+            OrganizationName.Create("University of London"), "BSc", "Mathematics", period, "First",
+            EducationLevel.Bachelor));
 
         // `with`, not an object initializer: Skill is built by a factory method, and Keywords is an
         // init-only member on the record it returns.
@@ -156,7 +157,7 @@ public sealed class SchemaRoundTripTests
             Url.Create("https://learn.example.com/verify/CRED-123"),
             period));
 
-        resume.AddLanguage(new Language("Spanish", "Native"));
+        resume.AddLanguage(new Language("Spanish", "Native", LanguageProficiency.Native));
         resume.AddAward(new Award("Turing Award", OrganizationName.Create("ACM"), new DateOnly(2022, 3, 1), "For services."));
         resume.AddPublication(new Publication(
             "Notes on the Engine",
@@ -207,6 +208,15 @@ public sealed class SchemaRoundTripTests
         reloaded.Publications.Should().BeEquivalentTo(resume.Publications);
         reloaded.Interests.Should().BeEquivalentTo(resume.Interests);
         reloaded.References.Should().BeEquivalentTo(resume.References);
+
+        // The two new level columns, named where a failure says which one broke. Each sits beside the
+        // free text that says roughly the same thing in prose, and the two neighbours are classified
+        // differently on purpose: Education.Degree is ENCRYPTED because a qualification names a
+        // person, while Language.Fluency is PLAINTEXT because it describes a level, which CLAUDE.md
+        // puts on the readable side. Either way the engine reads the LEVEL and never parses the prose,
+        // and a level lost on the way to disk would leave only prose behind.
+        reloaded.Languages.Single().Level.Should().Be(LanguageProficiency.Native);
+        reloaded.Educations.Single().Level.Should().Be(EducationLevel.Bachelor);
     }
 
     // The other half of the classification, proved rather than asserted about the model: the skill
@@ -240,7 +250,7 @@ public sealed class SchemaRoundTripTests
     }
 
     [Fact]
-    public async Task JobPosting_RoundTrips_WithRequirementsAndResponsibilities()
+    public async Task JobPosting_RoundTrips_WithRequirementsLanguagesAndResponsibilities()
     {
         var posting = JobPosting.Create(
             AccountId.New(), "Senior .NET Engineer", OrganizationName.Create("Contoso"), "Build things.");
@@ -250,7 +260,13 @@ public sealed class SchemaRoundTripTests
             JobRequirement.Create(Technology.Create("C#"), RequirementPriority.MustHave, 3),
             JobRequirement.Create(Technology.Create("SQL"), RequirementPriority.NiceToHave, 1),
         ]);
+        posting.SetLanguageRequirements(
+        [
+            LanguageRequirement.Create("English", LanguageProficiency.Professional),
+            LanguageRequirement.Create("Español", LanguageProficiency.Native),
+        ]);
         posting.SetResponsibilities([Responsibility.Create("Ship features."), Responsibility.Create("Review code.")]);
+        posting.SetEducationLevel(EducationLevel.Bachelor);
         posting.Publish();
 
         await using (var context = _fixture.NewContext())
@@ -262,6 +278,7 @@ public sealed class SchemaRoundTripTests
         await using var reader = _fixture.NewContext();
         var reloaded = await reader.JobPostings
             .Include(entity => entity.Requirements)
+            .Include(entity => entity.LanguageRequirements)
             .Include(entity => entity.Responsibilities)
             .SingleAsync(entity => entity.Id == posting.Id);
 
@@ -269,8 +286,40 @@ public sealed class SchemaRoundTripTests
         reloaded.Description.Should().Be(posting.Description);
         reloaded.CompanyName.Should().Be(posting.CompanyName);
         reloaded.Status.Should().Be(JobPostingStatus.Published);
+        reloaded.EducationLevel.Should().Be(EducationLevel.Bachelor);
         reloaded.Requirements.Should().BeEquivalentTo(posting.Requirements);
+        reloaded.LanguageRequirements.Should().BeEquivalentTo(posting.LanguageRequirements);
         reloaded.Responsibilities.Should().BeEquivalentTo(posting.Responsibilities);
+
+        // The classification, proved rather than asserted about the model: both columns really are
+        // MATCHABLE in SQL. Translation is not the signal and never was — an encrypted column
+        // translates perfectly well and then silently returns nothing, because the operand is sealed
+        // under a fresh nonce. What this asserts is that the rows come back. Seal either column and
+        // this stops matching, and the failure names the feature that was lost: PR 3 needs exactly
+        // this question — "postings requiring Spanish at native level" — and BeEquivalentTo above
+        // cannot show it, because it only reads bytes back through the converter.
+        var demanding = await reader.JobPostings
+            .Where(entity => entity.LanguageRequirements.Any(requirement =>
+                requirement.Name == "Español" && requirement.MinimumLevel == LanguageProficiency.Native))
+            .Select(entity => entity.Id)
+            .ToListAsync();
+
+        demanding.Should().Contain(posting.Id);
+
+        // The null direction, through EF rather than only through the Domain. The nullable column
+        // makes this safe today, so it is coverage rather than a defect — but "stated, then
+        // withdrawn" is the direction that silently degrades to 0 if a signature ever stops being
+        // nullable, and 0 reads as HighSchool: a requirement the posting no longer makes.
+        await using (var editor = _fixture.NewContext())
+        {
+            var tracked = await editor.JobPostings.SingleAsync(entity => entity.Id == posting.Id);
+            tracked.SetEducationLevel(null);
+            await editor.SaveChangesAsync();
+        }
+
+        await using var afterClearing = _fixture.NewContext();
+        (await afterClearing.JobPostings.SingleAsync(entity => entity.Id == posting.Id))
+            .EducationLevel.Should().BeNull();
     }
 
     [Fact]

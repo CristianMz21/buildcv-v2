@@ -124,13 +124,25 @@ public static class ResumeEndpoints
             return result.ToHttpResult();
         });
 
-        group.MapPost("/{id:guid}/educations", async (
+        group.MapPost("/{id:guid}/educations", async Task<IResult> (
             Guid id,
             AddEducationRequest request,
             HttpContext httpContext,
             ICommandHandler<AddEducationCommand, Result<Resume>> handler,
             CancellationToken cancellationToken) =>
         {
+            // IsDefined for the same reason as the languages endpoint below: TryParse accepts any
+            // numeric string and the tinyint conversion is unchecked, so "-1" would land as 255 —
+            // above Doctorate — instead of being refused.
+            EducationLevel? level = null;
+            if (request.Level is not null)
+            {
+                if (!Enum.TryParse(request.Level, ignoreCase: true, out EducationLevel parsed)
+                    || !Enum.IsDefined(parsed))
+                    return Results.Problem(detail: "Invalid education level.", statusCode: StatusCodes.Status400BadRequest);
+                level = parsed;
+            }
+
             var result = await handler.Handle(new AddEducationCommand(
                 httpContext.User.GetAccountId(),
                 new ResumeId(id),
@@ -139,7 +151,8 @@ public static class ResumeEndpoints
                 request.FieldOfStudy,
                 request.Start,
                 request.End,
-                request.Grade), cancellationToken);
+                request.Grade,
+                level), cancellationToken);
             return result.ToHttpResult();
         });
 
@@ -183,18 +196,51 @@ public static class ResumeEndpoints
             return result.ToHttpResult();
         });
 
-        group.MapPost("/{id:guid}/languages", async (
+        // Level is parsed here and rejected with a 400 BEFORE the handler runs, matching how
+        // AddSkillRequest.Level is already handled. Fluency is passed straight through untouched:
+        // nothing in this pipeline may derive a Level from it.
+        //
+        // IsDefined is not belt-and-braces on top of TryParse — TryParse ACCEPTS any numeric string,
+        // and the column is tinyint mapped with an unchecked Expression.Convert. Measured against
+        // SQL Server: "99" stores as 99, "300" truncates to 44, and "-1" WRAPS TO 255 — silently, with
+        // no exception and no log. 255 is above Native, so the most obviously-invalid input a fuzzer
+        // sends becomes maximum proficiency, and PR 3's `held >= required` then tells the candidate
+        // they meet a requirement they do not. IsDefined runs on the CLR value before that conversion,
+        // which is what closes all three.
+        //
+        // It must stay IsDefined rather than "reject numeric input": GET returns level as a NUMBER
+        // (no JsonStringEnumConverter is configured), so a read-modify-write client legitimately POSTs
+        // 4 back. Valid numbers keep working; only undefined ones do not.
+        //
+        // What this does NOT do is narrow the input space to the enum's own names. TryParse
+        // OR-combines COMMA-SEPARATED members whether or not the type is [Flags], and the result is
+        // usually still a defined member: measured, "Conversational,Professional" parses to 1|2 = 3 and
+        // comes back as Fluent — higher than either name sent — with IsDefined returning true. The
+        // guard bounds it (the stored value is always a real member, so PR 3 can never read "above
+        // Native", which was the actual danger) but does not close it. It exists identically on the
+        // four pre-existing parse sites and belongs in the same follow-up.
+        group.MapPost("/{id:guid}/languages", async Task<IResult> (
             Guid id,
             AddLanguageRequest request,
             HttpContext httpContext,
             ICommandHandler<AddLanguageCommand, Result<Resume>> handler,
             CancellationToken cancellationToken) =>
         {
+            LanguageProficiency? level = null;
+            if (request.Level is not null)
+            {
+                if (!Enum.TryParse(request.Level, ignoreCase: true, out LanguageProficiency parsed)
+                    || !Enum.IsDefined(parsed))
+                    return Results.Problem(detail: "Invalid language proficiency.", statusCode: StatusCodes.Status400BadRequest);
+                level = parsed;
+            }
+
             var result = await handler.Handle(new AddLanguageCommand(
                 httpContext.User.GetAccountId(),
                 new ResumeId(id),
                 request.Name,
-                request.Fluency), cancellationToken);
+                request.Fluency,
+                level), cancellationToken);
             return result.ToHttpResult();
         });
 

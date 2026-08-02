@@ -24,13 +24,16 @@ public sealed record AddExperienceRequest(
     DateOnly? End,
     string? Summary);
 
+// Level is a string on the wire and an enum inside, parsed in the endpoint. Degree stays free text
+// for display and is never parsed into Level — see the comment on Domain.Resumes.Education.Level.
 public sealed record AddEducationRequest(
     string Institution,
     string? Degree,
     string? FieldOfStudy,
     DateOnly Start,
     DateOnly? End,
-    string? Grade);
+    string? Grade,
+    string? Level);
 
 public sealed record AddCertificateRequest(
     string Name,
@@ -50,7 +53,9 @@ public sealed record AddProjectRequest(
     string[] Technologies,
     string[] Highlights);
 
-public sealed record AddLanguageRequest(string Name, string? Fluency);
+// Fluency is free text the candidate types and is shown back verbatim; Level is the comparable value
+// the scorer reads. The two are separate fields on purpose — see Domain.Resumes.Language.Level.
+public sealed record AddLanguageRequest(string Name, string? Fluency, string? Level);
 
 public sealed record AddAwardRequest(string Title, string? Awarder, DateOnly? Date, string? Summary);
 

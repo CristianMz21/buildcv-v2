@@ -15,7 +15,8 @@ public sealed record AddEducationCommand(
     string? FieldOfStudy,
     DateOnly Start,
     DateOnly? End,
-    string? Grade) : ICommand<Result<Resume>>;
+    string? Grade,
+    EducationLevel? Level) : ICommand<Result<Resume>>;
 
 public sealed class AddEducationHandler(IResumeRepository resumeRepository)
     : ICommandHandler<AddEducationCommand, Result<Resume>>
@@ -36,7 +37,8 @@ public sealed class AddEducationHandler(IResumeRepository resumeRepository)
                 command.Degree,
                 command.FieldOfStudy,
                 DateRange.Create(command.Start, command.End),
-                command.Grade);
+                command.Grade,
+                command.Level);
             resume.AddEducation(education);
             await resumeRepository.UpdateAsync(resume, cancellationToken);
 

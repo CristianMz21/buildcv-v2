@@ -132,11 +132,13 @@ public sealed class KeysetQueryTranslationTests
         sql.Should().MatchRegex(@"\[Seq\] DESC", "nor the order the cursor walks");
     }
 
-    // Not only resumes. JobPosting owns two collections and is paged through the same helper, so the
-    // fix belongs in the shared probe rather than in ResumeRepository — a per-repository fix would leave
-    // this list quietly multiplying Requirements by Responsibilities.
+    // Not only resumes. JobPosting owns three collections now — Requirements, LanguageRequirements and
+    // Responsibilities — and is paged through the same helper, so the fix belongs in the shared probe
+    // rather than in ResumeRepository: a per-repository fix would leave this list quietly multiplying
+    // three collections against each other. The count is read off the model below rather than written
+    // here, which is why adding the third one did not need this assertion edited.
     [Fact]
-    public void NewestFirstProbe_OverJobPostings_JoinsNeitherOwnedCollection()
+    public void NewestFirstProbe_OverJobPostings_JoinsNoneOfItsOwnedCollections()
     {
         using var context = PersistenceTestContext.ModelOnly();
 
@@ -149,8 +151,8 @@ public sealed class KeysetQueryTranslationTests
     // The counterfactual, because "zero joins" is only evidence if the query would otherwise have had
     // them. Without this, a refactor that stopped loading the collections at all would leave the
     // assertions above green while breaking every consumer. It also states the size of what was removed:
-    // ten tables for a resume, two for a job posting, one for an analysis, each multiplying against the
-    // others.
+    // ten tables for a resume, three for a job posting, one for an analysis, each multiplying against
+    // the others.
     [Fact]
     public void NewestFirstProbe_WithoutSplitting_WouldJoinEveryOwnedCollection()
     {

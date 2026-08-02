@@ -52,6 +52,13 @@ internal sealed class JobPostingConfiguration : IEntityTypeConfiguration<JobPost
             .HasColumnType("tinyint")
             .IsRequired();
 
+        // ANALYTICAL, like everything else on this table. A required education level is a rung on a
+        // ladder, not a description of a person, and it is one of the two dimensions PR 3's engine
+        // compares. Nullable because most postings state none, and "not stated" must stay
+        // distinguishable from HighSchool = 0.
+        builder.Property(posting => posting.EducationLevel)
+            .HasColumnType("tinyint");
+
         builder.Property(posting => posting.CreatedAt).IsRequired();
         builder.Property(posting => posting.UpdatedAt).IsRequired();
         builder.Property(posting => posting.PublishedAt);
@@ -80,6 +87,30 @@ internal sealed class JobPostingConfiguration : IEntityTypeConfiguration<JobPost
         });
 
         builder.Navigation(posting => posting.Requirements).UsePropertyAccessMode(PropertyAccessMode.Field);
+
+        // Follows JobRequirements exactly, including the surrogate int key: the default composite
+        // (ownerFk, ordinal) key would renumber every row after a reorder. Both columns are
+        // PLAINTEXT -- a language name and a minimum level are scoring input and the corpus behind
+        // "which languages are most demanded this quarter", and neither says anything about a person.
+        builder.OwnsMany(posting => posting.LanguageRequirements, language =>
+        {
+            language.ToTable("LanguageRequirements", "jobs");
+            language.WithOwner().HasForeignKey(ChildTable.JobPostingForeignKey);
+            language.Property<int>(ChildTable.Key).ValueGeneratedOnAdd();
+            language.HasKey(ChildTable.Key);
+
+            language.Property(requirement => requirement.Name)
+                .HasMaxLength(LanguageRequirement.MaxNameLength)
+                .IsRequired();
+
+            language.Property(requirement => requirement.MinimumLevel)
+                .HasColumnType("tinyint")
+                .IsRequired();
+
+            language.HasIndex(nameof(LanguageRequirement.Name));
+        });
+
+        builder.Navigation(posting => posting.LanguageRequirements).UsePropertyAccessMode(PropertyAccessMode.Field);
 
         builder.OwnsMany(posting => posting.Responsibilities, responsibility =>
         {

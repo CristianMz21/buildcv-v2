@@ -132,4 +132,133 @@ public class JobPostingTests
 
         view.Should().HaveCount(1);
     }
+
+    [Fact]
+    public void JobPosting_accepts_language_requirements()
+    {
+        var job = JobPosting.Create(OwnerId, "Dev", OrganizationName.Create("TechCorp"));
+
+        job.SetLanguageRequirements(
+        [
+            LanguageRequirement.Create("English", LanguageProficiency.Professional),
+            LanguageRequirement.Create("Spanish", LanguageProficiency.Native),
+        ]);
+
+        job.LanguageRequirements.Should().HaveCount(2);
+        job.LanguageRequirements[0].MinimumLevel.Should().Be(LanguageProficiency.Professional);
+    }
+
+    // The guard that matters, and the reason it cannot lean on record equality: LanguageRequirement
+    // stores its name as typed, so "English" and "english" are two distinct values. Without an
+    // OrdinalIgnoreCase comparison a posting would carry both, and PR 3 would score the candidate
+    // against whichever it read first.
+    [Fact]
+    public void JobPosting_rejects_a_duplicate_language_requirement_case_insensitively()
+    {
+        var job = JobPosting.Create(OwnerId, "Dev", OrganizationName.Create("TechCorp"));
+        job.AddLanguageRequirement(LanguageRequirement.Create("English", LanguageProficiency.Professional));
+
+        var act = () => job.AddLanguageRequirement(
+            LanguageRequirement.Create("ENGLISH", LanguageProficiency.Basic));
+
+        act.Should().Throw<DuplicateEntryException>();
+        job.LanguageRequirements.Should().ContainSingle();
+    }
+
+    // The same guard on the bulk setter. Add-one and set-many are separate code paths on JobPosting,
+    // so a guard on only one of them leaves the other as a way in.
+    [Fact]
+    public void JobPosting_rejects_a_duplicate_within_a_language_requirement_set()
+    {
+        var job = JobPosting.Create(OwnerId, "Dev", OrganizationName.Create("TechCorp"));
+
+        var act = () => job.SetLanguageRequirements(
+        [
+            LanguageRequirement.Create("English", LanguageProficiency.Professional),
+            LanguageRequirement.Create("english", LanguageProficiency.Basic),
+        ]);
+
+        act.Should().Throw<DuplicateEntryException>();
+        job.LanguageRequirements.Should().BeEmpty("a rejected set must not leave a partial write behind");
+    }
+
+    [Fact]
+    public void JobPosting_language_requirements_view_reflects_subsequent_additions()
+    {
+        var job = JobPosting.Create(OwnerId, "Dev", OrganizationName.Create("TechCorp"));
+        var view = job.LanguageRequirements;
+
+        job.AddLanguageRequirement(LanguageRequirement.Create("English", LanguageProficiency.Basic));
+
+        view.Should().HaveCount(1);
+    }
+
+    // Not stated has to stay distinguishable from HighSchool = 0, or PR 3 invents a requirement no
+    // posting made and penalises every candidate who does not meet it.
+    [Fact]
+    public void JobPosting_states_no_education_level_by_default() =>
+        JobPosting.Create(OwnerId, "Dev", OrganizationName.Create("TechCorp"))
+            .EducationLevel.Should().BeNull();
+
+    [Fact]
+    public void JobPosting_records_the_education_level_it_is_given()
+    {
+        var job = JobPosting.Create(OwnerId, "Dev", OrganizationName.Create("TechCorp"));
+
+        job.SetEducationLevel(EducationLevel.Master);
+
+        job.EducationLevel.Should().Be(EducationLevel.Master);
+    }
+
+    // Withdrawing a requirement and demanding the lowest rung are different claims. Only one of them
+    // is "no opinion", and HighSchool = 0 is not it — so clearing has to reach null, not default.
+    [Fact]
+    public void JobPosting_education_level_can_be_cleared_back_to_unstated()
+    {
+        var job = JobPosting.Create(OwnerId, "Dev", OrganizationName.Create("TechCorp"));
+        job.SetEducationLevel(EducationLevel.Doctorate);
+
+        job.SetEducationLevel(null);
+
+        job.EducationLevel.Should().BeNull();
+    }
+
+    // The numbers are not arbitrary: they are exactly what ScoringEngine.ComputeSkillsScore has always
+    // computed inline from Priority. Changing either one here moves every skills score in the product,
+    // which is why they are asserted as literals rather than derived from the enum.
+    [Theory]
+    [InlineData(RequirementPriority.MustHave, 1.0)]
+    [InlineData(RequirementPriority.NiceToHave, 0.5)]
+    public void JobRequirement_weight_defaults_from_priority(RequirementPriority priority, double expected) =>
+        JobRequirement.Create(Technology.Create("C#"), priority).Weight.Should().Be(expected);
+
+    // Weight is the magnitude and Priority the gate, so a caller who states a magnitude keeps it. Zero
+    // is included because it is the one explicit value a `weight ?? default` would swallow if the
+    // parameter were ever typed as a plain double with a sentinel.
+    [Theory]
+    [InlineData(RequirementPriority.MustHave, 0.0)]
+    [InlineData(RequirementPriority.MustHave, 2.5)]
+    [InlineData(RequirementPriority.NiceToHave, 3.0)]
+    public void JobRequirement_explicit_weight_overrides_the_priority_default(
+        RequirementPriority priority, double weight) =>
+        JobRequirement.Create(Technology.Create("C#"), priority, weight).Weight.Should().Be(weight);
+
+    [Theory]
+    [InlineData(-0.1)]
+    [InlineData(10.1)]
+    public void JobRequirement_rejects_a_weight_outside_the_allowed_range(double weight)
+    {
+        var act = () => JobRequirement.Create(Technology.Create("C#"), RequirementPriority.MustHave, weight);
+
+        act.Should().Throw<ArgumentOutOfRangeException>();
+    }
+
+    // Persisted as tinyint (JobPostingConfiguration). Renumbering a member rewrites the meaning of
+    // every row already on disk, so the numbers are pinned rather than left to declaration order.
+    [Theory]
+    [InlineData(RequirementPriority.MustHave, 0)]
+    [InlineData(RequirementPriority.NiceToHave, 1)]
+    public void RequirementPriority_members_keep_their_persisted_numbers(
+        RequirementPriority priority, int expected) =>
+        ((int)priority).Should().Be(expected);
 }
