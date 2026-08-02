@@ -402,7 +402,7 @@ public class ScoringEngineTests
         {
             Technologies = [Technology.Create("dotnet")],
         });
-        resume.AddLanguage(new Language("English", null, LanguageProficiency.Native));
+        resume.AddLanguage(Language.Create("English", null, LanguageProficiency.Native));
         var jobPosting = WithLanguages(
             BuildJobPosting(("C#", RequirementPriority.MustHave), ("SQL", RequirementPriority.NiceToHave)),
             ("English", LanguageProficiency.Professional),
@@ -595,7 +595,7 @@ public class ScoringEngineTests
     public void Languages_no_requirements_does_not_apply()
     {
         var resume = BuildResume();
-        resume.AddLanguage(new Language("English", null, LanguageProficiency.Native));
+        resume.AddLanguage(Language.Create("English", null, LanguageProficiency.Native));
 
         var result = ScoreBreakdownOf(resume, BuildJobPosting(), ReferenceDate);
 
@@ -607,7 +607,7 @@ public class ScoringEngineTests
     public void Languages_held_above_the_required_level_is_satisfied()
     {
         var resume = BuildResume();
-        resume.AddLanguage(new Language("English", "Fluent", LanguageProficiency.Fluent));
+        resume.AddLanguage(Language.Create("English", "Fluent", LanguageProficiency.Fluent));
         var jobPosting = WithLanguages(BuildJobPosting(), ("English", LanguageProficiency.Professional));
 
         var result = ScoreBreakdownOf(resume, jobPosting, ReferenceDate);
@@ -619,7 +619,7 @@ public class ScoringEngineTests
     public void Languages_held_exactly_at_the_required_level_is_satisfied()
     {
         var resume = BuildResume();
-        resume.AddLanguage(new Language("English", null, LanguageProficiency.Professional));
+        resume.AddLanguage(Language.Create("English", null, LanguageProficiency.Professional));
         var jobPosting = WithLanguages(BuildJobPosting(), ("English", LanguageProficiency.Professional));
 
         var result = ScoreBreakdownOf(resume, jobPosting, ReferenceDate);
@@ -631,7 +631,7 @@ public class ScoringEngineTests
     public void Languages_held_below_the_required_level_is_not_satisfied()
     {
         var resume = BuildResume();
-        resume.AddLanguage(new Language("English", "Some school English", LanguageProficiency.Basic));
+        resume.AddLanguage(Language.Create("English", "Some school English", LanguageProficiency.Basic));
         var jobPosting = WithLanguages(BuildJobPosting(), ("English", LanguageProficiency.Professional));
 
         var result = ScoreBreakdownOf(resume, jobPosting, ReferenceDate);
@@ -647,7 +647,7 @@ public class ScoringEngineTests
     public void Languages_held_without_a_recorded_level_is_not_satisfied()
     {
         var resume = BuildResume();
-        resume.AddLanguage(new Language("English", "Native speaker", Level: null));
+        resume.AddLanguage(Language.Create("English", "Native speaker", level: null));
         var jobPosting = WithLanguages(BuildJobPosting(), ("English", LanguageProficiency.Professional));
 
         var result = ScoreBreakdownOf(resume, jobPosting, ReferenceDate);
@@ -659,7 +659,7 @@ public class ScoringEngineTests
     public void Languages_match_is_case_insensitive()
     {
         var resume = BuildResume();
-        resume.AddLanguage(new Language("english", null, LanguageProficiency.Native));
+        resume.AddLanguage(Language.Create("english", null, LanguageProficiency.Native));
         var jobPosting = WithLanguages(BuildJobPosting(), ("ENGLISH", LanguageProficiency.Professional));
 
         var result = ScoreBreakdownOf(resume, jobPosting, ReferenceDate);
@@ -671,8 +671,8 @@ public class ScoringEngineTests
     public void Languages_score_is_the_satisfied_share_of_the_stated_requirements()
     {
         var resume = BuildResume();
-        resume.AddLanguage(new Language("English", null, LanguageProficiency.Native));
-        resume.AddLanguage(new Language("German", null, LanguageProficiency.Basic));
+        resume.AddLanguage(Language.Create("English", null, LanguageProficiency.Native));
+        resume.AddLanguage(Language.Create("German", null, LanguageProficiency.Basic));
         var jobPosting = WithLanguages(
             BuildJobPosting(),
             ("English", LanguageProficiency.Professional),
@@ -706,7 +706,7 @@ public class ScoringEngineTests
         // Perfect in every section a posting can ask about, LANGUAGES INCLUDED. Without this the resume
         // is only perfect against postings that state no language requirement, and the ceiling tests
         // would be asserting the very gap they exist to rule out.
-        resume.AddLanguage(new Language("English", "Native speaker", LanguageProficiency.Native));
+        resume.AddLanguage(Language.Create("English", "Native speaker", LanguageProficiency.Native));
         return resume;
     }
 }

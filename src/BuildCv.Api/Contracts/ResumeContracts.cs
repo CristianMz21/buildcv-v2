@@ -90,31 +90,42 @@ public sealed record AddReferenceRequest(
 // type on the wire. The duplication buys the freedom to rename a draft field without breaking clients;
 // what it costs is that a swapped mapping below is a real bug, which is why the round-trip tests assert
 // a DISTINCT value per field instead of a plausible-looking one.
+//
+// EVERY ELEMENT IS NULLABLE, and that is not decoration. `{"skills":[null]}` is valid JSON, and
+// System.Text.Json does not enforce nullable reference annotations — it binds a one-element list holding
+// null whatever the declared type says. Calling `item.ToDraft()` on that was an unhandled
+// NullReferenceException, i.e. a 500, on all eleven collections plus contact.profiles. The nulls are
+// mapped through as nulls and ResumeDraftValidator.ForEachCapped reports each one as a field error at
+// its own index, which is what the string arrays already did.
+//
+// THE MAPPING IS LAZY, via ProjectedList. `.Select(...).ToList()` here doubled the object graph before
+// the validator had even read Count to find the section over its cap; see ProjectedList for the
+// arithmetic.
 public sealed record ImportResumeRequest(
     ImportContactRequest? Contact = null,
-    IReadOnlyList<ImportExperienceRequest>? Experiences = null,
-    IReadOnlyList<ImportEducationRequest>? Educations = null,
-    IReadOnlyList<ImportSkillRequest>? Skills = null,
-    IReadOnlyList<ImportProjectRequest>? Projects = null,
-    IReadOnlyList<ImportCertificateRequest>? Certificates = null,
-    IReadOnlyList<ImportLanguageRequest>? Languages = null,
-    IReadOnlyList<ImportAwardRequest>? Awards = null,
-    IReadOnlyList<ImportPublicationRequest>? Publications = null,
-    IReadOnlyList<ImportInterestRequest>? Interests = null,
-    IReadOnlyList<ImportReferenceRequest>? References = null)
+    IReadOnlyList<ImportExperienceRequest?>? Experiences = null,
+    IReadOnlyList<ImportEducationRequest?>? Educations = null,
+    IReadOnlyList<ImportSkillRequest?>? Skills = null,
+    IReadOnlyList<ImportProjectRequest?>? Projects = null,
+    IReadOnlyList<ImportCertificateRequest?>? Certificates = null,
+    IReadOnlyList<ImportLanguageRequest?>? Languages = null,
+    IReadOnlyList<ImportAwardRequest?>? Awards = null,
+    IReadOnlyList<ImportPublicationRequest?>? Publications = null,
+    IReadOnlyList<ImportInterestRequest?>? Interests = null,
+    IReadOnlyList<ImportReferenceRequest?>? References = null)
 {
     public ResumeDraft ToDraft() => new(
         Contact?.ToDraft(),
-        Experiences?.Select(item => item.ToDraft()).ToList(),
-        Educations?.Select(item => item.ToDraft()).ToList(),
-        Skills?.Select(item => item.ToDraft()).ToList(),
-        Projects?.Select(item => item.ToDraft()).ToList(),
-        Certificates?.Select(item => item.ToDraft()).ToList(),
-        Languages?.Select(item => item.ToDraft()).ToList(),
-        Awards?.Select(item => item.ToDraft()).ToList(),
-        Publications?.Select(item => item.ToDraft()).ToList(),
-        Interests?.Select(item => item.ToDraft()).ToList(),
-        References?.Select(item => item.ToDraft()).ToList());
+        ProjectedList.OrNull(Experiences, item => item?.ToDraft()),
+        ProjectedList.OrNull(Educations, item => item?.ToDraft()),
+        ProjectedList.OrNull(Skills, item => item?.ToDraft()),
+        ProjectedList.OrNull(Projects, item => item?.ToDraft()),
+        ProjectedList.OrNull(Certificates, item => item?.ToDraft()),
+        ProjectedList.OrNull(Languages, item => item?.ToDraft()),
+        ProjectedList.OrNull(Awards, item => item?.ToDraft()),
+        ProjectedList.OrNull(Publications, item => item?.ToDraft()),
+        ProjectedList.OrNull(Interests, item => item?.ToDraft()),
+        ProjectedList.OrNull(References, item => item?.ToDraft()));
 }
 
 // Website and Profiles are reachable for the first time here. Both are mapped and encrypted by
@@ -127,11 +138,11 @@ public sealed record ImportContactRequest(
     string? Location = null,
     string? Website = null,
     string? Summary = null,
-    IReadOnlyList<ImportProfileRequest>? Profiles = null)
+    IReadOnlyList<ImportProfileRequest?>? Profiles = null)
 {
     public ContactDraft ToDraft() => new(
         FullName, Email, PhoneNumber, Location, Website, Summary,
-        Profiles?.Select(item => item.ToDraft()).ToList());
+        ProjectedList.OrNull(Profiles, item => item?.ToDraft()));
 }
 
 public sealed record ImportProfileRequest(

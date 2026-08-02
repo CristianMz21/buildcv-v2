@@ -15,8 +15,14 @@ public static class ResultExtensions
     /// envelope: a client that already understands ASP.NET validation errors needs no new convention,
     /// and every other error this API answers is ProblemDetails-shaped too.
     /// <para>
-    /// Grouped by path because one input can fail twice — a certificate whose start date is both blank
-    /// and needed by its end date, say — and the dictionary value is an array for exactly that reason.
+    /// Grouped by path rather than built with <c>ToDictionary</c> directly, and NOT because a duplicate
+    /// path occurs today — every helper in <c>ResumeDraftValidator</c> records at most one error per
+    /// field and returns, so the groups are all single-element. It is grouped because
+    /// <c>ToDictionary</c> THROWS on a duplicate key: the day a rule reports twice at one path, the
+    /// difference between these two lines is a correct 400 and a 500. The ProblemDetails value is an
+    /// array either way, so nothing about the response shape depends on which is used.
+    /// </para>
+    /// <para>
     /// Ordinal comparison keeps <c>experiences[1]</c> and <c>Experiences[1]</c> distinct, which they
     /// are: the key is the JSON path the client sent, not a C# member name.
     /// </para>

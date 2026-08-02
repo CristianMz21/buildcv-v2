@@ -30,8 +30,22 @@ public sealed class UpdateContactInformationHandler(IResumeRepository resumeRepo
             if (resume.OwnerId != command.RequesterId)
                 return Result<Resume>.Failure("Forbidden.");
 
+            // WEBSITE AND PROFILES ARE CARRIED OVER, NOT REBUILT. ContactInformationFactory hardcodes a
+            // null Website and leaves Profiles empty, because the only caller that predates the import
+            // endpoint could not set either one. That was harmless while both fields were unreachable;
+            // now that POST /resumes/import fills them, rebuilding the contact from this command's five
+            // fields would answer 200 and silently erase the candidate's site and every social handle
+            // because they corrected their city.
+            //
+            // This command deliberately does not ACCEPT them either — widening its shape is a separate
+            // change with its own wire contract. Until then, "not sent" must mean "unchanged" rather
+            // than "deleted".
             var contact = ContactInformationFactory.Create(
-                command.FullName, command.Email, command.PhoneNumber, command.Location, command.Summary);
+                command.FullName, command.Email, command.PhoneNumber, command.Location, command.Summary) with
+            {
+                Website = resume.ContactInformation.Website,
+                Profiles = resume.ContactInformation.Profiles,
+            };
 
             resume.UpdateContactInformation(contact);
             await resumeRepository.UpdateAsync(resume, cancellationToken);

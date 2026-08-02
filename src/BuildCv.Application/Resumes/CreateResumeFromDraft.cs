@@ -28,11 +28,18 @@ public sealed class CreateResumeFromDraftHandler(IResumeRepository resumeReposit
     public async Task<ResumeImportResult> Handle(
         CreateResumeFromDraftCommand command, CancellationToken cancellationToken = default)
     {
-        // No try/catch here, unlike every sibling handler in this folder, and the difference is that
-        // ResumeDraftValidator has already made every Domain call this use case makes and turned each
-        // DomainException and ArgumentException into a FieldError. Catching again would only be able to
-        // catch a BUG, and dressing a bug up as a 400 the client can "fix" is worse than the 500 the
-        // exception handler would answer.
+        // No try/catch here, unlike every sibling handler in this folder, because ResumeDraftValidator
+        // has already made every DOMAIN call this use case makes and turned each DomainException and
+        // ArgumentException into a FieldError. A catch around Validate could only catch a bug, and
+        // dressing a bug up as a 400 the client can "fix" is worse than the 500 it deserves.
+        //
+        // AddAsync is a different matter and is deliberately left uncaught. It runs after the validator
+        // and can fail on things no amount of validation can inspect — a lost connection, a deadlock, a
+        // constraint the Domain does not model. Those are 500s, correctly. The one case that was NOT
+        // legitimate is now closed at its source: a language name longer than its nvarchar(100) column
+        // used to arrive here as SQL Server error 2628, untranslated, so Language.Create owns that
+        // length rule and the validator catches it like any other. If another bounded plaintext column
+        // is ever added, its rule belongs on the Domain type too, not in a catch here.
         var result = ResumeDraftValidator.Validate(command.RequesterId, command.Draft);
         if (!result.IsSuccess)
             return result;

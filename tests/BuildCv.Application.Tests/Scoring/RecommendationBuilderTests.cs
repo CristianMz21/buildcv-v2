@@ -133,7 +133,7 @@ public class RecommendationBuilderTests
     public void NoLanguagesRecommendation_WhenEveryStatedRequirementIsSatisfied()
     {
         var resume = BuildResume();
-        resume.AddLanguage(new Language("English", null, LanguageProficiency.Native));
+        resume.AddLanguage(Language.Create("English", null, LanguageProficiency.Native));
         var jobPosting = WithLanguages(BuildJobPosting(), ("English", LanguageProficiency.Professional));
 
         AdviceFor(resume, jobPosting).Should().NotContain(r => r.Section == SectionType.Languages);
@@ -384,7 +384,7 @@ public class RecommendationBuilderTests
                 {
                     // Six applicable sections -> divisor 1.0 -> Education weighs its default 0.10.
                     var resume = BuildResume("C#");
-                    resume.AddLanguage(new Language("English", null, LanguageProficiency.Native));
+                    resume.AddLanguage(Language.Create("English", null, LanguageProficiency.Native));
                     var jobPosting = WithLanguages(
                         BuildJobPosting(("C#", RequirementPriority.MustHave)),
                         ("English", LanguageProficiency.Professional));
@@ -455,8 +455,8 @@ public class RecommendationBuilderTests
         {
             Technologies = [Technology.Create("terraform")],
         });
-        resume.AddLanguage(new Language("English", "Some school English", LanguageProficiency.Basic));
-        resume.AddLanguage(new Language("German", "Bilingue", Level: null));
+        resume.AddLanguage(Language.Create("English", "Some school English", LanguageProficiency.Basic));
+        resume.AddLanguage(Language.Create("German", "Bilingue", level: null));
         return resume;
     }
 
@@ -486,7 +486,7 @@ public class RecommendationBuilderTests
             {
                 Technologies = [Technology.Create("terraform")],
             });
-        resume.AddLanguage(new Language("English", "Native speaker", LanguageProficiency.Native));
+        resume.AddLanguage(Language.Create("English", "Native speaker", LanguageProficiency.Native));
         return resume;
     }
 }

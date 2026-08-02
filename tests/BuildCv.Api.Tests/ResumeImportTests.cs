@@ -1,6 +1,8 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
+using BuildCv.Api.Endpoints;
 using FluentAssertions;
 using Microsoft.AspNetCore.Mvc.Testing;
 
@@ -194,6 +196,153 @@ public sealed class ResumeImportTests
 
         using var json = JsonDocument.Parse(await list.Content.ReadAsStringAsync());
         json.RootElement.GetProperty("items").GetArrayLength().Should().Be(0);
+    }
+
+    // Over real HTTP, because this is where it was a 500: `[null]` binds to a one-element list holding
+    // null — System.Text.Json ignores nullable reference annotations — and the mapping in
+    // ImportResumeRequest.ToDraft then dereferenced it. The plain string arrays never had the hole, which
+    // is what made the object arrays look deliberate.
+    [Theory]
+    [InlineData("experiences")]
+    [InlineData("educations")]
+    [InlineData("skills")]
+    [InlineData("projects")]
+    [InlineData("certificates")]
+    [InlineData("languages")]
+    [InlineData("awards")]
+    [InlineData("publications")]
+    [InlineData("interests")]
+    [InlineData("references")]
+    public async Task Import_WithANullArrayElement_IsAFieldErrorNotAServerError(string section)
+    {
+        using var factory = new ApiTestFactory();
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        var (_, token) = await client.RegisterAndLoginAsync(TestHelpers.CandidateEmail);
+
+        var body = JsonSerializer.Deserialize<JsonElement>($$"""
+            {"contact":{"fullName":"Jane Candidate","email":"jane@example.com"},"{{section}}":[null]}
+            """);
+
+        var response = await PostImportAsync(client, token, body);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        response.Content.Headers.ContentType!.MediaType.Should().Be("application/problem+json");
+
+        using var problem = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        problem.RootElement.GetProperty("errors").EnumerateObject().Select(field => field.Name)
+            .Should().BeEquivalentTo([$"{section}[0]"]);
+    }
+
+    [Fact]
+    public async Task Import_WithANullProfileElement_IsAFieldErrorNotAServerError()
+    {
+        using var factory = new ApiTestFactory();
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        var (_, token) = await client.RegisterAndLoginAsync(TestHelpers.CandidateEmail);
+
+        var body = JsonSerializer.Deserialize<JsonElement>("""
+            {"contact":{"fullName":"Jane Candidate","email":"jane@example.com","profiles":[null]}}
+            """);
+
+        var response = await PostImportAsync(client, token, body);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+
+        using var problem = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        problem.RootElement.GetProperty("errors").EnumerateObject().Select(field => field.Name)
+            .Should().BeEquivalentTo(["contact.profiles[0]"]);
+    }
+
+    // The endpoint carries the only request-size limit in this API. Without it, Kestrel's 30 MB default
+    // applied and a body of empty objects was fully deserialized — and then copied again by ToDraft —
+    // before ResumeDraftLimits could decline it.
+    [Fact]
+    public async Task Import_WithABodyOverTheEndpointLimit_IsRefusedBeforeValidation()
+    {
+        using var factory = new ApiTestFactory();
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        var (_, token) = await client.RegisterAndLoginAsync(TestHelpers.CandidateEmail);
+
+        // Valid JSON and a valid draft in every respect except its size, so the refusal can only be the
+        // size limit: a padded summary one byte past the ceiling.
+        var padding = new string('a', (int)ResumeEndpoints.ImportRequestSizeLimitBytes);
+        var oversized =
+            "{\"contact\":{\"fullName\":\"Jane Candidate\",\"email\":\"jane@example.com\",\"summary\":\""
+            + padding + "\"}}";
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/resumes/import")
+        {
+            Content = new StringContent(oversized, Encoding.UTF8, System.Net.Mime.MediaTypeNames.Application.Json),
+        }.WithBearer(token);
+
+        var response = await client.SendAsync(request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.RequestEntityTooLarge);
+    }
+
+    [Fact]
+    public async Task Import_WithABodyUnderTheEndpointLimit_IsAccepted()
+    {
+        using var factory = new ApiTestFactory();
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        var (_, token) = await client.RegisterAndLoginAsync(TestHelpers.CandidateEmail);
+
+        // Half the ceiling. The pair matters: a limit accidentally set far too low would pass the test
+        // above and reject every real CV in production.
+        var padding = new string('a', (int)(ResumeEndpoints.ImportRequestSizeLimitBytes / 2));
+        var body =
+            "{\"contact\":{\"fullName\":\"Jane Candidate\",\"email\":\"jane@example.com\",\"summary\":\""
+            + padding + "\"}}";
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/resumes/import")
+        {
+            Content = new StringContent(body, Encoding.UTF8, System.Net.Mime.MediaTypeNames.Application.Json),
+        }.WithBearer(token);
+
+        var response = await client.SendAsync(request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+    }
+
+    // Website and Profiles were unreachable before this endpoint, which is exactly why nothing noticed
+    // that PUT /resumes/{id}/contact rebuilds the contact through ContactInformationFactory — a factory
+    // that hardcodes a null Website and an empty Profiles list. The moment import can fill them, that
+    // route answers 200 and silently erases a candidate's site and every social handle because they
+    // corrected their city.
+    [Fact]
+    public async Task UpdateContact_AfterAnImport_KeepsTheWebsiteAndProfiles()
+    {
+        using var factory = new ApiTestFactory();
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        var (_, token) = await client.RegisterAndLoginAsync(TestHelpers.CandidateEmail);
+
+        var created = await PostImportAsync(client, token, FullDraft());
+        created.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        using var body = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
+        var resumeId = body.RootElement.GetProperty("id").GetProperty("value").GetGuid();
+
+        using var update = new HttpRequestMessage(HttpMethod.Put, $"/resumes/{resumeId}/contact")
+        {
+            Content = JsonContent.Create(new
+            {
+                fullName = "Jane Candidate",
+                email = "jane@example.com",
+                phoneNumber = "+541155550123",
+                location = "Córdoba",
+                summary = "Backend engineer.",
+            }),
+        }.WithBearer(token);
+
+        (await client.SendAsync(update)).StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var contact = (await GetResumeAsync(client, token, resumeId)).GetProperty("contactInformation");
+
+        contact.GetProperty("location").GetString().Should().Be("Córdoba", "the update did apply");
+        contact.GetProperty("website").GetProperty("value").GetString()
+            .Should().Be("https://jane.example.com", "an unsent field means unchanged, not deleted");
+        contact.GetProperty("profiles").EnumerateArray().Single()
+            .GetProperty("network").GetString().Should().Be("GitHub");
     }
 
     [Fact]

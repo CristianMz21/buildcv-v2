@@ -21,7 +21,19 @@ using BuildCv.Domain.Resumes;
 /// <para>
 /// It COLLECTS rather than fails fast. The domain throws on the first bad field, so a draft with five
 /// problems would otherwise cost five round trips; every helper below records its error and returns
-/// null so the walk continues.
+/// null so the walk continues. Precisely: every FIELD failure in the draft is reported, and the
+/// aggregate-level rules — the case-insensitive duplicate guards on <see cref="Resume.AddSkill"/>,
+/// <see cref="Resume.AddCertificate"/>, <see cref="Resume.AddLanguage"/> and
+/// <see cref="Resume.AddInterest"/> — are reported too for every item whose NAME parsed, even when
+/// another field of that same item failed. That is why <c>AddSkills</c> rebuilds a skill whose years
+/// were rejected and <c>AddCertificates</c> substitutes an issuer. What cannot be reported is a
+/// duplicate of an item whose own name failed, because there is then no name to compare.
+/// </para>
+/// <para>
+/// The six collections with no aggregate-level rule (experiences, educations, projects, awards,
+/// publications, references) do return early when a required field of an item fails, which costs
+/// nothing today. If a duplicate guard is ever added to one of them, that early return has to go the
+/// same way skills' did, or the guard is silently suppressed for any item that also has a field error.
 /// </para>
 /// <para>
 /// It is ALL-OR-NOTHING. The aggregate is assembled in memory and the single return at the end hands
@@ -33,6 +45,7 @@ public static class ResumeDraftValidator
 {
     private const string DateFormat = "yyyy-MM-dd";
     private const string RequiredMessage = "Value is required.";
+    private const string ControlCharacterMessage = "Value must not contain control characters.";
     private const string InvalidDateMessage = "Invalid date. Expected yyyy-MM-dd.";
     private const string InvalidNumberMessage = "Invalid number.";
 
@@ -53,6 +66,11 @@ public static class ResumeDraftValidator
     // never the Resume — whenever the error list is non-empty.
     private static readonly ContactInformation UnusableContact =
         new(PersonName.Create("unused"), Email.Create("unused@invalid.example"));
+
+    // Stands in for a certificate issuer that failed to build, so the item can still enter the aggregate
+    // and have its NAME checked against the duplicate guard. Reached only after an error was recorded,
+    // so the same single return that keeps UnusableContact in also keeps this one in.
+    private static readonly OrganizationName UnusableOrganization = OrganizationName.Create("unused");
 
     public static ResumeImportResult Validate(AccountId ownerId, ResumeDraft draft)
     {
@@ -83,7 +101,7 @@ public static class ResumeDraftValidator
     }
 
     private static IReadOnlyList<Profile> BuildProfiles(
-        IReadOnlyList<ProfileDraft>? drafts, List<FieldError> errors)
+        IReadOnlyList<ProfileDraft?>? drafts, List<FieldError> errors)
     {
         var profiles = new List<Profile>();
         ForEachCapped(drafts, "contact.profiles", ResumeDraftLimits.Profiles, errors, (item, path) =>
@@ -91,8 +109,15 @@ public static class ResumeDraftValidator
             var network = Required($"{path}.network", item.Network, errors);
             var url = BuildOptional($"{path}.url", item.Url, Url.Create, errors);
 
-            if (network is not null)
-                profiles.Add(new Profile(network, Optional(item.Username), url));
+            if (network is null)
+                return;
+
+            // Through Build even though Profile is a validation-free record today. CreateResumeFromDraft
+            // has no try/catch on the premise that this pass makes every Domain call inside the harness;
+            // a construction outside it is the one thing that would falsify that premise later.
+            var profile = Build(path, errors, () => new Profile(network, Optional(item.Username), url));
+            if (profile is not null)
+                profiles.Add(profile);
         });
         return profiles;
     }
@@ -105,20 +130,22 @@ public static class ResumeDraftValidator
         var phoneNumber = BuildOptional("contact.phoneNumber", draft.PhoneNumber, PhoneNumber.Create, errors);
         var website = BuildOptional("contact.website", draft.Website, Url.Create, errors);
 
+        // Through Build for the same reason as Profile above: every Domain construction this pass makes
+        // stays inside the catch harness, so the handler's lack of a try/catch keeps being justified.
         return fullName is null || email is null
             ? null
-            : new ContactInformation(
+            : Build("contact", errors, () => new ContactInformation(
                 fullName, email, phoneNumber, Optional(draft.Location), website, Optional(draft.Summary))
             {
                 Profiles = profiles
-            };
+            });
     }
 
     // AddExperience, not AddWorkExperience: the latter additionally throws unless the type is
     // ExperienceType.Professional, so using it would reject every volunteer entry a draft carries.
     // The draft states its own type, and AddExperienceHandler makes the same choice.
     private static void AddExperiences(
-        Resume resume, IReadOnlyList<ExperienceDraft>? drafts, List<FieldError> errors) =>
+        Resume resume, IReadOnlyList<ExperienceDraft?>? drafts, List<FieldError> errors) =>
         ForEachCapped(drafts, "experiences", ResumeDraftLimits.Experiences, errors, (item, path) =>
         {
             var type = ParseRequiredEnum<ExperienceType>(
@@ -139,7 +166,7 @@ public static class ResumeDraftValidator
         });
 
     private static void AddEducations(
-        Resume resume, IReadOnlyList<EducationDraft>? drafts, List<FieldError> errors) =>
+        Resume resume, IReadOnlyList<EducationDraft?>? drafts, List<FieldError> errors) =>
         ForEachCapped(drafts, "educations", ResumeDraftLimits.Educations, errors, (item, path) =>
         {
             var institution = BuildRequired($"{path}.institution", item.Institution, OrganizationName.Create, errors);
@@ -156,7 +183,7 @@ public static class ResumeDraftValidator
                 institution, Optional(item.Degree), Optional(item.FieldOfStudy), period, Optional(item.Grade), level)));
         });
 
-    private static void AddSkills(Resume resume, IReadOnlyList<SkillDraft>? drafts, List<FieldError> errors) =>
+    private static void AddSkills(Resume resume, IReadOnlyList<SkillDraft?>? drafts, List<FieldError> errors) =>
         ForEachCapped(drafts, "skills", ResumeDraftLimits.Skills, errors, (item, path) =>
         {
             var name = BuildRequired($"{path}.name", item.Name, Technology.Create, errors);
@@ -168,9 +195,15 @@ public static class ResumeDraftValidator
 
             // Reported at yearsOfExperience because that is the only value Skill.Create can reject once
             // its name argument is non-null: its single rule is the 0..60 range on that parameter.
-            var skill = Build($"{path}.yearsOfExperience", errors, () => Skill.Create(name, level, years));
-            if (skill is null)
-                return;
+            //
+            // When it DOES reject, the skill is rebuilt without the offending value rather than skipped.
+            // Skipping it meant the item never reached AddSkill, so its duplicate went unreported and a
+            // candidate who wrote React twice AND mistyped the years was told about the years, fixed
+            // them, resubmitted, and only then learned about the duplicate — the second round trip this
+            // endpoint exists to remove. The rebuild cannot throw (the name is non-null and the years are
+            // dropped) and the aggregate is discarded on any error, so it only serves the duplicate scan.
+            var skill = Build($"{path}.yearsOfExperience", errors, () => Skill.Create(name, level, years))
+                ?? Skill.Create(name, level, null);
 
             // The duplicate guard lives in Resume.AddSkill and is case-insensitive. Because the walk is
             // in draft order, the first "React" is already in the aggregate and it is the LATER
@@ -179,7 +212,7 @@ public static class ResumeDraftValidator
             Add($"{path}.name", errors, () => resume.AddSkill(skill));
         });
 
-    private static void AddProjects(Resume resume, IReadOnlyList<ProjectDraft>? drafts, List<FieldError> errors) =>
+    private static void AddProjects(Resume resume, IReadOnlyList<ProjectDraft?>? drafts, List<FieldError> errors) =>
         ForEachCapped(drafts, "projects", ResumeDraftLimits.Projects, errors, (item, path) =>
         {
             var name = Required($"{path}.name", item.Name, errors);
@@ -201,7 +234,7 @@ public static class ResumeDraftValidator
         });
 
     private static void AddCertificates(
-        Resume resume, IReadOnlyList<CertificateDraft>? drafts, List<FieldError> errors) =>
+        Resume resume, IReadOnlyList<CertificateDraft?>? drafts, List<FieldError> errors) =>
         ForEachCapped(drafts, "certificates", ResumeDraftLimits.Certificates, errors, (item, path) =>
         {
             var name = Required($"{path}.name", item.Name, errors);
@@ -210,14 +243,18 @@ public static class ResumeDraftValidator
             var validity = BuildOptionalPeriod(
                 $"{path}.validityStart", item.ValidityStart, $"{path}.validityEnd", item.ValidityEnd, errors);
 
-            if (name is null || issuer is null)
+            if (name is null)
                 return;
 
-            Add($"{path}.name", errors, () => resume.AddCertificate(
-                new Certificate(name, issuer, Optional(item.CredentialId), credentialUrl, validity)));
+            // Same reason as skills: AddCertificate's duplicate guard compares the NAME, so an item whose
+            // issuer failed still has to enter the aggregate or its duplicate goes unreported until the
+            // next request. UnusableOrganization stands in for the issuer that could not be built; an
+            // error was recorded when it failed, so this Certificate can never be persisted.
+            Add($"{path}.name", errors, () => resume.AddCertificate(new Certificate(
+                name, issuer ?? UnusableOrganization, Optional(item.CredentialId), credentialUrl, validity)));
         });
 
-    private static void AddLanguages(Resume resume, IReadOnlyList<LanguageDraft>? drafts, List<FieldError> errors) =>
+    private static void AddLanguages(Resume resume, IReadOnlyList<LanguageDraft?>? drafts, List<FieldError> errors) =>
         ForEachCapped(drafts, "languages", ResumeDraftLimits.Languages, errors, (item, path) =>
         {
             var name = Required($"{path}.name", item.Name, errors);
@@ -230,10 +267,10 @@ public static class ResumeDraftValidator
             // Fluency is carried through verbatim and nothing here derives Level from it — see the
             // comment on Domain.Resumes.Language.Level. An extractor that read "Bilingüe" fills in the
             // free text; the LEVEL is the candidate's own answer on the review screen.
-            Add($"{path}.name", errors, () => resume.AddLanguage(new Language(name, Optional(item.Fluency), level)));
+            Add($"{path}.name", errors, () => resume.AddLanguage(Language.Create(name, Optional(item.Fluency), level)));
         });
 
-    private static void AddAwards(Resume resume, IReadOnlyList<AwardDraft>? drafts, List<FieldError> errors) =>
+    private static void AddAwards(Resume resume, IReadOnlyList<AwardDraft?>? drafts, List<FieldError> errors) =>
         ForEachCapped(drafts, "awards", ResumeDraftLimits.Awards, errors, (item, path) =>
         {
             var title = Required($"{path}.title", item.Title, errors);
@@ -247,7 +284,7 @@ public static class ResumeDraftValidator
         });
 
     private static void AddPublications(
-        Resume resume, IReadOnlyList<PublicationDraft>? drafts, List<FieldError> errors) =>
+        Resume resume, IReadOnlyList<PublicationDraft?>? drafts, List<FieldError> errors) =>
         ForEachCapped(drafts, "publications", ResumeDraftLimits.Publications, errors, (item, path) =>
         {
             var title = Required($"{path}.title", item.Title, errors);
@@ -262,7 +299,7 @@ public static class ResumeDraftValidator
                 new Publication(title, publisher, url, releaseDate, Optional(item.Summary))));
         });
 
-    private static void AddInterests(Resume resume, IReadOnlyList<InterestDraft>? drafts, List<FieldError> errors) =>
+    private static void AddInterests(Resume resume, IReadOnlyList<InterestDraft?>? drafts, List<FieldError> errors) =>
         ForEachCapped(drafts, "interests", ResumeDraftLimits.Interests, errors, (item, path) =>
         {
             var name = Required($"{path}.name", item.Name, errors);
@@ -274,7 +311,7 @@ public static class ResumeDraftValidator
             Add($"{path}.name", errors, () => resume.AddInterest(new Interest(name) { Keywords = keywords }));
         });
 
-    private static void AddReferences(Resume resume, IReadOnlyList<ReferenceDraft>? drafts, List<FieldError> errors) =>
+    private static void AddReferences(Resume resume, IReadOnlyList<ReferenceDraft?>? drafts, List<FieldError> errors) =>
         ForEachCapped(drafts, "references", ResumeDraftLimits.References, errors, (item, path) =>
         {
             var name = Required($"{path}.name", item.Name, errors);
@@ -292,8 +329,14 @@ public static class ResumeDraftValidator
     // Walks one section, or refuses to. Over-cap returns WITHOUT iterating — building a hundred
     // thousand value objects is exactly the work the cap exists to decline — but only this section is
     // skipped, so the errors in the sections beside it are still collected.
+    //
+    // A NULL ELEMENT is a field error at its own index, not a crash. `[null]` and `[{}, null]` are
+    // valid JSON and System.Text.Json does not enforce nullable reference annotations, so a null
+    // arrives here as a real element whatever the declared type says. Handling it once, here, covers
+    // every one of the eleven sections and the two nested text lists.
     private static void ForEachCapped<TDraft>(
-        IReadOnlyList<TDraft>? items, string path, int limit, List<FieldError> errors, Action<TDraft, string> handle)
+        IReadOnlyList<TDraft?>? items, string path, int limit, List<FieldError> errors, Action<TDraft, string> handle)
+        where TDraft : class
     {
         if (items is null || items.Count == 0)
             return;
@@ -305,16 +348,28 @@ public static class ResumeDraftValidator
         }
 
         for (var index = 0; index < items.Count; index++)
-            handle(items[index], $"{path}[{index}]");
+        {
+            var itemPath = $"{path}[{index}]";
+            var item = items[index];
+
+            if (item is null)
+                errors.Add(new FieldError(itemPath, RequiredMessage));
+            else
+                handle(item, itemPath);
+        }
     }
 
+    // Highlights and keywords, which take RequiredText rather than Required: the Domain accepts control
+    // characters in these lists today (they are unvalidated encrypted string lists, and the per-section
+    // routes store them as sent), so refusing a bullet that happens to contain a newline would be this
+    // endpoint inventing a rule rather than enforcing one.
     private static IReadOnlyList<string> BuildTextList(
         IReadOnlyList<string?>? values, string path, List<FieldError> errors)
     {
         var accepted = new List<string>();
         ForEachCapped(values, path, ResumeDraftLimits.TextItems, errors, (value, itemPath) =>
         {
-            var text = Required(itemPath, value, errors);
+            var text = RequiredText(itemPath, value, errors);
             if (text is not null)
                 accepted.Add(text);
         });
@@ -350,7 +405,7 @@ public static class ResumeDraftValidator
         }
         catch (ArgumentException exception)
         {
-            errors.Add(new FieldError(path, exception.Message));
+            errors.Add(new FieldError(path, ForACandidate(exception.Message)));
             return null;
         }
     }
@@ -369,8 +424,26 @@ public static class ResumeDraftValidator
         }
         catch (ArgumentException exception)
         {
-            errors.Add(new FieldError(path, exception.Message));
+            errors.Add(new FieldError(path, ForACandidate(exception.Message)));
         }
+    }
+
+    // ArgumentException appends " (Parameter 'x')" to its message and ArgumentOutOfRangeException adds a
+    // second line, "Actual value was N." Both are C# talking to a developer, and this text is rendered
+    // on a review screen — the same reason Required states its own message for a blank rather than
+    // letting the factory's parameter name through.
+    //
+    // The VERDICT is untouched; only the presentation is trimmed, and only for ArgumentException.
+    // DomainException messages are written for a person and pass through unchanged.
+    private static string ForACandidate(string message)
+    {
+        var firstLine = message.AsSpan();
+        var lineBreak = firstLine.IndexOfAny('\r', '\n');
+        if (lineBreak >= 0)
+            firstLine = firstLine[..lineBreak];
+
+        var parameterSuffix = firstLine.LastIndexOf(" (Parameter '");
+        return parameterSuffix < 0 ? firstLine.ToString() : firstLine[..parameterSuffix].ToString();
     }
 
     // Blank is reported here rather than left to the factory only because the factory's own message for
@@ -395,16 +468,35 @@ public static class ResumeDraftValidator
         where T : class =>
         string.IsNullOrWhiteSpace(value) ? null : Build(path, errors, () => create(value));
 
-    // Required plain text, for the fields a Domain record declares non-nullable while enforcing nothing
-    // else about them — Experience.Position, Project.Name, Certificate.Name, Language.Name, Award.Title,
+    // Required plain text, for the identity fields a Domain record declares non-nullable while enforcing
+    // nothing else about them — Experience.Position, Project.Name, Certificate.Name, Award.Title,
     // Publication.Title, Interest.Name, Reference.Name and Profile.Network. The non-null declaration IS
-    // the rule, and it is the only rule they have.
+    // the rule they have.
+    //
+    // CONTROL CHARACTERS ARE REFUSED, matching what every sibling value object already does:
+    // PersonName.Create, OrganizationName.Create and Technology.Create all reject
+    // `.Any(char.IsControl)`, and IsNullOrWhiteSpace does not — `"Music \r\nadmin: true"` is not
+    // whitespace. These are short single-line values, several of which land in a plaintext column;
+    // BuildTextList uses RequiredText instead because a free-text bullet is a different thing.
     //
     // This is the one place the import is STRICTER than the per-section routes: nullable reference types
     // are not enforced by System.Text.Json, so POST /resumes/{id}/interests with a null name stores a
     // null name today. A draft is a whole CV, and a nameless row in it is not something a candidate can
     // see or fix on a review screen.
     private static string? Required(string path, string? value, List<FieldError> errors)
+    {
+        var text = RequiredText(path, value, errors);
+        if (text is null)
+            return null;
+
+        if (!text.Any(char.IsControl))
+            return text;
+
+        errors.Add(new FieldError(path, ControlCharacterMessage));
+        return null;
+    }
+
+    private static string? RequiredText(string path, string? value, List<FieldError> errors)
     {
         if (!string.IsNullOrWhiteSpace(value))
             return value;

@@ -362,21 +362,24 @@ public class CreateResumeFromDraftHandlerTests
         result.Resume!.Languages.Should().ContainSingle().Which.Level.Should().Be(expected);
     }
 
+    // EVERY ITEM IS INDIVIDUALLY INVALID, and that is the whole point of the seed. Seeded with valid
+    // items instead, deleting the `return` after the cap error let the walk build 201 Technologies, 201
+    // Skills and run 201 O(n) duplicate scans while adding ZERO further errors — so ContainSingle stayed
+    // green and the test could not see the work the cap exists to decline. With invalid items, walking
+    // is 201 extra errors and the assertion has teeth.
     [Fact]
-    public async Task Import_WithAnOverCapCollection_IsOneFieldErrorOnTheCollection()
+    public async Task Import_WithAnOverCapCollection_IsOneFieldErrorAndTheSectionIsNotWalked()
     {
-        var skills = Enumerable.Range(0, ResumeDraftLimits.Skills + 1)
-            .Select(index => new SkillDraft($"skill-{index}"))
-            .ToList();
-
-        var result = await Import(ValidDraft() with { Skills = skills });
+        var result = await Import(ValidDraft() with
+        {
+            Skills = [.. Enumerable.Repeat(new SkillDraft(Name: null), ResumeDraftLimits.Skills + 1)]
+        });
 
         result.IsSuccess.Should().BeFalse();
 
-        // ONE error, not one per item: an over-cap section is refused without being walked, which is the
-        // work the cap exists to decline. The other sections are still validated, so a runaway section
-        // does not hide the problems beside it.
-        var error = result.FieldErrors.Should().ContainSingle().Subject;
+        var error = result.FieldErrors.Should().ContainSingle(
+            "an over-cap section is refused WITHOUT being walked, so not one of its 201 invalid items is "
+            + "inspected").Subject;
         error.Path.Should().Be("skills");
         error.Message.Should().Be($"Too many items. At most {ResumeDraftLimits.Skills} are accepted.");
         _resumes.AddCount.Should().Be(0);
@@ -385,30 +388,160 @@ public class CreateResumeFromDraftHandlerTests
     [Fact]
     public async Task Import_WithAnOverCapCollection_StillReportsTheOtherSections()
     {
-        var skills = Enumerable.Range(0, ResumeDraftLimits.Skills + 1)
-            .Select(index => new SkillDraft($"skill-{index}"))
-            .ToList();
-
         var result = await Import(ValidDraft() with
         {
-            Skills = skills,
+            Skills = [.. Enumerable.Repeat(new SkillDraft(Name: null), ResumeDraftLimits.Skills + 1)],
             Languages = [new LanguageDraft("Español", Level: "Avanzado")]
         });
 
         result.FieldErrors.Select(error => error.Path).Should().BeEquivalentTo(["skills", "languages[0].level"]);
     }
 
+    // THE CAP VALUES THEMSELVES, as literals. Every other cap assertion interpolates the same symbol the
+    // code does, so it holds for any value of that symbol — including `Experiences = 1`, which would
+    // reject a real CV with two jobs and turn no test red.
     [Fact]
-    public async Task Import_AtTheCap_IsAccepted()
+    public void Limits_AreTheNumbersThisEndpointWasSizedFor()
     {
-        var skills = Enumerable.Range(0, ResumeDraftLimits.Skills)
-            .Select(index => new SkillDraft($"skill-{index}"))
-            .ToList();
+        ResumeDraftLimits.Experiences.Should().Be(50);
+        ResumeDraftLimits.Educations.Should().Be(20);
+        ResumeDraftLimits.Skills.Should().Be(200);
+        ResumeDraftLimits.Projects.Should().Be(50);
+        ResumeDraftLimits.Certificates.Should().Be(50);
+        ResumeDraftLimits.Languages.Should().Be(20);
+        ResumeDraftLimits.Awards.Should().Be(50);
+        ResumeDraftLimits.Publications.Should().Be(200);
+        ResumeDraftLimits.Interests.Should().Be(25);
+        ResumeDraftLimits.References.Should().Be(20);
+        ResumeDraftLimits.Profiles.Should().Be(20);
+        ResumeDraftLimits.TextItems.Should().Be(50);
+    }
 
-        var result = await Import(ValidDraft() with { Skills = skills });
+    // THE WIRING, section by section, with the limit as a literal rather than as the constant the code
+    // reads. Every one of the twelve caps was correct and none of them was tested: AddPublications
+    // reaching for Limits.Educations instead of Limits.Publications turned nothing red, because the
+    // message interpolates whichever limit it was handed.
+    //
+    // Both directions matter. Over-cap proves the section is capped at that number and refused whole;
+    // at-cap proves the number is not LOWER than it claims, which is the half that catches a cap
+    // accidentally shrunk.
+    [Theory]
+    [InlineData("experiences", 50)]
+    [InlineData("educations", 20)]
+    [InlineData("skills", 200)]
+    [InlineData("projects", 50)]
+    [InlineData("certificates", 50)]
+    [InlineData("languages", 20)]
+    [InlineData("awards", 50)]
+    [InlineData("publications", 200)]
+    [InlineData("interests", 25)]
+    [InlineData("references", 20)]
+    [InlineData("contact.profiles", 20)]
+    [InlineData("experiences[0].highlights", 50)]
+    [InlineData("projects[0].technologies", 50)]
+    [InlineData("projects[0].highlights", 50)]
+    [InlineData("interests[0].keywords", 50)]
+    public async Task Import_OverOneSectionsOwnCap_IsRefusedAtThatPathWithThatLimit(string path, int limit)
+    {
+        var over = await Import(SectionOf(path, limit + 1, valid: false));
 
-        result.IsSuccess.Should().BeTrue();
-        result.Resume!.Skills.Should().HaveCount(ResumeDraftLimits.Skills);
+        over.FieldErrors.Should().ContainSingle()
+            .Which.Should().Be(new FieldError(path, $"Too many items. At most {limit} are accepted."));
+
+        var atCap = await Import(SectionOf(path, limit, valid: true));
+
+        atCap.FieldErrors.Should().NotContain(error => error.Path == path);
+        atCap.IsSuccess.Should().BeTrue();
+    }
+
+    // One section filled with `count` items. Invalid items are used for the over-cap direction so that
+    // walking the section would be visible as `count` extra errors; valid ones are distinct because four
+    // of these collections reject case-insensitive duplicates.
+    private static ResumeDraft SectionOf(string path, int count, bool valid)
+    {
+        IReadOnlyList<T?> Items<T>(Func<int, T> item) => [.. Enumerable.Range(0, count).Select(item)];
+        IReadOnlyList<string?> Text() =>
+            valid ? [.. Enumerable.Range(0, count).Select(index => $"item-{index}")] : [.. Enumerable.Repeat((string?)null, count)];
+
+        var draft = ValidDraft();
+        return path switch
+        {
+            "experiences" => draft with
+            {
+                Experiences = Items(index => valid
+                    ? new ExperienceDraft("Professional", $"org-{index}", "Engineer", "2020-01-01")
+                    : new ExperienceDraft())
+            },
+            "educations" => draft with
+            {
+                Educations = Items(index => valid
+                    ? new EducationDraft($"school-{index}", Start: "2020-01-01")
+                    : new EducationDraft())
+            },
+            "skills" => draft with
+            {
+                Skills = Items(index => valid ? new SkillDraft($"skill-{index}") : new SkillDraft())
+            },
+            "projects" => draft with
+            {
+                Projects = Items(index => valid
+                    ? new ProjectDraft($"project-{index}", "2020-01-01")
+                    : new ProjectDraft())
+            },
+            "certificates" => draft with
+            {
+                Certificates = Items(index => valid
+                    ? new CertificateDraft($"cert-{index}", "CNCF")
+                    : new CertificateDraft())
+            },
+            "languages" => draft with
+            {
+                Languages = Items(index => valid ? new LanguageDraft($"lang-{index}") : new LanguageDraft())
+            },
+            "awards" => draft with
+            {
+                Awards = Items(index => valid ? new AwardDraft($"award-{index}") : new AwardDraft())
+            },
+            "publications" => draft with
+            {
+                Publications = Items(index => valid ? new PublicationDraft($"paper-{index}") : new PublicationDraft())
+            },
+            "interests" => draft with
+            {
+                Interests = Items(index => valid ? new InterestDraft($"interest-{index}") : new InterestDraft())
+            },
+            "references" => draft with
+            {
+                References = Items(index => valid ? new ReferenceDraft($"referee-{index}") : new ReferenceDraft())
+            },
+            "contact.profiles" => draft with
+            {
+                Contact = ValidContact() with
+                {
+                    Profiles = Items(index => valid ? new ProfileDraft($"network-{index}") : new ProfileDraft())
+                }
+            },
+            "experiences[0].highlights" => draft with
+            {
+                Experiences =
+                [
+                    new ExperienceDraft("Professional", "Globant", "Engineer", "2020-01-01", Highlights: Text())
+                ]
+            },
+            "projects[0].technologies" => draft with
+            {
+                Projects = [new ProjectDraft("buildcv", "2020-01-01", Technologies: Text())]
+            },
+            "projects[0].highlights" => draft with
+            {
+                Projects = [new ProjectDraft("buildcv", "2020-01-01", Highlights: Text())]
+            },
+            "interests[0].keywords" => draft with
+            {
+                Interests = [new InterestDraft("Climbing", Text())]
+            },
+            _ => throw new ArgumentOutOfRangeException(nameof(path), path, "No seed for this section.")
+        };
     }
 
     // A volunteer entry must import. AddWorkExperience throws unless the type is Professional, so a
@@ -561,7 +694,7 @@ public class CreateResumeFromDraftHandlerTests
 
         foreach (var (path, draft, factory) in cases)
         {
-            var expected = CaptureMessage(factory);
+            var expected = WithoutDeveloperNoise(CaptureMessage(factory));
             var result = await Import(draft);
 
             result.IsSuccess.Should().BeFalse($"the factory behind {path} refuses this value");
@@ -571,16 +704,28 @@ public class CreateResumeFromDraftHandlerTests
         }
     }
 
+    // Deliberately a SECOND, naive implementation of what ResumeDraftValidator.ForACandidate does.
+    // Restating it here is what gives the assertion above teeth: the expected value still comes from
+    // calling the real factory, and only the developer-facing tail is removed, so a hand-written rule
+    // still fails the comparison while the trim itself stays pinned from the outside.
+    private static string WithoutDeveloperNoise(string message) =>
+        message.Split('\n')[0].Split(" (Parameter '")[0];
+
     // The other direction of the same agreement, and the one that costs a 500 rather than a wrong
     // message: a validator that let a value through to a constructor that then threw would answer 500 on
-    // a request it had just called valid. Nothing here may escape as an exception — every one of these
-    // has to come back as a field error.
+    // a request it had just called valid. Nothing here may escape as an exception.
+    //
+    // The same value goes into every field of every section at once, so this cannot claim anything about
+    // which message any single field produced — the name now says only what the body checks. What it DOES
+    // prove beyond "no throw" is that the walk is never abandoned by the first section to fail: all
+    // eleven sections report, which is why the distinct-sections assertion is here rather than a bare
+    // NotBeEmpty that one failing field would satisfy.
     [Fact]
-    public async Task Import_WithHostileValuesInEveryField_ReportsThemAndNeverThrows()
+    public async Task Import_WithHostileValuesInEveryField_NeverThrowsAndRejectsEverySection()
     {
         var hostile = new[]
         {
-            "+abc", "+", "++541155550123", "0", "-1", "e", "1e3", "NaN", " ", "  ",
+            "+abc", "+", "++541155550123", "0", "-1", "e", "1e3", "NaN", "\0", " ", "  ", "\r\n",
             "2019 - Present", "Avanzado", "javascript:alert(1)", "//example.com", new string('a', 5000)
         };
 
@@ -604,7 +749,193 @@ public class CreateResumeFromDraftHandlerTests
 
             result.Subject.IsSuccess.Should().BeFalse();
             _resumes.AddCount.Should().Be(0);
+
+            // NOT a count of sections: some of these values are legitimate in some sections ("+abc" is a
+            // perfectly good interest name), and asserting "all eleven report" was simply false. What
+            // must hold for every value is that the walk RAN TO THE END — contact is the first thing
+            // validated and references the last, so both reporting is the property, and it is stronger
+            // than any count because no early return can satisfy it.
+            result.Subject.FieldErrors
+                .Select(error => error.Path.Split('[', '.')[0])
+                .Should().Contain(["contact", "references"],
+                    $"'{value}' must be reported in the last section as well as the first");
         }
+    }
+
+    // `[null]` is valid JSON, and System.Text.Json does not enforce nullable reference annotations, so a
+    // null element arrives as a real element whatever the declared type says. It used to be an unhandled
+    // NullReferenceException — a 500 — on all eleven sections plus contact.profiles, while the plain
+    // string arrays beside them already handled it.
+    [Theory]
+    [InlineData("experiences")]
+    [InlineData("educations")]
+    [InlineData("skills")]
+    [InlineData("projects")]
+    [InlineData("certificates")]
+    [InlineData("languages")]
+    [InlineData("awards")]
+    [InlineData("publications")]
+    [InlineData("interests")]
+    [InlineData("references")]
+    [InlineData("contact.profiles")]
+    public async Task Import_WithANullElement_IsAFieldErrorAtThatIndex(string section)
+    {
+        var draft = ValidDraft();
+        draft = section switch
+        {
+            "experiences" => draft with { Experiences = [null] },
+            "educations" => draft with { Educations = [null] },
+            "skills" => draft with { Skills = [null] },
+            "projects" => draft with { Projects = [null] },
+            "certificates" => draft with { Certificates = [null] },
+            "languages" => draft with { Languages = [null] },
+            "awards" => draft with { Awards = [null] },
+            "publications" => draft with { Publications = [null] },
+            "interests" => draft with { Interests = [null] },
+            "references" => draft with { References = [null] },
+            _ => draft with { Contact = ValidContact() with { Profiles = [null] } }
+        };
+
+        var act = async () => await Import(draft);
+        var result = await act.Should().NotThrowAsync();
+
+        result.Subject.FieldErrors.Should().ContainSingle()
+            .Which.Should().Be(new FieldError($"{section}[0]", "Value is required."));
+        _resumes.AddCount.Should().Be(0);
+    }
+
+    // A null between two real items must not swallow them: the walk continues past it.
+    [Fact]
+    public async Task Import_WithANullElementBetweenValidOnes_ReportsOnlyThatIndex()
+    {
+        var result = await Import(ValidDraft() with
+        {
+            Skills = [new SkillDraft("C#"), null, new SkillDraft("Go", Level: "Wizard")]
+        });
+
+        result.FieldErrors.Should().BeEquivalentTo(
+        [
+            new FieldError("skills[1]", "Value is required."),
+            new FieldError("skills[2].level", "Invalid skill level.")
+        ]);
+    }
+
+    // PersonName, OrganizationName and Technology all reject `.Any(char.IsControl)`; IsNullOrWhiteSpace
+    // does not, so a plain required name accepted "Music \r\nadmin: true" verbatim. It matters most for
+    // the fields that reach a column something else reads back.
+    [Theory]
+    [InlineData("interests")]
+    [InlineData("languages")]
+    [InlineData("references")]
+    public async Task Import_WithAControlCharacterInARequiredName_IsAFieldError(string section)
+    {
+        const string Injected = "Music \r\nadmin: true";
+        var draft = ValidDraft();
+        draft = section switch
+        {
+            "interests" => draft with { Interests = [new InterestDraft(Injected)] },
+            "languages" => draft with { Languages = [new LanguageDraft(Injected)] },
+            _ => draft with { References = [new ReferenceDraft(Injected)] }
+        };
+
+        var result = await Import(draft);
+
+        result.IsSuccess.Should().BeFalse();
+        result.FieldErrors.Should().ContainSingle().Which.Path.Should().Be($"{section}[0].name");
+        _resumes.AddCount.Should().Be(0);
+    }
+
+    // Highlights and keywords deliberately keep accepting control characters: they are unvalidated
+    // encrypted string lists in the Domain and the per-section routes store them as sent, so refusing a
+    // multi-line bullet here would be this endpoint inventing a rule rather than enforcing one.
+    [Fact]
+    public async Task Import_WithAMultiLineHighlight_IsAccepted()
+    {
+        var result = await Import(ValidDraft() with
+        {
+            Experiences =
+            [
+                new ExperienceDraft("Professional", "Globant", "Engineer", "2020-01-01",
+                    Highlights: ["Shipped v1\nHalved build times"])
+            ]
+        });
+
+        result.IsSuccess.Should().BeTrue();
+        result.Resume!.Experiences.Should().ContainSingle()
+            .Which.Highlights.Should().Equal("Shipped v1\nHalved build times");
+    }
+
+    // Language.Name is the only PLAINTEXT BOUNDED column on the aggregate — nvarchar(100), because the
+    // engine joins on it. Before the rule landed on Language.Create this reached SQL Server as error
+    // 2628, "String or binary data would be truncated", which SaveChangesExtensions does not translate:
+    // a 500, with the candidate's own text written into the log by GlobalExceptionHandler.
+    [Fact]
+    public async Task Import_WithALanguageNameLongerThanItsColumn_IsAFieldErrorNotADatabaseTruncation()
+    {
+        var result = await Import(ValidDraft() with
+        {
+            Languages = [new LanguageDraft(new string('a', 101))]
+        });
+
+        result.IsSuccess.Should().BeFalse();
+        result.FieldErrors.Should().ContainSingle()
+            .Which.Should().Be(new FieldError("languages[0].name", "Language name exceeds 100 characters."));
+        _resumes.AddCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Import_WithALanguageNameExactlyAtItsColumnLength_IsAccepted()
+    {
+        var result = await Import(ValidDraft() with
+        {
+            Languages = [new LanguageDraft(new string('a', 100))]
+        });
+
+        result.IsSuccess.Should().BeTrue();
+        result.Resume!.Languages.Should().ContainSingle().Which.Name.Should().HaveLength(100);
+    }
+
+    // COLLECTION MUST NOT TRUNCATE AT THE ITEM. Skipping an item whose years were rejected meant it never
+    // reached AddSkill, so its duplicate went unreported: the candidate fixed the years, resubmitted and
+    // only then learned about the duplicate — the second round trip this endpoint exists to remove.
+    [Fact]
+    public async Task Import_WithABadFieldAndADuplicateOnTheSameSkill_ReportsBoth()
+    {
+        var result = await Import(ValidDraft() with
+        {
+            Skills = [new SkillDraft("React", YearsOfExperience: "99"), new SkillDraft("react")]
+        });
+
+        result.FieldErrors.Select(error => error.Path).Should().BeEquivalentTo(
+            ["skills[0].yearsOfExperience", "skills[1].name"]);
+    }
+
+    [Fact]
+    public async Task Import_WithABadFieldAndADuplicateOnTheSameCertificate_ReportsBoth()
+    {
+        var result = await Import(ValidDraft() with
+        {
+            Certificates = [new CertificateDraft("CKA", Issuer: null), new CertificateDraft("cka", "CNCF")]
+        });
+
+        result.FieldErrors.Select(error => error.Path).Should().BeEquivalentTo(
+            ["certificates[0].issuer", "certificates[1].name"]);
+    }
+
+    // The principle Required already applies to a blank, applied where the factory's own message carries
+    // a C# parameter name: ArgumentOutOfRangeException appends "(Parameter 'yearsOfExperience')" and a
+    // second line reading "Actual value was 99." Neither belongs on a review screen.
+    [Fact]
+    public async Task Import_WithImpossibleYearsOfExperience_ReportsNoCSharpParameterName()
+    {
+        var result = await Import(ValidDraft() with
+        {
+            Skills = [new SkillDraft("C#", YearsOfExperience: "99")]
+        });
+
+        result.FieldErrors.Should().ContainSingle()
+            .Which.Should().Be(new FieldError(
+                "skills[0].yearsOfExperience", "YearsOfExperience must be between 0 and 60."));
     }
 
     private static string CaptureMessage(Func<object> factory)

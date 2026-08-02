@@ -145,7 +145,7 @@ public class ActingOnARecommendationTests
     public void ActingOnAMissingLanguage_RaisesTheScoreByExactlyItsImpact()
     {
         var resume = BuildResume("C#");
-        resume.AddLanguage(new Language("German", "A little", LanguageProficiency.Basic));
+        resume.AddLanguage(Language.Create("German", "A little", LanguageProficiency.Basic));
         var jobPosting = WithLanguages(
             BuildJobPosting(),
             ("English", LanguageProficiency.Professional),
@@ -153,7 +153,7 @@ public class ActingOnARecommendationTests
 
         ActingOnTheAdviceOf(
             RecommendationKind.LanguageMissing, resume, jobPosting,
-            r => r.AddLanguage(new Language("English", "Working proficiency", LanguageProficiency.Professional)));
+            r => r.AddLanguage(Language.Create("English", "Working proficiency", LanguageProficiency.Professional)));
     }
 
     // Why LanguageMissing names the required level in its INSTRUCTION and not only in the clause after
@@ -166,7 +166,7 @@ public class ActingOnARecommendationTests
     public void AddingAMissingLanguageWithoutALevel_PaysNothingAndBecomesADifferentGap()
     {
         var resume = BuildResume("C#");
-        resume.AddLanguage(new Language("German", "A little", LanguageProficiency.Basic));
+        resume.AddLanguage(Language.Create("German", "A little", LanguageProficiency.Basic));
         var jobPosting = WithLanguages(
             BuildJobPosting(),
             ("English", LanguageProficiency.Professional),
@@ -177,7 +177,7 @@ public class ActingOnARecommendationTests
             .Should().ContainSingle(r => r.Kind == RecommendationKind.LanguageMissing).Subject;
         advice.Impact.Should().BeGreaterThan(0.0, "the advice promises a real gain");
 
-        resume.AddLanguage(new Language("English", "Bilingue", Level: null));
+        resume.AddLanguage(Language.Create("English", "Bilingue", level: null));
 
         var after = _engine.Score(resume, jobPosting, ReferenceDate);
 
@@ -191,7 +191,7 @@ public class ActingOnARecommendationTests
     public void ActingOnALanguageBelowTheRequiredLevel_RaisesTheScoreByExactlyItsImpact()
     {
         var resume = BuildResume("C#");
-        var held = new Language("English", "Some school English", LanguageProficiency.Basic);
+        var held = Language.Create("English", "Some school English", LanguageProficiency.Basic);
         resume.AddLanguage(held);
         var jobPosting = WithLanguages(
             BuildJobPosting(),
@@ -214,7 +214,7 @@ public class ActingOnARecommendationTests
     public void ActingOnALanguageWithNoRecordedLevel_RaisesTheScoreByExactlyItsImpact()
     {
         var resume = BuildResume("C#");
-        var held = new Language("English", "Bilingue", Level: null);
+        var held = Language.Create("English", "Bilingue", level: null);
         resume.AddLanguage(held);
         var jobPosting = WithLanguages(
             BuildJobPosting(),

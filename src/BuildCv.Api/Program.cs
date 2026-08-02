@@ -163,6 +163,14 @@ if (allowedOrigins.Length > 0)
     app.UseCors(CorsPolicies.Strict);
 
 app.UseRateLimiter();
+
+// After the rate limiter and before authentication, on purpose. It reads the ROUTED endpoint's
+// IRequestSizeLimitMetadata, which routing (added at the head of the pipeline by WebApplication) has
+// already resolved; a 413 does not depend on who is asking; and refusing an oversized body is cheaper
+// than authenticating one. Nothing in the framework enforces that metadata for minimal APIs — see the
+// remarks on the middleware, which include the measurement.
+app.UseMiddleware<RequestSizeLimitMiddleware>();
+
 app.UseAuthentication();
 app.UseMiddleware<CsrfGuardMiddleware>();
 app.UseAuthorization();
