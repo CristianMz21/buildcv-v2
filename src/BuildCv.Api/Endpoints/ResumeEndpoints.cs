@@ -35,6 +35,42 @@ public static class ResumeEndpoints
             return result.ToHttpResult(resume => Results.Created($"/resumes/{resume.Id.Value}", resume));
         });
 
+        // One whole CV in one request, in place of POST /resumes plus up to fifteen per-section calls.
+        // It is the endpoint a HUMAN REVIEW SCREEN posts to: extraction reaches roughly 65% field
+        // accuracy on real CVs, so the corrected draft is what reaches the domain, never the raw
+        // extraction.
+        //
+        // NO ENUM PARSING HERE, unlike the four routes below that do it in the lambda. Every enum in a
+        // draft is parsed by ResumeDraftValidator instead, so a bad level comes back as a FIELD ERROR
+        // beside whatever else is wrong rather than as a bare 400 that names nothing. Copying the
+        // endpoint guard into a second place would be one rule stated twice, and the two would drift.
+        //
+        // 201 with the aggregate, which is the same body POST /resumes already answers. A second
+        // response shape for one aggregate is how a client ends up with two models of a resume.
+        group.MapPost("/import", async Task<IResult> (
+            ImportResumeRequest request,
+            ICommandHandler<CreateResumeFromDraftCommand, ResumeImportResult> handler,
+            HttpContext httpContext,
+            CancellationToken cancellationToken) =>
+        {
+            var result = await handler.Handle(
+                new CreateResumeFromDraftCommand(httpContext.User.GetAccountId(), request.ToDraft()),
+                cancellationToken);
+
+            return result.IsSuccess
+                ? Results.Created($"/resumes/{result.Resume!.Id.Value}", result.Resume)
+                : result.FieldErrors.ToValidationProblem();
+        })
+        .WithSummary("Creates a complete resume from one reviewed draft.")
+        .WithDescription(
+            "Every field is sent as a STRING, including dates (yyyy-MM-dd), numbers and levels, so that "
+            + "nothing can fail at model binding before the draft has been validated as a whole. "
+            + "Validation is all-or-nothing and collects EVERY bad field in one pass: a rejected draft "
+            + "answers 400 with the standard ProblemDetails `errors` object, keyed by JSON field path "
+            + "(`experiences[2].end`, `contact.phoneNumber`), and creates nothing. Levels accept the "
+            + "enum name or its number. Duplicate skills, certificates, languages and interests are "
+            + "reported against the LATER occurrence — that is the line to delete.");
+
         // Keyset paged, and there is no way to ask for the whole list: limit is clamped to a ceiling
         // and cursor is the only way forward. `limit` and `cursor` bind from the query string because
         // they are nullable simple types, which minimal APIs already treat as optional.
