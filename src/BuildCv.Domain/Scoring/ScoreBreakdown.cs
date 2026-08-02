@@ -51,8 +51,13 @@ public sealed record ScoreBreakdown
             skillsScore, experienceScore, educationScore, certificationsScore, projectsScore, languagesScore, weights);
     }
 
+    // FINITE first: `NaN < 0` and `NaN > 1` are both false, so a NaN score would pass the range check
+    // and then poison WeightedTotal, every band, and the whole response — one unguarded division
+    // upstream and the candidate is shown nothing at all.
     private static void ValidateScore(double score, string paramName)
     {
+        if (!double.IsFinite(score))
+            throw new ArgumentException("Score must be a finite number.", paramName);
         if (score < 0 || score > 1)
             throw new ArgumentException("Score must be between 0 and 1.", paramName);
     }

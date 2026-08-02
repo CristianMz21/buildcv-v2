@@ -111,10 +111,85 @@ public class ValueObjectConverterTests
         // The whole point: a v1 breakdown still produces the total it always produced.
         var breakdown = ScoreBreakdown.Create(1.0, 1.0, 1.0, 1.0, 1.0, 0.0, weights);
         breakdown.WeightedTotal.Should().BeApproximately(1.0, 0.0001);
+    }
 
-        // And it is arithmetically what this PR ships, which is the claim that makes the change
-        // behaviour-neutral: every row already on disk reads back as today's weighting exactly.
-        weights.Should().Be(ScoringWeightsSnapshot.Default());
+    // THE INVERSE of the assertion that used to close the test above.
+    //
+    // While Languages carried no weight, a v1 payload read back as exactly Default() and that equality
+    // WAS the behaviour-neutrality claim, measured at the persistence layer. v2 redistributes, so the
+    // equality is now false on purpose — and stating that it is false is what stops a future
+    // redistribution from being reverted by accident and passing silently.
+    //
+    // The rollback cliff is named in the sibling test below, which is where it is executed.
+    [Fact]
+    public void ScoringWeights_AVersionOnePayloadNoLongerMatchesTodaysWeighting()
+    {
+        const string v1 =
+            """{"Skills":0.45,"Experience":0.2,"Education":0.2,"Certifications":0.1,"Projects":0.05,"SchemaVersion":1}""";
+
+        var stored = ScoringWeightsSnapshotConverter.FromJson(v1);
+        var today = ScoringWeightsSnapshot.Default();
+
+        // The WEIGHTS, member by member, and NOT `stored.Should().NotBe(today)`. Record equality
+        // includes SchemaVersion, so the whole-record comparison is satisfied by the version differing
+        // even when every weight is identical — a negative control that reverted the redistribution and
+        // left the const at 2 walked straight past it. The claim here is about the numbers.
+        stored.Education.Should().NotBe(today.Education,
+            "v2 halved Education, so an old row is explained by a different model");
+        stored.Languages.Should().NotBe(today.Languages,
+            "and funded Languages with what Education lost");
+
+        stored.SchemaVersion.Should().NotBe(ScoringWeightsSnapshot.CurrentSchemaVersion,
+            "and the row says so rather than leaving the difference to be inferred from the numbers");
+
+    }
+
+    // THE ROLLBACK CLIFF, executed in both directions rather than described — and narrower on BOTH axes
+    // than the obvious phrasing, which is worth stating precisely because "every row is unreadable after
+    // v2" is the kind of claim that gets repeated into a deployment plan.
+    //
+    // WHICH READER: one built before the Languages MEMBER existed, i.e. before PR 1 — not merely before
+    // v2. A PR 2 build has the six-member type and reads a v2 payload fine; it just sees weights that
+    // differ from its own Default(). The payload below is what a PRE-PR-1 deserializer produces, because
+    // it is the only one that drops the member (System.Text.Json defaults JsonUnmappedMemberHandling to
+    // Skip) and then re-runs the sum invariant over the five it can see.
+    //
+    // WHICH ROWS: renormalization decides whether that sum still reaches 1.00.
+    //
+    //   - Posting stated a language requirement -> Languages carries weight -> the five sum to LESS
+    //     than 1.00 and Create throws. The row is UNREADABLE to that build.
+    //   - Posting stated none -> Languages is renormalized to 0.0 -> the other five already sum to 1.00
+    //     and the row loads, correctly: a section weighted zero contributed nothing to the total, so
+    //     the old reader reproduces the same number.
+    //
+    // So the cliff is real and there is no rolling back past PR 1 once a row of the first kind exists —
+    // but the rows it strands are exactly those scored against a posting that asked for a language.
+    [Fact]
+    public void ScoringWeights_AVersionTwoPayloadIsUnreadableToAnOldReaderOnlyWhenLanguagesCarriesWeight()
+    {
+        // What an old reader's deserializer produces from a v2 row scored against a posting that DID
+        // state a language requirement: the same five members, Languages dropped on the floor.
+        const string languagesWeighted =
+            """{"Skills":0.45,"Experience":0.2,"Education":0.1,"Certifications":0.1,"Projects":0.05,"SchemaVersion":2}""";
+
+        var act = () => ScoringWeightsSnapshotConverter.FromJson(languagesWeighted);
+
+        act.Should().Throw<ArgumentException>()
+            .WithMessage("*0.9*", "the five members it can see sum to 0.90, not 1.00");
+
+        // And the same row shape for a posting that stated NO language requirement, taken from the real
+        // renormalization rather than hand-written, so the two halves cannot drift apart.
+        var renormalized = ScoringWeightsSnapshot.Default().RenormalizedTo(
+            [SectionType.Skills, SectionType.Experience, SectionType.Education,
+             SectionType.Certifications, SectionType.Projects]);
+        renormalized.Languages.Should().Be(0.0);
+
+        var seenByAnOldReader = ScoringWeightsSnapshot.Create(
+            renormalized.Skills, renormalized.Experience, renormalized.Education,
+            renormalized.Certifications, renormalized.Projects, 0.0, renormalized.SchemaVersion);
+
+        seenByAnOldReader.Should().Be(renormalized,
+            "a section renormalized to zero is invisible to a reader that cannot see it, and harmless");
     }
 
     [Fact]
@@ -124,7 +199,7 @@ public class ValueObjectConverterTests
 
         var json = ScoringWeightsSnapshotConverter.ToJson(weights);
 
-        json.Should().Contain("\"Languages\"", "the written shape carries the member even at weight zero");
+        json.Should().Contain("\"Languages\"", "the section now carries weight, and the payload states it");
         ScoringWeightsSnapshotConverter.FromJson(json).Should().Be(weights);
     }
 

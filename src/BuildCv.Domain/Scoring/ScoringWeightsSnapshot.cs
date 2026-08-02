@@ -4,21 +4,33 @@ public sealed record ScoringWeightsSnapshot
 {
     // Which WEIGHTING produced a set of numbers — not which shape they serialize in.
     //
-    // It stays at 1 while Languages carries weight 0.0, because the arithmetic is bit-for-bit the
-    // five-section arithmetic that has always run: a score explained by these weights is explained by
-    // the v1 weights. Bumping it here would claim a scoring model changed when none did, and would
-    // put a discontinuity in every candidate's history for a serialization detail.
+    // It is 2 because Languages now carries weight and is now computed: a score explained by these
+    // weights is NOT the score the five-section model produced for the same resume, and a row that
+    // could not say which model explained it would make every historical comparison a lie.
     //
-    // It moves to 2 in the same commit that redistributes Education to Languages and starts computing
-    // a real Languages score — the commit where the numbers genuinely change.
+    // THE ONE-WAY DOOR, stated precisely, because this sentence ends up in a deployment plan and both
+    // of its obvious phrasings are wrong.
     //
-    // THAT COMMIT IS A ONE-WAY DOOR, and this one is not. Today's payload is rollback-safe: a reader
-    // built before Languages existed skips the unmapped member (System.Text.Json does that by
-    // default), sees the same five weights summing to 1.0, and works. Once the redistribution ships,
-    // the same old reader sees five weights summing to 0.90 and Create throws — every analysis row
-    // written after the bump becomes unreadable, not just differently explained. Deploy that release
-    // knowing there is no rolling back past the first write.
-    public const int CurrentSchemaVersion = 1;
+    // WHICH READER BREAKS: one built before the Languages MEMBER existed — i.e. before PR 1, not merely
+    // before v2. A PR 2 build already has the six-member type, deserializes a v2 payload without
+    // complaint, and merely reports weights that differ from its own Default(). So the boundary is
+    // "no rolling back past PR 1", which is operationally the same thing only while this chain merges
+    // as one release, and misleading the moment it ships in pieces.
+    //
+    // WHICH ROWS IT STRANDS: not all of them. A pre-PR-1 reader skips the unmapped member
+    // (System.Text.Json defaults JsonUnmappedMemberHandling to Skip) and re-runs the sum invariant over
+    // the five it can see, so renormalization decides the outcome:
+    //
+    //   - Posting stated a language requirement -> Languages carries weight -> the five it can see sum
+    //     to less than 1.00, Create throws, and the row is UNREADABLE to that build.
+    //   - Posting stated none -> RenormalizedTo drops Languages to 0.0, the other five already sum to
+    //     1.00, and the row loads and reproduces the same total, because a zero-weighted section
+    //     contributed nothing to it.
+    //
+    // Both directions are executed by
+    // ValueObjectConverterTests.ScoringWeights_AVersionTwoPayloadIsUnreadableToAnOldReaderOnlyWhenLanguagesCarriesWeight
+    // rather than reasoned about from the deserializer's documented default.
+    public const int CurrentSchemaVersion = 2;
 
     public double Skills { get; }
     public double Experience { get; }
@@ -55,6 +67,14 @@ public sealed record ScoringWeightsSnapshot
         double languages,
         int schemaVersion = CurrentSchemaVersion)
     {
+        // FINITE first, and this ordering matters. Every comparison below is false for NaN, so a NaN
+        // weight passes the non-negative check AND passes the sum check (Math.Abs(NaN - 1.0) > 0.0001
+        // is false), and would be persisted as a snapshot whose arithmetic can never be reproduced.
+        // Reachable since RenormalizedTo divides.
+        if (!double.IsFinite(skills) || !double.IsFinite(experience) || !double.IsFinite(education)
+            || !double.IsFinite(certifications) || !double.IsFinite(projects) || !double.IsFinite(languages))
+            throw new ArgumentException("Weights must be finite numbers.");
+
         if (skills < 0 || experience < 0 || education < 0 || certifications < 0 || projects < 0 || languages < 0)
             throw new ArgumentException("Weights must be non-negative.");
 
@@ -73,15 +93,80 @@ public sealed record ScoringWeightsSnapshot
             skills, experience, education, certifications, projects, languages, schemaVersion);
     }
 
-    // Languages ships SHAPED BUT UNWEIGHTED, and that is what makes adding it behaviour-neutral.
+    // The redistribution: Education 0.20 → 0.10, Languages 0.00 → 0.10.
     //
-    // Its weight is 0.0 and the engine hands it a 0.0 score, so it contributes nothing twice over and
-    // the other five weights are untouched — every candidate's score is the number it was yesterday,
-    // and no history shows a discontinuity. Weighting Languages before anything computes it would
-    // have moved Education from 0.20 to 0.10 against a hard-coded zero: a maximum of 0.90 instead of
-    // 1.00, and up to ten points off every candidate with an education. The redistribution belongs in
-    // the commit that starts computing the score, so the weight and the score arrive together.
-    public static ScoringWeightsSnapshot Default() => Create(0.45, 0.20, 0.20, 0.10, 0.05, 0.00);
+    // WEIGHT AND SCORE ARRIVE TOGETHER, which is the only reason this is safe to do in one step. The
+    // previous release shipped Languages shaped but unweighted precisely so that no window existed in
+    // which a section carried weight that nothing computed — a 0.10 weight against a hard-coded 0.0
+    // would have capped every candidate at 0.90 and taken up to ten points off everyone with an
+    // education. This factory changes only alongside a Languages score the engine really produces.
+    //
+    // Scores DO move here, and that is the point rather than a regression: a candidate who speaks the
+    // language a posting asks for gains up to ten points, and a candidate whose education was carrying
+    // a fifth of their score now carries a tenth of it. SchemaVersion 2 is what keeps an old analysis
+    // explainable under the model that produced it.
+    public static ScoringWeightsSnapshot Default() => Create(0.45, 0.20, 0.10, 0.10, 0.05, 0.10);
+
+    // A SECTION THAT DOES NOT APPLY DOES NOT CONSUME WEIGHT.
+    //
+    // The weight of every section the posting asks nothing of is redistributed PROPORTIONALLY across
+    // the sections it does ask about, so the ceiling is 1.00 for every posting and the score means
+    // "how well you match what you were actually asked" rather than "how well you match a fixed
+    // six-part template".
+    //
+    // This replaces a neutral 0.5 that used to be handed to an unasked section. That number was
+    // defensible as "neither reward nor punish" only relative to the MIDPOINT of the section, never
+    // relative to its ceiling: half of an unasked section's weight was simply unreachable. A posting
+    // stating no language requirement is the common case, not the rare one, so a flawless CV scored 95
+    // and the candidate had no way to find out why — in a product whose whole purpose is explaining
+    // their score to them.
+    //
+    // Renormalizing rather than special-casing Languages fixes both instances at once: the skills
+    // section has had the identical defect since long before Languages existed.
+    //
+    // Identity when every section applies: the divisor is 1.0, so each weight is returned bit-for-bit
+    // and a fully-specified posting is scored under exactly Default().
+    //
+    // SchemaVersion is CARRIED, NOT BUMPED. It names which weighting RULE produced the numbers; the
+    // snapshot itself names the RESULT. Every v2 analysis is explained by "v2 weights, renormalized to
+    // what this posting asked", and the row stores the actual divisor's output, so the arithmetic is
+    // reproducible from the row alone. Bumping per posting would make the version vary within one
+    // model, which is the one thing it exists not to do.
+    //
+    // The consequence that follows from that: A PERSISTED v2 SNAPSHOT IS NO LONGER NECESSARILY
+    // Default(). Anything comparing the two to decide "was this scored under the current model" must
+    // read SchemaVersion instead.
+    public ScoringWeightsSnapshot RenormalizedTo(IEnumerable<SectionType> applicableSections)
+    {
+        ArgumentNullException.ThrowIfNull(applicableSections);
+
+        var applicable = new HashSet<SectionType>(applicableSections);
+
+        // The degenerate case: nothing applies, or everything that does carries zero weight. It is
+        // unreachable today — Experience, Education, Certifications and Projects are scored from the
+        // candidate's own data and always apply, and they carry 0.45 between them — but there is no
+        // renormalized set to return, and silently falling back to the unrenormalized weights would
+        // reintroduce the unreachable ceiling this method exists to remove.
+        var applicableTotal = applicable.Sum(WeightFor);
+        if (applicableTotal <= 0.0)
+            throw new ArgumentException(
+                "At least one applicable section must carry weight.", nameof(applicableSections));
+
+        double ShareFor(SectionType section) =>
+            applicable.Contains(section) ? WeightFor(section) / applicableTotal : 0.0;
+
+        // Create re-checks the sum, which is what makes this arithmetically sound rather than merely
+        // plausible: the shares are w/T summed over exactly the sections that contributed T, so they
+        // total 1.0 by construction, and the invariant catches it here if that ever stops being true.
+        return Create(
+            ShareFor(SectionType.Skills),
+            ShareFor(SectionType.Experience),
+            ShareFor(SectionType.Education),
+            ShareFor(SectionType.Certifications),
+            ShareFor(SectionType.Projects),
+            ShareFor(SectionType.Languages),
+            SchemaVersion);
+    }
 
     public double WeightFor(SectionType section) => section switch
     {

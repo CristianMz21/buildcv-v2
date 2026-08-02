@@ -30,8 +30,13 @@ public sealed record SectionScore
         return new SectionScore(section, score, weight);
     }
 
+    // FINITE first, for the same reason as ScoreBreakdown.ValidateScore: every comparison below is
+    // false for NaN, so it would pass the range check unchallenged. Weight is now a renormalized
+    // share — the output of a division — which is what turns that from theoretical into reachable.
     private static void ValidateUnitInterval(double value, string label, string paramName)
     {
+        if (!double.IsFinite(value))
+            throw new ArgumentException($"{label} must be a finite number.", paramName);
         if (value < 0 || value > 1)
             throw new ArgumentException($"{label} must be between 0 and 1.", paramName);
     }

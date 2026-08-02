@@ -21,15 +21,18 @@ public class AnalysisTests
             scoredAt: DateTimeOffset.Now,
             recommendations: [Advice("Add more skills"), Advice("Improve summary")]);
 
-        // 0.45*0.3 + 0.20*0.4 + 0.20*0.2 + 0.10*0.5 + 0.05*0.8 + 0.00*0.25 = 0.345, which is EXACTLY
-        // 34.5 as a double — a rounding midpoint. It lands on 34 rather than 35 because Math.Round
-        // defaults to MidpointRounding.ToEven, not because the value is below the halfway point. That
-        // is deterministic, and it is the number this input produced before the sixth section existed.
+        // 0.45*0.3 + 0.20*0.4 + 0.10*0.2 + 0.10*0.5 + 0.05*0.8 + 0.10*0.25
+        //   = 0.135 + 0.08 + 0.02 + 0.05 + 0.04 + 0.025 = 0.35 → 35.
         //
-        // Still 34, and that is the point of this PR rather than a coincidence: Languages ships at
-        // weight 0.0, so the sixth section cannot move a score that already existed. The 0.25 handed
-        // to it here is deliberately non-zero and deliberately makes no difference.
-        analysis.OverallScore.Should().Be(34);
+        // It was 34 under the five-section weighting, and the move is deliberate: Education dropped
+        // from 0.20 to 0.10 (−0.02 here) and Languages picked up 0.10 against the 0.25 this input
+        // always carried (+0.025). The 0.25 used to make no difference on purpose; now it makes the
+        // difference, which is the whole of what this release changed.
+        //
+        // It also walks off the rounding midpoint the old value sat on. 0.345 was EXACTLY 34.5 as a
+        // double and resolved to 34 only because Math.Round defaults to MidpointRounding.ToEven; 0.35
+        // is 35.00000000000001 and rounds without needing that rule to be remembered.
+        analysis.OverallScore.Should().Be(35);
         analysis.Band.Should().Be(ScoreBand.Low);
         analysis.Recommendations.Should().HaveCount(2);
     }

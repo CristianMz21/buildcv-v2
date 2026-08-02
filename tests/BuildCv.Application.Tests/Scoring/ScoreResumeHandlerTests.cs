@@ -5,6 +5,7 @@ using BuildCv.Domain.Common.ValueObjects;
 using BuildCv.Domain.Identity;
 using BuildCv.Domain.Jobs;
 using BuildCv.Domain.Resumes;
+using BuildCv.Domain.Scoring;
 using FluentAssertions;
 
 namespace BuildCv.Application.Tests.Scoring;
@@ -39,7 +40,18 @@ public class ScoreResumeHandlerTests
             DateRange.Create(start)));
     }
 
+    // Published by default. Scoring is published-or-owned, so a draft built by a stranger is the
+    // FORBIDDEN case and every test that is not about visibility has to opt out of it explicitly —
+    // otherwise the assertion under test never runs. Both score tests here used to build exactly that
+    // stranger's draft and get a 200, which is the hole the check closes.
     private static JobPosting BuildJobPosting(AccountId ownerId, params string[] mustHaveSkills)
+    {
+        var jobPosting = BuildDraftJobPosting(ownerId, mustHaveSkills);
+        jobPosting.Publish();
+        return jobPosting;
+    }
+
+    private static JobPosting BuildDraftJobPosting(AccountId ownerId, params string[] mustHaveSkills)
     {
         var jobPosting = JobPosting.Create(ownerId, "Backend Developer", OrganizationName.Create("Acme"));
         foreach (var skill in mustHaveSkills)
@@ -62,7 +74,11 @@ public class ScoreResumeHandlerTests
         result.IsSuccess.Should().BeTrue();
         result.Value!.Breakdown.SkillsScore.Should().Be(1.0);
         result.Value.Breakdown.ExperienceScore.Should().Be(1.0);
-        result.Value.OverallScore.Should().BeGreaterThanOrEqualTo(60);
+
+        // The posting states no language requirement, so Languages is renormalized out and the other
+        // five are scored out of 0.90: Skills 0.45/0.90 = 0.50, Experience 0.20/0.90 = 0.2222.
+        // 0.50*1.0 + 0.2222*1.0 = 0.65/0.90 = 0.7222 -> 72. Nothing else on this resume scores.
+        result.Value.OverallScore.Should().Be(72);
         (await _analyses.GetPageByResumeIdAsync(resume.Id, PageRequests.Of())).Items.Should().HaveCount(1);
     }
 
@@ -80,7 +96,11 @@ public class ScoreResumeHandlerTests
 
         result.IsSuccess.Should().BeTrue();
         result.Value!.Breakdown.SkillsScore.Should().Be(0.0);
-        result.Value.OverallScore.Should().BeLessThan(60);
+
+        // Experience alone, renormalized: 0.20/0.90 = 0.2222 -> 22. The unmatched skills section still
+        // carries its full renormalized 0.50 and scores zero against it, which is what a candidate who
+        // matches nothing the posting asked for should see.
+        result.Value.OverallScore.Should().Be(22);
     }
 
     [Fact]
@@ -107,6 +127,149 @@ public class ScoreResumeHandlerTests
         result.Error.Should().Be("Resume not found.");
     }
 
+    // The advice is persisted with the breakdown it was derived from, not recomputed on read. An Impact
+    // is only meaningful beside the score it was measured against, so a history entry holding the number
+    // without the advice could never answer "what was I told to do, and did it work".
+    [Fact]
+    public async Task Score_persists_the_recommendations_alongside_the_breakdown()
+    {
+        var ownerId = AccountId.New();
+        var resume = BuildResume(ownerId);
+        await _resumes.AddAsync(resume);
+        var jobPosting = BuildJobPosting(AccountId.New(), "C#");
+        await _jobPostings.AddAsync(jobPosting);
+
+        var result = await _handler.Handle(new ScoreResumeCommand(ownerId, resume.Id, jobPosting.Id));
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value!.Recommendations.Should().NotBeEmpty();
+
+        var stored = (await _analyses.GetPageByResumeIdAsync(resume.Id, PageRequests.Of())).Items
+            .Should().ContainSingle().Subject;
+        stored.Recommendations.Should().Equal(result.Value.Recommendations);
+        stored.Recommendations.Should().BeInAscendingOrder(RecommendationOrder.Display,
+            "the ten that survive the cap are chosen by this order, so the stored set is already in it");
+    }
+
+    // THE PERSISTED SNAPSHOT IS THE ONE THE SCORE WAS COMPUTED UNDER, not the defaults.
+    //
+    // This is the half of renormalization that must not be got wrong. ScoreBreakdown.Weights is what
+    // makes a past analysis self-explaining and arithmetically reproducible — nothing on a read path
+    // consults default or organization-level weights, so the row is the only record of how its own
+    // number was reached. Renormalizing at score time and persisting Default() would leave every
+    // historical analysis holding six weights that do not explain its own total.
+    //
+    // Asserted by REPRODUCING the total from the stored parts rather than by comparing to a literal: if
+    // the stored weights were the wrong set, the reconstruction would miss.
+    [Fact]
+    public async Task Score_persists_the_weights_it_actually_scored_under()
+    {
+        var ownerId = AccountId.New();
+        var resume = BuildResume(ownerId, "C#");
+        await _resumes.AddAsync(resume);
+        var jobPosting = BuildJobPosting(AccountId.New(), "C#");
+        await _jobPostings.AddAsync(jobPosting);
+
+        var result = await _handler.Handle(new ScoreResumeCommand(ownerId, resume.Id, jobPosting.Id));
+
+        var stored = (await _analyses.GetPageByResumeIdAsync(resume.Id, PageRequests.Of())).Items
+            .Should().ContainSingle().Subject;
+        var weights = stored.Breakdown.Weights;
+
+        weights.Should().NotBe(ScoringWeightsSnapshot.Default(),
+            "this posting states no language requirement, so it was NOT scored under the defaults");
+        weights.Languages.Should().Be(0.0);
+        weights.Skills.Should().BeApproximately(0.45 / 0.90, 1e-9);
+
+        Enum.GetValues<SectionType>().Sum(weights.WeightFor).Should().BeApproximately(1.0, 0.0001);
+
+        Enum.GetValues<SectionType>()
+            .Sum(section => weights.WeightFor(section) * stored.Breakdown.ScoreFor(section))
+            .Should().BeApproximately(stored.Breakdown.WeightedTotal, 1e-9,
+                "the stored weights and the stored scores must reproduce the stored total");
+
+        result.Value!.Breakdown.Weights.Should().Be(weights, "and the caller was shown the same set");
+    }
+
+    // The three corners of published-or-owned. The first is the normal candidate flow; the second is
+    // what "bring your own job offer" will look like once a candidate creates the posting themselves;
+    // the third is the hole this check closes.
+    [Fact]
+    public async Task Score_against_a_published_posting_owned_by_someone_else_succeeds()
+    {
+        var ownerId = AccountId.New();
+        var resume = BuildResume(ownerId, "C#");
+        await _resumes.AddAsync(resume);
+        var jobPosting = BuildJobPosting(AccountId.New(), "C#");
+        await _jobPostings.AddAsync(jobPosting);
+
+        var result = await _handler.Handle(new ScoreResumeCommand(ownerId, resume.Id, jobPosting.Id));
+
+        result.IsSuccess.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Score_against_an_unpublished_posting_the_requester_owns_succeeds()
+    {
+        var ownerId = AccountId.New();
+        var resume = BuildResume(ownerId, "C#");
+        await _resumes.AddAsync(resume);
+        var jobPosting = BuildDraftJobPosting(ownerId, "C#");
+        await _jobPostings.AddAsync(jobPosting);
+
+        jobPosting.Status.Should().Be(JobPostingStatus.Draft, "or this asserts nothing about ownership");
+
+        var result = await _handler.Handle(new ScoreResumeCommand(ownerId, resume.Id, jobPosting.Id));
+
+        result.IsSuccess.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Score_against_an_unpublished_posting_owned_by_someone_else_is_forbidden()
+    {
+        var ownerId = AccountId.New();
+        var resume = BuildResume(ownerId, "C#");
+        await _resumes.AddAsync(resume);
+        var jobPosting = BuildDraftJobPosting(AccountId.New(), "C#");
+        await _jobPostings.AddAsync(jobPosting);
+
+        var result = await _handler.Handle(new ScoreResumeCommand(ownerId, resume.Id, jobPosting.Id));
+
+        result.IsSuccess.Should().BeFalse();
+        result.Error.Should().Be("Forbidden.");
+        (await _analyses.GetPageByResumeIdAsync(resume.Id, PageRequests.Of())).Items.Should().BeEmpty(
+            "a refused score must not leave an analysis behind");
+    }
+
+    // Closed and Archived are both != Published, so archiving is a scoring kill switch for everyone but
+    // the owner. Pinned because it is a consequence of the check rather than something it was written
+    // for, and a reader would otherwise have to derive it from an inequality.
+    [Theory]
+    [InlineData(JobPostingStatus.Closed)]
+    [InlineData(JobPostingStatus.Archived)]
+    public async Task Score_against_a_posting_that_left_published_is_forbidden_for_a_non_owner(
+        JobPostingStatus status)
+    {
+        var ownerId = AccountId.New();
+        var resume = BuildResume(ownerId, "C#");
+        await _resumes.AddAsync(resume);
+        var jobPosting = BuildJobPosting(AccountId.New(), "C#");
+        if (status == JobPostingStatus.Closed)
+            jobPosting.Close();
+        else
+            jobPosting.Archive();
+        await _jobPostings.AddAsync(jobPosting);
+
+        jobPosting.Status.Should().Be(status);
+
+        var result = await _handler.Handle(new ScoreResumeCommand(ownerId, resume.Id, jobPosting.Id));
+
+        result.Error.Should().Be("Forbidden.");
+    }
+
+    // 404 before 403: a posting that does not exist is reported as missing rather than as forbidden,
+    // matching GetJobPostingHandler so the two endpoints leak the same bit of existence information
+    // rather than disagreeing about it.
     [Fact]
     public async Task Score_job_posting_not_found_fails()
     {

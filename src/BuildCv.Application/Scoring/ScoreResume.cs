@@ -36,11 +36,39 @@ public sealed class ScoreResumeHandler(
             if (jobPosting is null)
                 return Result<Analysis>.Failure("Job posting not found.");
 
-            var referenceDate = DateOnly.FromDateTime(timeProvider.GetUtcNow().DateTime);
-            var breakdown = scoringEngine.Score(resume, jobPosting, referenceDate);
+            // Scoring is published-or-owned. Without this any authenticated caller could score against
+            // any JobPostingId, including a stranger's unpublished draft -- and a score is a readable
+            // summary of the posting: the requirements it names come back in the recommendations.
+            //
+            // Three consequences worth stating rather than discovering:
+            //
+            // 1. This is NARROWER than GetJobPostingQuery, which also admits Role.Admin and members of
+            //    the owning organization. A recruiter's colleague can GET the draft but cannot score
+            //    against it. The divergence is deliberate -- flagged rather than silently widened,
+            //    because widening it would mean reaching for the account and organization repositories
+            //    from a handler that needs neither.
+            // 2. Closed and Archived are both != Published, so archiving a posting is a scoring kill
+            //    switch for everyone except its owner. Probably right; it is still a choice.
+            // 3. 404 and 403 stay distinguishable, matching GetJobPostingHandler: a caller who names a
+            //    posting that does not exist is told so. Both handlers leak the same bit of existence
+            //    information, and they leak it consistently.
+            if (jobPosting.Status != JobPostingStatus.Published && jobPosting.OwnerId != command.RequesterId)
+                return Result<Analysis>.Failure("Forbidden.");
 
+            var referenceDate = DateOnly.FromDateTime(timeProvider.GetUtcNow().DateTime);
+            var score = scoringEngine.Score(resume, jobPosting, referenceDate);
+
+            // The recommendations are persisted alongside the breakdown they were derived from. They
+            // have to be: an Impact is only meaningful next to the score it was measured against, and a
+            // history entry that stored the number without the advice could never answer "what was I
+            // told to do about this, and did it work".
             var analysis = Analysis.Create(
-                AnalysisId.New(), breakdown, resume.Id, jobPosting.Id, timeProvider.GetUtcNow());
+                AnalysisId.New(),
+                score.Breakdown,
+                resume.Id,
+                jobPosting.Id,
+                timeProvider.GetUtcNow(),
+                score.Recommendations);
             await analysisRepository.AddAsync(analysis, cancellationToken);
 
             return Result<Analysis>.Success(analysis);
