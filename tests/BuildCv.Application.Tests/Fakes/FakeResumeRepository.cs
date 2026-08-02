@@ -21,6 +21,15 @@ public sealed class FakeResumeRepository : IResumeRepository
     // name would be the only thing claiming it, and names are what get trusted during a refactor.
     public int ReadCount { get; private set; }
 
+    // Counts inserts. A rejected draft must not reach the store at all, and "the result says failure"
+    // and "nothing was created" are different claims — only this one is about the store.
+    public int AddCount { get; private set; }
+
+    // Counts EVERY write, insert and update alike, because AddCount alone cannot see the regression it
+    // matters most against: a draft import assembled section by section would be one AddAsync followed
+    // by ten UpdateAsync calls, leaving identical contents behind and an AddCount of exactly 1.
+    public int WriteCount { get; private set; }
+
     public Task<Resume?> GetByIdAsync(ResumeId id, CancellationToken cancellationToken = default)
     {
         ReadCount++;
@@ -36,12 +45,15 @@ public sealed class FakeResumeRepository : IResumeRepository
 
     public Task AddAsync(Resume resume, CancellationToken cancellationToken = default)
     {
+        AddCount++;
+        WriteCount++;
         _resumes.Add(new KeysetRow<Resume>(resume, ++_sequence));
         return Task.CompletedTask;
     }
 
     public Task UpdateAsync(Resume resume, CancellationToken cancellationToken = default)
     {
+        WriteCount++;
         var index = _resumes.FindIndex(row => row.Item.Id == resume.Id);
         if (index >= 0)
             _resumes[index] = _resumes[index] with { Item = resume };
