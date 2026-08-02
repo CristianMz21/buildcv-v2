@@ -1,7 +1,10 @@
+using BuildCv.Domain.Common.ValueObjects;
+using BuildCv.Domain.Identity;
 using BuildCv.Domain.Jobs;
 using BuildCv.Domain.Resumes;
 using BuildCv.Domain.Scoring;
 using FluentAssertions;
+using Microsoft.EntityFrameworkCore;
 
 namespace BuildCv.Infrastructure.Tests.Persistence.EfCore;
 
@@ -99,6 +102,63 @@ public sealed class AnalysisRepositoryTests
 
         pageSizes.Should().Equal(2, 2, 1);
         visited.Should().Equal(history.Select(analysis => analysis.Id));
+    }
+
+    [Fact]
+    public async Task GetByIdAsync_AfterAdd_RoundTripsTheBreakdownAndRecommendations()
+    {
+        var analysis = NewAnalysis(ResumeId.New(), 0.9);
+
+        await using (var writer = _fixture.NewApplicationContext())
+            await TestRepositories.Analyses(writer).AddAsync(analysis);
+
+        await using var reader = _fixture.NewApplicationContext();
+        var reloaded = await TestRepositories.Analyses(reader).GetByIdAsync(analysis.Id);
+
+        reloaded.Should().NotBeNull();
+        reloaded!.Breakdown.Should().Be(analysis.Breakdown);
+        reloaded.ResumeId.Should().Be(analysis.ResumeId);
+        reloaded.Recommendations.Should().BeEquivalentTo(analysis.Recommendations);
+    }
+
+    [Fact]
+    public async Task GetByIdAsync_ForAnIdThatWasNeverStored_ReturnsNull()
+    {
+        await using var reader = _fixture.NewApplicationContext();
+
+        (await TestRepositories.Analyses(reader).GetByIdAsync(AnalysisId.New())).Should().BeNull();
+    }
+
+    // THE SOFT DELETE, reached the only way it can be reached: Analysis has no Delete() of its own, and
+    // the sole writer of its DeletedAt column is the cascade in ResumeRepository.DeleteAsync. Nothing in
+    // GetByIdAsync mentions the tombstone — the global query filter does — so this is the test that says
+    // the filter is on this path and not only on the paged one.
+    //
+    // Reading it back with IgnoreQueryFilters is what separates "filtered out" from "never written" or
+    // "hard deleted": without that line a cascade that DESTROYED the row would pass this test, and the
+    // privacy decision recorded in CascadeToAnalysesAsync is explicitly a tombstone, not a DELETE.
+    [Fact]
+    public async Task GetByIdAsync_AfterTheResumeItScoredWasDeleted_ReturnsNullButKeepsTheRow()
+    {
+        var resume = Resume.Create(AccountId.New(), new ContactInformation(
+            PersonName.Create("Test Person"), Email.Create($"scored.{Guid.NewGuid():N}@example.com")));
+        var analysis = NewAnalysis(resume.Id, 0.6);
+
+        await using (var writer = _fixture.NewApplicationContext())
+        {
+            await TestRepositories.Resumes(writer).AddAsync(resume);
+            await TestRepositories.Analyses(writer).AddAsync(analysis);
+        }
+
+        await using (var deleter = _fixture.NewApplicationContext())
+            await TestRepositories.Resumes(deleter).DeleteAsync(resume.Id);
+
+        await using var reader = _fixture.NewApplicationContext();
+
+        (await TestRepositories.Analyses(reader).GetByIdAsync(analysis.Id)).Should().BeNull(
+            "deleting a resume hides every score derived from it");
+        (await reader.Analyses.IgnoreQueryFilters().SingleAsync(entity => entity.Id == analysis.Id))
+            .Breakdown.Should().Be(analysis.Breakdown, "the history is tombstoned for audit, not destroyed");
     }
 
     [Fact]
