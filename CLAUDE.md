@@ -74,6 +74,8 @@ Exact-match lookups go through the HMAC **blind-index** shadow columns instead �
 
 Analytical columns stay plaintext by design (skill names, levels, years, date ranges, scores): they are what the scoring engine and internal analytics query, and no query can reach through an envelope. `Persistence/Configurations/*.cs` states the classification per property; `ModelConfigurationTests` asserts it.
 
+**"A level" means the closed enum, not prose about one.** `Language.Level` and `Education.Level` are plaintext because the engine compares them; the free-text column beside each — `Language.Fluency`, `Education.Degree`, `Education.Grade` — is **encrypted**, because it is a sentence a candidate wrote about themselves and someone can type *"nativo, aprendido de mi abuela colombiana"* into it. `Fluency` was the exception until PR #16 made `Level` the scoring input and forbade the engine from reading `Fluency` at all; sealing it then cost no query, which is what made the ruling cheap. The test for the plaintext side is not "does this describe a level" but **"does something actually query it"**.
+
 Soft delete is a shadow `DeletedAt` plus a global query filter on every aggregate root. `Account.Delete()` and `Organization.Delete()` set a domain `Status` **and** the repository writes the tombstone alongside it — one observable delete, and the filtered unique indexes then genuinely free the address or slug for re-registration.
 
 ### API security model
@@ -118,7 +120,9 @@ It is **off by default and must stay that way for direct-exposure deployments**:
 
 Prefer `KnownProxies` alone whenever the proxy address is stable — it is the narrowest thing you can write. Reach for `KnownNetworks` only for an autoscaling proxy tier, and size it to that tier, not to the site: on a flat internal network `"10.0.0.0/8"` would trust every internal client to set its own `X-Forwarded-For`, which is the failure this setting exists to prevent. Keep `ForwardLimit` equal to the real hop count between the client and Kestrel.
 
-### Deployment requirement — one forward-only migration
+### Deployment requirement — two migrations that destroy data
+
+`20260802051841_EncryptLanguageFluency` **drops every stored `resumes.Languages.Fluency` value**, in both directions. That is deliberate and it is the cheaper of two bad options. `Fluency` predates this chain (it ships in `InitialCreate` and is on `main`), so real rows hold plaintext, and the scaffolded `AlterColumn nvarchar(50) → varbinary(max)` would have kept those bytes: SQL Server accepts the conversion, the result is raw UTF-16, and `AesGcmFieldEncryptor.Decrypt` rejects it on the version byte. `Fluency` is an eagerly-loaded owned property, so that is not a lost field — it is a **resume that no longer loads**. Encrypting in place is not available to a migration (the key ring is configuration and SQL Server has no AES-GCM), so the column is dropped and re-added empty. What is lost is display-only free text no scoring path reads; candidates can retype it. Announce it before deploying.
 
 `20260801140223_AddSectionScoringAndRecommendations` is **forward-only in practice, and the reason is data loss rather than anything you can work around**. Its `Down()` restores the pre-chain schema faithfully and still destroys `scoring.Recommendations` in full plus every `Analyses.LanguagesScore`. Advice is derived, so re-scoring produces advice again — but against today's resume and posting, not the ones the historical analysis was taken against, so the score history stops being explainable by the recommendations beside it. Plan the deploy knowing there is no rolling back past the first write; the full reasoning is on the migration's `Down()`.
 
