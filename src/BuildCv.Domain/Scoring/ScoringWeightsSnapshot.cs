@@ -30,6 +30,20 @@ public sealed record ScoringWeightsSnapshot
     // Both directions are executed by
     // ValueObjectConverterTests.ScoringWeights_AVersionTwoPayloadIsUnreadableToAnOldReaderOnlyWhenLanguagesCarriesWeight
     // rather than reasoned about from the deserializer's documented default.
+    //
+    // AND THE UNREADABLE BRANCH IS UNREACHABLE ON REAL DATA TODAY, so do not plan a deployment around
+    // it. Languages carries weight only when the posting states a language requirement, and nothing in
+    // the shipped API can put one there: JobPosting.AddLanguageRequirement has no caller in src/ (nor
+    // does AddRequirement or SetEducationLevel — CreateJobRequest carries title, company and
+    // description, and there is no update route). Every row any deployment can actually write takes
+    // the second branch and loads into a pre-PR-1 build unchanged. The test above reaches the first
+    // branch by constructing the payload directly, which is the only way anything reaches it.
+    //
+    // THE ROLLBACK HAZARD THAT IS REACHABLE is not here at all — it is the migration.
+    // Persistence/Migrations/20260801140223_AddSectionScoringAndRecommendations.Down() drops the
+    // scoring.Recommendations table and Analyses.LanguagesScore, which is irrecoverable data loss on
+    // every row rather than a parse failure a reader can be rebuilt around. That migration is
+    // forward-only in practice; the reasoning is stated on its Down().
     public const int CurrentSchemaVersion = 2;
 
     public double Skills { get; }

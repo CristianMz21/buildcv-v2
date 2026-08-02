@@ -118,6 +118,14 @@ It is **off by default and must stay that way for direct-exposure deployments**:
 
 Prefer `KnownProxies` alone whenever the proxy address is stable — it is the narrowest thing you can write. Reach for `KnownNetworks` only for an autoscaling proxy tier, and size it to that tier, not to the site: on a flat internal network `"10.0.0.0/8"` would trust every internal client to set its own `X-Forwarded-For`, which is the failure this setting exists to prevent. Keep `ForwardLimit` equal to the real hop count between the client and Kestrel.
 
+### Deployment requirement — one forward-only migration
+
+`20260801140223_AddSectionScoringAndRecommendations` is **forward-only in practice, and the reason is data loss rather than anything you can work around**. Its `Down()` restores the pre-chain schema faithfully and still destroys `scoring.Recommendations` in full plus every `Analyses.LanguagesScore`. Advice is derived, so re-scoring produces advice again — but against today's resume and posting, not the ones the historical analysis was taken against, so the score history stops being explainable by the recommendations beside it. Plan the deploy knowing there is no rolling back past the first write; the full reasoning is on the migration's `Down()`.
+
+The scaffolded `Down()` was worse than that: it restored `Analyses.Recommendations` as `nvarchar(max) NOT NULL DEFAULT ''`, and the pre-chain mapping parsed that column with `JsonSerializer.Deserialize<string[]>`, which **throws on `''`** — so a rollback made every `Analysis` row unreadable, including rows written long before this chain. The default is now `'[]'`, which that same converter parses to an empty list. If you ever hand-edit a generated `Down()`, check the default against the converter that will read it, not against the column type.
+
+The `ScoringWeightsSnapshot` weights-JSON cliff documented in `Domain/Scoring/ScoringWeightsSnapshot.cs` is a **different and currently unreachable** hazard: it needs a posting that states a language requirement, and nothing in the shipped API can create one.
+
 ## Testing
 
 xUnit + FluentAssertions everywhere; `Xunit` is a global using in test projects. Naming: `Method_Condition_ExpectedResult`. No mocking libraries — Application tests use hand-written fakes in `tests/BuildCv.Application.Tests/Fakes/`; extend those instead of adding Moq/NSubstitute.
