@@ -182,6 +182,13 @@ public class RecommendationBuilderTests
 
     // Priority is a pure function of Impact plus the must-have gate. These are the numbers the shipped
     // weights actually produce, written out so the two halves can never drift apart silently.
+    //
+    // WHAT THIS TEST DOES NOT COVER, measured rather than assumed: neither threshold COMPARISON.
+    // Flipping either `>=` to `>` in PriorityFor leaves it green, because no impact here lands ON a
+    // threshold — the largest non-gated one is 0.08999999999999998, and the nearest miss is
+    // NoDegreeRecorded at 0.030000000000000006, two ULP above 0.03 rather than on it. The expectation
+    // is re-derived from the same impacts either way, so it can only ever confirm the arithmetic.
+    // Priority_atAThresholdExactly_takesTheHigherLabel below is the row that reaches the comparisons.
     [Fact]
     public void Priority_isDecidedByImpactAndTheMustHaveGate()
     {
@@ -204,6 +211,46 @@ public class RecommendationBuilderTests
 
         advice.Select(r => r.Priority).Distinct().Should().HaveCountGreaterThan(1,
             "a scenario where every rule lands on one priority would prove nothing about the function");
+    }
+
+    // THE TWO THRESHOLD COMPARISONS, one row each. Both are `>=`, so an impact landing exactly ON a
+    // threshold takes the HIGHER label, and nothing else in this file lands on either — every other
+    // fixture sits strictly between them, where `>=` and `>` are indistinguishable.
+    //
+    // Each row's impact is asserted with exact double equality, not BeApproximately. That is the whole
+    // point: a row that drifted one ULP off its threshold would still pass an approximate assertion
+    // while silently ceasing to discriminate `>=` from `>`, which is exactly how the test above went
+    // dead. If a weight or a formula moves, this fails on the impact line and says so.
+    //
+    // BOTH FIXTURES WERE MEASURED THROUGH THE ENGINE, not derived on paper — 0.10 x 0.3 for an
+    // education entry missing its degree looks like it lands on 0.03 and computes to
+    // 0.030000000000000006, two ULP above it.
+    //
+    //   0.10 exactly — the posting states a skill AND a language requirement, so all six sections apply,
+    //   the renormalization divisor is 1.0 and Education keeps its default 0.10. A resume with no
+    //   education scores the section 0.0 against a ceiling of 1.0, so the impact is 0.10 x 1.0 = 0.10.
+    //   This one is reachable in ordinary data: no explicit weights, no contrived numbers.
+    //
+    //   0.03 exactly — the posting states no language requirement, so Skills renormalizes to
+    //   0.45/0.90 = 0.50 exactly. Nothing is matched, so the section sits at 0.0, and the nice-to-have
+    //   carries 0.6 of the posting's 10.0 of stated skill weight: 0.50 x 0.06 = 0.03. The explicit
+    //   weights are what buy the exact landing; the priority-derived defaults cannot produce a 6% share.
+    //
+    // A nice-to-have is the only skills kind that can exercise a threshold at all — a must-have is
+    // gated to Critical whatever its impact, which is what AnUnmatchedMustHave... below pins.
+    [Theory]
+    [InlineData(RecommendationKind.NoEducationRecorded, 0.10, RecommendationPriority.Critical)]
+    [InlineData(RecommendationKind.MissingNiceToHaveSkill, 0.03, RecommendationPriority.Important)]
+    public void Priority_atAThresholdExactly_takesTheHigherLabel(
+        RecommendationKind kind, double threshold, RecommendationPriority expected)
+    {
+        var (resume, jobPosting) = BoundaryFixtureFor(kind);
+
+        var advice = AdviceFor(resume, jobPosting).Should().ContainSingle(r => r.Kind == kind).Subject;
+
+        advice.Impact.Should().Be(threshold,
+            "this row only discriminates >= from > while it lands on the threshold exactly");
+        advice.Priority.Should().Be(expected);
     }
 
     // The must-have gate, isolated. The posting states no language requirement, so Skills is
@@ -326,6 +373,43 @@ public class RecommendationBuilderTests
     }
 
     private static string SkillNameIn(string message) => message.Split('\'')[1];
+
+    // The two inputs whose only job is to land one impact exactly on one threshold. Kept apart from the
+    // general-purpose builders below so a change made for another test cannot quietly move them off it.
+    private static (Resume Resume, JobPosting JobPosting) BoundaryFixtureFor(RecommendationKind kind)
+    {
+        switch (kind)
+        {
+            case RecommendationKind.NoEducationRecorded:
+                {
+                    // Six applicable sections -> divisor 1.0 -> Education weighs its default 0.10.
+                    var resume = BuildResume("C#");
+                    resume.AddLanguage(new Language("English", null, LanguageProficiency.Native));
+                    var jobPosting = WithLanguages(
+                        BuildJobPosting(("C#", RequirementPriority.MustHave)),
+                        ("English", LanguageProficiency.Professional));
+                    return (resume, jobPosting);
+                }
+
+            case RecommendationKind.MissingNiceToHaveSkill:
+                {
+                    // No language requirement -> divisor 0.90 -> Skills weighs 0.50. Neither skill is on the
+                    // resume, so the section sits at 0.0 and this requirement's share is 0.6/10.0 = 0.06.
+                    var resume = BuildResume();
+                    var jobPosting = JobPosting.Create(
+                        AccountId.New(), "Backend Developer", OrganizationName.Create("Acme"));
+                    jobPosting.AddRequirement(
+                        JobRequirement.Create(Technology.Create("C#"), RequirementPriority.MustHave, 9.4));
+                    jobPosting.AddRequirement(
+                        JobRequirement.Create(Technology.Create("Go"), RequirementPriority.NiceToHave, 0.6));
+                    return (resume, jobPosting);
+                }
+
+            default:
+                throw new ArgumentOutOfRangeException(
+                    nameof(kind), kind, "No boundary fixture is defined for this recommendation kind.");
+        }
+    }
 
     private static Resume BuildResume(params string[] skillNames)
     {
