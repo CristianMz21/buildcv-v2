@@ -70,13 +70,19 @@ internal static class KeysetQueryExtensions
     // second round trip and without a COUNT over the whole owner. Page<T>.From owns what happens to it.
     //
     // AsSplitQuery, and on a paged read it is the difference between bounded and unbounded. Every entity
-    // paged here carries owned collections — Resume has ten, JobPosting has two, Analysis has one — and
+    // paged here carries owned collections — Resume has ten, JobPosting has three, Analysis has one — and
     // owned navigations load eagerly. In one statement that is a LEFT JOIN per collection onto the same
     // principal, and the server returns their CARTESIAN PRODUCT: rows shipped is the sum, over the page,
     // of the PRODUCT of each principal's collection counts. TOP caps the principals inside the subquery,
     // so the fan-out happens outside it and the cap does not reach it. Nothing caps any collection, so a
     // client that posts enough child rows chooses that number. Split query asks one statement per
     // collection, which makes the work the SUM of the counts and puts an actual ceiling on a page.
+    //
+    // Those three counts are prose, and this sentence has already gone stale once: JobPosting gained
+    // LanguageRequirements and the line kept saying two. Nothing breaks when it does —
+    // KeysetQueryTranslationTests reads the real number off the model via OwnedCollectionsOn, so the
+    // assertion cannot drift with the comment — but the sentence is what a reader budgets against, so
+    // it is worth correcting rather than deleting.
     //
     // The cost is stated rather than hidden: the statements are not one atomic read, so a page can
     // observe a collection edit that landed between them. That is acceptable here — these lists are
