@@ -54,11 +54,28 @@ public static class ResumeEndpoints
         group.MapPost("/import", async Task<IResult> (
             ImportResumeRequest request,
             ICommandHandler<CreateResumeFromDraftCommand, ResumeImportResult> handler,
+            ResumeImportRateLimiter rateLimiter,
+            ILogger<Program> logger,
             HttpContext httpContext,
             CancellationToken cancellationToken) =>
         {
+            var accountId = httpContext.User.GetAccountId();
+
+            // Per account, not per IP, and acquired here rather than as a named policy — see
+            // ResumeImportRateLimiter. An accepted import is the most durable write in this API, and
+            // the global 100/min per-IP limiter was the only thing bounding it.
+            using var lease = await rateLimiter.AcquireAsync(accountId, cancellationToken);
+            if (!lease.IsAcquired)
+            {
+                RateLimitResponse.SetRetryAfter(httpContext.Response, lease);
+                AuditLog.Log(logger, "resume_import_throttled", accountId, httpContext);
+                return Results.Problem(
+                    detail: "Too many resume imports.",
+                    statusCode: StatusCodes.Status429TooManyRequests);
+            }
+
             var result = await handler.Handle(
-                new CreateResumeFromDraftCommand(httpContext.User.GetAccountId(), request.ToDraft()),
+                new CreateResumeFromDraftCommand(accountId, request.ToDraft()),
                 cancellationToken);
 
             return result.IsSuccess
@@ -70,11 +87,18 @@ public static class ResumeEndpoints
         // body of `{"projects":[{},{},...]}` was fully deserialized before ResumeDraftLimits could
         // decline it.
         //
-        // THE ATTRIBUTE ALONE DOES NOTHING HERE. RequestSizeLimitAttribute is an MVC filter; on a
-        // minimal-API endpoint it is inert metadata, measured against a real Kestrel host on this
-        // solution (4 KB body, 1 KB declared limit, answer 200). RequestSizeLimitMiddleware is what
-        // reads it — this line only declares the number, and removing that middleware makes the limit
-        // decoration again without breaking compilation.
+        // THE FRAMEWORK ENFORCES THIS ON ITS OWN. Kestrel applies IRequestSizeLimitMetadata while the
+        // body is READ, which is why a handler that never touches its body is never refused for the
+        // size of one — and measuring exactly that is how an earlier revision of this file talked
+        // itself into a middleware nothing needed. Measured properly, on a real Kestrel host against
+        // an endpoint that binds a body: under the limit 200, over it 413, and chunked with no
+        // Content-Length also 413. ResumeImportSizeLimitTests pins that behaviour so the claim is
+        // executed rather than asserted.
+        //
+        // The 413 comes back with Content-Length: 0 and Connection: close, and no IExceptionHandler
+        // runs, so it is the one error in this API that is not ProblemDetails-shaped. That cannot be
+        // fixed from inside the app — see MalformedRequestExceptionHandler, which covers the malformed
+        // bodies that CAN be shaped and explains why this one cannot.
         //
         // 2 MiB. Arithmetic, not a round number: a draft filled to every cap is roughly 700 KB of JSON —
         // 50 experiences at ~5 KB each once their 50 highlights are counted, 50 projects at ~6.5 KB with

@@ -284,7 +284,11 @@ public class CreateResumeFromDraftHandlerTests
         result.IsSuccess.Should().BeFalse();
         var error = result.FieldErrors.Should().ContainSingle().Subject;
         error.Path.Should().Be("skills[2].name");
-        error.Message.Should().Contain("already exists");
+
+        // The path names the later occurrence and the message names the earlier one, so a review screen
+        // can highlight both rows — and the candidate's own text appears in neither.
+        error.Message.Should().Be("Duplicates the skill at index 0.");
+        error.Message.Should().NotContainEquivalentOf("React");
         _resumes.AddCount.Should().Be(0);
     }
 

@@ -17,6 +17,12 @@ internal static class SaveChangesExtensions
     private const int UniqueIndexViolation = 2601;
     private const int UniqueConstraintViolation = 2627;
 
+    // "String or binary data would be truncated." Nothing on the current model should reach it — every
+    // bounded plaintext column has a Domain rule that refuses an over-long value first — so this is the
+    // net under the next such column added without one. See ValueTooLongException for why the
+    // SqlException is deliberately NOT carried along.
+    private const int StringOrBinaryTruncated = 2628;
+
     public static async Task SaveTranslatingFailuresAsync(
         this BuildCvDbContext context, CancellationToken cancellationToken)
     {
@@ -38,8 +44,18 @@ internal static class SaveChangesExtensions
             // identifier into an error string that ends up in a log and in an HTTP response.
             throw new DuplicateKeyException("A record with the same unique value already exists.", exception);
         }
+        catch (DbUpdateException exception) when (IsTruncation(exception))
+        {
+            // The inner exception is deliberately dropped, not passed along: SQL Server's own 2628
+            // message quotes the offending value back, and PersistenceExceptionHandler logs the chain.
+            // See ValueTooLongException.
+            throw new ValueTooLongException("A value in the request is too long for the column that stores it.");
+        }
     }
 
     private static bool IsUniqueViolation(DbUpdateException exception) =>
         exception.InnerException is SqlException { Number: UniqueIndexViolation or UniqueConstraintViolation };
+
+    private static bool IsTruncation(DbUpdateException exception) =>
+        exception.InnerException is SqlException { Number: StringOrBinaryTruncated };
 }

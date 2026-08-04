@@ -47,13 +47,20 @@ public sealed class CsrfGuardMiddleware(RequestDelegate next)
             catch (AntiforgeryValidationException)
             {
                 context.Response.StatusCode = StatusCodes.Status403Forbidden;
-                context.Response.ContentType = "application/problem+json";
-                await context.Response.WriteAsJsonAsync(new ProblemDetails
-                {
-                    Title = "Forbidden",
-                    Detail = "CSRF validation failed.",
-                    Status = StatusCodes.Status403Forbidden
-                });
+
+                // contentType passed to WriteAsJsonAsync, not assigned to Response.ContentType first:
+                // the overload without it OVERWRITES whatever is set with "application/json", so the
+                // assignment that used to be on the line above never survived and this response was
+                // ProblemDetails-shaped without being ProblemDetails-typed.
+                await context.Response.WriteAsJsonAsync(
+                    new ProblemDetails
+                    {
+                        Title = "Forbidden",
+                        Detail = "CSRF validation failed.",
+                        Status = StatusCodes.Status403Forbidden
+                    },
+                    options: null,
+                    contentType: "application/problem+json");
                 return;
             }
         }

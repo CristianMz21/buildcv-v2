@@ -1,6 +1,9 @@
+using System.Reflection;
 using BuildCv.Application.Resumes;
+using BuildCv.Domain.Common.ValueObjects;
 using BuildCv.Domain.Identity;
 using BuildCv.Domain.Resumes;
+using BuildCv.Infrastructure.Persistence;
 using FluentAssertions;
 
 namespace BuildCv.Infrastructure.Tests.Persistence.EfCore;
@@ -101,6 +104,40 @@ public sealed class ResumeImportIntegrationTests
         var reloaded = await TestRepositories.Resumes(reader).GetByIdAsync(storedId);
 
         reloaded!.Languages.Should().ContainSingle().Which.Name.Should().Be(name);
+    }
+
+    // The class of defect, not the instance. Language.Create now refuses an over-long name, so the only
+    // way to reach SQL Server error 2628 is to bypass the Domain rule — which is exactly the situation
+    // this translation exists for: the NEXT bounded plaintext column, added without its rule.
+    //
+    // Reflection over the private constructor is the point rather than a shortcut. There is deliberately
+    // no legal way to build this value any more, so simulating "a column with no Domain rule" means
+    // constructing the state a missing rule would have allowed.
+    [Fact]
+    public async Task AWriteTooLongForItsColumn_IsTranslatedInsteadOfEscapingAsASqlException()
+    {
+        var resume = Resume.Create(AccountId.New(), new ContactInformation(
+            PersonName.Create("Jane Candidate"), Email.Create($"{Guid.NewGuid():N}@example.com")));
+
+        var constructor = typeof(Language).GetConstructor(
+            BindingFlags.NonPublic | BindingFlags.Instance,
+            binder: null,
+            [typeof(string), typeof(string), typeof(LanguageProficiency?)],
+            modifiers: null);
+
+        constructor.Should().NotBeNull("this test simulates a Domain type that forgot its length rule");
+        resume.AddLanguage((Language)constructor!.Invoke([new string('a', 200), null, null]));
+
+        await using var writer = _fixture.NewApplicationContext();
+        var act = async () => await TestRepositories.Resumes(writer).AddAsync(resume);
+
+        var thrown = await act.Should().ThrowAsync<ValueTooLongException>(
+            "an untranslated 2628 reaches the API as a 500 and takes the offending value into the log");
+
+        // The value must not travel with the exception. SQL Server's own 2628 message quotes it back —
+        // "Truncated value: 'aaaa...'" — and PersistenceExceptionHandler logs the chain.
+        thrown.Which.InnerException.Should().BeNull();
+        thrown.Which.Message.Should().NotContain("aaaa");
     }
 
     private static ResumeDraft FullDraft() => new(

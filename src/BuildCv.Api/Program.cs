@@ -9,6 +9,7 @@ using BuildCv.Infrastructure.Persistence;
 using BuildCv.Infrastructure.Security;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Routing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
@@ -32,6 +33,7 @@ builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ICurrentUser, HttpContextCurrentUser>();
 
 builder.Services.AddSingleton<PasswordChangeRateLimiter>();
+builder.Services.AddSingleton<ResumeImportRateLimiter>();
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer()
@@ -118,7 +120,16 @@ if (allowedOrigins.Length > 0)
 }
 
 builder.Services.AddProblemDetails();
+// ON IN EVERY ENVIRONMENT, not at its default of IsDevelopment(). Left alone, a body that is not valid
+// JSON answers an EMPTY 400 in production and a logged 500 in Development — one input, two wrong
+// answers, neither ProblemDetails-shaped. Turning it on everywhere makes binding failures reach
+// MalformedRequestExceptionHandler, which is the only way this API can answer them in its own shape.
+// Binding failures are logged at Debug by the framework, so this does not turn malformed input into
+// error-level noise.
+builder.Services.Configure<RouteHandlerOptions>(options => options.ThrowOnBadRequest = true);
+
 builder.Services.AddExceptionHandler<DomainExceptionHandler>();
+builder.Services.AddExceptionHandler<MalformedRequestExceptionHandler>();
 // Before the catch-all: a storage conflict is a 409 the client can act on, and letting it fall through
 // to the 500 handler would tell a caller whose only problem is a stale copy that the server is broken.
 builder.Services.AddExceptionHandler<PersistenceExceptionHandler>();
@@ -163,14 +174,6 @@ if (allowedOrigins.Length > 0)
     app.UseCors(CorsPolicies.Strict);
 
 app.UseRateLimiter();
-
-// After the rate limiter and before authentication, on purpose. It reads the ROUTED endpoint's
-// IRequestSizeLimitMetadata, which routing (added at the head of the pipeline by WebApplication) has
-// already resolved; a 413 does not depend on who is asking; and refusing an oversized body is cheaper
-// than authenticating one. Nothing in the framework enforces that metadata for minimal APIs — see the
-// remarks on the middleware, which include the measurement.
-app.UseMiddleware<RequestSizeLimitMiddleware>();
-
 app.UseAuthentication();
 app.UseMiddleware<CsrfGuardMiddleware>();
 app.UseAuthorization();

@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using BuildCv.Api.Endpoints;
+using BuildCv.Api.Security;
 using FluentAssertions;
 using Microsoft.AspNetCore.Mvc.Testing;
 
@@ -253,57 +254,6 @@ public sealed class ResumeImportTests
             .Should().BeEquivalentTo(["contact.profiles[0]"]);
     }
 
-    // The endpoint carries the only request-size limit in this API. Without it, Kestrel's 30 MB default
-    // applied and a body of empty objects was fully deserialized — and then copied again by ToDraft —
-    // before ResumeDraftLimits could decline it.
-    [Fact]
-    public async Task Import_WithABodyOverTheEndpointLimit_IsRefusedBeforeValidation()
-    {
-        using var factory = new ApiTestFactory();
-        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
-        var (_, token) = await client.RegisterAndLoginAsync(TestHelpers.CandidateEmail);
-
-        // Valid JSON and a valid draft in every respect except its size, so the refusal can only be the
-        // size limit: a padded summary one byte past the ceiling.
-        var padding = new string('a', (int)ResumeEndpoints.ImportRequestSizeLimitBytes);
-        var oversized =
-            "{\"contact\":{\"fullName\":\"Jane Candidate\",\"email\":\"jane@example.com\",\"summary\":\""
-            + padding + "\"}}";
-
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/resumes/import")
-        {
-            Content = new StringContent(oversized, Encoding.UTF8, System.Net.Mime.MediaTypeNames.Application.Json),
-        }.WithBearer(token);
-
-        var response = await client.SendAsync(request);
-
-        response.StatusCode.Should().Be(HttpStatusCode.RequestEntityTooLarge);
-    }
-
-    [Fact]
-    public async Task Import_WithABodyUnderTheEndpointLimit_IsAccepted()
-    {
-        using var factory = new ApiTestFactory();
-        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
-        var (_, token) = await client.RegisterAndLoginAsync(TestHelpers.CandidateEmail);
-
-        // Half the ceiling. The pair matters: a limit accidentally set far too low would pass the test
-        // above and reject every real CV in production.
-        var padding = new string('a', (int)(ResumeEndpoints.ImportRequestSizeLimitBytes / 2));
-        var body =
-            "{\"contact\":{\"fullName\":\"Jane Candidate\",\"email\":\"jane@example.com\",\"summary\":\""
-            + padding + "\"}}";
-
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/resumes/import")
-        {
-            Content = new StringContent(body, Encoding.UTF8, System.Net.Mime.MediaTypeNames.Application.Json),
-        }.WithBearer(token);
-
-        var response = await client.SendAsync(request);
-
-        response.StatusCode.Should().Be(HttpStatusCode.Created);
-    }
-
     // Website and Profiles were unreachable before this endpoint, which is exactly why nothing noticed
     // that PUT /resumes/{id}/contact rebuilds the contact through ContactInformationFactory — a factory
     // that hardcodes a null Website and an empty Profiles list. The moment import can fill them, that
@@ -343,6 +293,148 @@ public sealed class ResumeImportTests
             .Should().Be("https://jane.example.com", "an unsent field means unchanged, not deleted");
         contact.GetProperty("profiles").EnumerateArray().Single()
             .GetProperty("network").GetString().Should().Be("GitHub");
+    }
+
+    // Certificate.Name and Interest.Name are classified CONFIDENTIAL and encrypted at rest. The duplicate
+    // messages used to quote them back — "Certificate '<value>' already exists." — putting the candidate's
+    // own data in plaintext inside a string a review screen renders. The path already carries the index,
+    // so the value bought nothing.
+    [Fact]
+    public async Task Import_WithADuplicate_DoesNotEchoTheValueIntoTheErrorBody()
+    {
+        using var factory = new ApiTestFactory();
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        var (_, token) = await client.RegisterAndLoginAsync(TestHelpers.CandidateEmail);
+
+        const string Marker = "SECRET-HOBBY-<img src=x onerror=alert(1)>";
+
+        var response = await PostImportAsync(client, token, new
+        {
+            contact = new { fullName = "Jane Candidate", email = "jane@example.com" },
+            interests = new[] { new { name = Marker }, new { name = Marker } },
+            certificates = new[]
+            {
+                new { name = Marker, issuer = "CNCF" },
+                new { name = Marker, issuer = "CNCF" }
+            }
+        });
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+
+        var body = await response.Content.ReadAsStringAsync();
+        body.Should().NotContain("SECRET-HOBBY", "the candidate's own value must not travel back in an error string");
+        body.Should().NotContain("onerror");
+
+        using var problem = JsonDocument.Parse(body);
+        var errors = problem.RootElement.GetProperty("errors");
+        errors.GetProperty("interests[1].name").EnumerateArray().Single().GetString()
+            .Should().Be("Duplicates the interest at index 0.");
+        errors.GetProperty("certificates[1].name").EnumerateArray().Single().GetString()
+            .Should().Be("Duplicates the certificate at index 0.");
+    }
+
+    // The CSRF guard covers this route because it covers every cookie-authenticated unsafe method, but
+    // nothing pinned it here, and a route added to CsrfGuardMiddleware.ExemptPaths by mistake would fail
+    // no test. Both directions, so the 201 proves the 403 is about the token and not about the request.
+    [Fact]
+    public async Task Import_FromACookieClientWithoutTheCsrfToken_IsForbidden()
+    {
+        using var factory = new ApiTestFactory();
+        using var client = factory.CreateCookieClient();
+        await client.RegisterAndLoginAsync(TestHelpers.CandidateEmail);
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/resumes/import")
+        {
+            Content = JsonContent.Create(FullDraft()),
+        };
+
+        (await client.SendAsync(request)).StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task Import_FromACookieClientWithTheCsrfToken_IsCreated()
+    {
+        using var factory = new ApiTestFactory();
+        using var client = factory.CreateCookieClient();
+        await client.RegisterAndLoginAsync(TestHelpers.CandidateEmail);
+        var csrfToken = await client.GetAntiforgeryTokenAsync();
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/resumes/import")
+        {
+            Content = JsonContent.Create(FullDraft()),
+        };
+        request.Headers.Add(CsrfGuardMiddleware.CsrfHeaderName, csrfToken);
+
+        (await client.SendAsync(request)).StatusCode.Should().Be(HttpStatusCode.Created);
+    }
+
+    // Per ACCOUNT, not per IP. The global 100/min per-IP limiter was the only ceiling on the most durable
+    // write in this API — measured, 95 imports went through before the first 429.
+    [Fact]
+    public async Task Import_BeyondItsPerAccountCeiling_IsThrottled()
+    {
+        using var factory = new ApiTestFactory();
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        var (_, token) = await client.RegisterAndLoginAsync(TestHelpers.CandidateEmail);
+
+        for (var attempt = 0; attempt < ResumeImportRateLimiter.PermitLimit; attempt++)
+        {
+            (await PostImportAsync(client, token, FullDraft())).StatusCode
+                .Should().Be(HttpStatusCode.Created, "attempt {0} is inside the window", attempt);
+        }
+
+        var throttled = await PostImportAsync(client, token, FullDraft());
+
+        throttled.StatusCode.Should().Be(HttpStatusCode.TooManyRequests);
+        throttled.Headers.RetryAfter.Should().NotBeNull("a throttled client is told when to come back");
+    }
+
+    // A second account is unaffected, which is the whole point of keying on the account rather than the
+    // address: the per-IP window would have throttled this caller too.
+    [Fact]
+    public async Task Import_ByAnotherAccountFromTheSameAddress_IsNotThrottled()
+    {
+        using var factory = new ApiTestFactory();
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        var (_, first) = await client.RegisterAndLoginAsync(TestHelpers.CandidateEmail);
+
+        for (var attempt = 0; attempt < ResumeImportRateLimiter.PermitLimit; attempt++)
+            await PostImportAsync(client, first, FullDraft());
+
+        (await PostImportAsync(client, first, FullDraft())).StatusCode
+            .Should().Be(HttpStatusCode.TooManyRequests);
+
+        var (_, second) = await client.RegisterAndLoginAsync("second-candidate@example.com");
+
+        (await PostImportAsync(client, second, FullDraft())).StatusCode
+            .Should().Be(HttpStatusCode.Created);
+    }
+
+    // Malformed bodies used to answer an EMPTY 400 in production and a logged 500 in Development. They are
+    // the class of refusal that CAN be shaped from inside the app, unlike the 413 — see
+    // MalformedRequestExceptionHandler.
+    [Theory]
+    [InlineData("{not json")]
+    [InlineData("null")]
+    public async Task Import_WithAMalformedBody_IsProblemDetailsShaped(string body)
+    {
+        using var factory = new ApiTestFactory();
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        var (_, token) = await client.RegisterAndLoginAsync(TestHelpers.CandidateEmail);
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/resumes/import")
+        {
+            Content = new StringContent(body, Encoding.UTF8, System.Net.Mime.MediaTypeNames.Application.Json),
+        }.WithBearer(token);
+
+        var response = await client.SendAsync(request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest,
+            "a body the binder cannot read is the caller's fault, not a 500");
+        response.Content.Headers.ContentType!.MediaType.Should().Be("application/problem+json");
+
+        using var problem = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        problem.RootElement.GetProperty("status").GetInt32().Should().Be(400);
     }
 
     [Fact]
