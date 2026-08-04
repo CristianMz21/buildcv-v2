@@ -21,9 +21,12 @@ internal static class MagicBytes
     public static bool StartsWith(Stream content, ReadOnlySpan<byte> prefix)
     {
         content.Position = 0;
-        Span<byte> head = stackalloc byte[8];
-        var read = content.ReadAtLeast(head[..prefix.Length], prefix.Length, throwOnEndOfStream: false);
+        // Sized to the prefix, not a fixed 8: a fixed buffer plus head[..prefix.Length] would silently
+        // throw for any prefix longer than it, coupling this method's correctness to a caller
+        // constraint that lives elsewhere. Prefixes here are tiny (<= 5 bytes), so the stack cost is nil.
+        Span<byte> head = stackalloc byte[prefix.Length];
+        var read = content.ReadAtLeast(head, prefix.Length, throwOnEndOfStream: false);
         content.Position = 0;
-        return read >= prefix.Length && head[..prefix.Length].SequenceEqual(prefix);
+        return read >= prefix.Length && head.SequenceEqual(prefix);
     }
 }

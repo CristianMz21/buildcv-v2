@@ -109,6 +109,32 @@ public sealed class DocumentTextExtractionTests
         await act.Should().ThrowAsync<OperationCanceledException>();
     }
 
+    // Spanish accents through the PDF path. This is the scenario the original PR could not express: its
+    // fixture helper used a Standard-14 font, which in PdfPig's writer throws on 'í' and 'ó' — the exact
+    // letters in "María López" — so a Spanish CV PDF was UNTESTABLE, in a Spanish-market product. The
+    // fix is an embedded TrueType font (AccentedPdfBytes); the extractor reads accents faithfully from
+    // it, as the reviewer independently confirmed.
+    //
+    // The font comes from the host, located robustly (xUnit 2.9.3 has no runtime skip, and a 350 KB+
+    // committed font binary is not worth avoiding a single system dependency). Every environment this
+    // runs in has Latin TrueType fonts: ubuntu-latest CI ships DejaVu, and the dev boxes here have it
+    // too. A genuinely fontless box fails with an actionable message rather than passing vacuously —
+    // which is the project's own rule about controls that never ran.
+    [Fact]
+    public async Task Pdf_WithSpanishAccents_RoundTripsExactly()
+    {
+        var fontPath = LocateLatinFont();
+        fontPath.Should().NotBeNull(
+            "a Latin TrueType font is required to write an accented PDF fixture; install DejaVu, "
+            + "Liberation or Noto. CI (ubuntu-latest) and the dev boxes here all have one.");
+
+        var result = await Extract(AccentedPdfBytes(fontPath!, "María López", "ñoño café ürü"), PdfContentType);
+
+        result.IsSuccess.Should().BeTrue(result.Error);
+        result.Value!.Text.Should().Contain("María López");
+        result.Value.Text.Should().Contain("ñoño café ürü");
+    }
+
     // ---------------------------------------------------------------- DOCX
 
     [Fact]
@@ -231,6 +257,74 @@ public sealed class DocumentTextExtractionTests
         result.Error.Should().Be("The Word document could not be read. It may be corrupt.");
     }
 
+    // THE AMPLIFICATION ATTACK. A valid OPC package whose document.xml is ~1.5 million one-character
+    // paragraphs: ~150 KB on the wire, ~48 MiB decompressed — under BOTH size caps — yet the DOM it
+    // asks OpenXml to build is a million-plus objects. Measured before the fix: 662 MiB peak, 200 OK.
+    // The streaming reader's text bound refuses it instead. Bytes are not a bound on the work bytes buy;
+    // this is the test that was missing when a comment claimed the parse was "ordinary work".
+    [Fact]
+    public async Task Docx_WithAnAmplifyingElementCount_IsRefusedByTheTextBound()
+    {
+        var attack = AmplifyingDocx(paragraphs: 1_500_000);
+        attack.Length.Should().BeLessThan((int)IDocumentTextExtractor.MaxDocumentBytes,
+            "the attack is a small upload — its danger is the inflation, not the wire size");
+
+        using (var archive = new ZipArchive(new MemoryStream(attack), ZipArchiveMode.Read))
+        {
+            long declared = 0;
+            foreach (var entry in archive.Entries)
+                declared += entry.Length;
+            declared.Should().BeLessThan(OpenXmlDocxTextExtractor.MaxDecompressedBytes,
+                "fixture integrity: it must pass the byte caps, or it would be caught by the wrong guard");
+        }
+
+        var result = await Extract(attack, DocxContentType);
+
+        result.IsSuccess.Should().BeFalse();
+        result.Error.Should().Contain("more text than can be processed");
+    }
+
+    // The counter-case: a genuinely long CV — 100 paragraphs of 2,000 characters, 200 K in total, an
+    // order of magnitude over any real CV and still a fifth of the cap — is ACCEPTED. Pins that the
+    // text bound refuses runaways without refusing real content.
+    [Fact]
+    public async Task Docx_WithALargeButLegalAmountOfText_IsAccepted()
+    {
+        var paragraph = new string('a', 2_000);
+        var large = DocxBytes(Enumerable.Repeat(paragraph, 100).ToArray());
+
+        var result = await Extract(large, DocxContentType);
+
+        result.IsSuccess.Should().BeTrue(result.Error);
+        result.Value!.Text.Length.Should().BeGreaterThan(199_000).And.BeLessThan(OpenXmlDocxTextExtractor.MaxExtractedTextChars);
+    }
+
+    // Spanish accents through the DOCX path — the single most product-relevant scenario, and the one
+    // the original PR's ASCII-only fixtures never touched. DOCX stores text as UTF-8 XML, so there is
+    // no font to embed; the round-trip must be exact.
+    [Fact]
+    public async Task Docx_WithSpanishAccents_RoundTripsExactly()
+    {
+        var result = await Extract(DocxBytes("María López", "Ingeniera de software — ñoño, café, ürü"), DocxContentType);
+
+        result.IsSuccess.Should().BeTrue(result.Error);
+        result.Value!.Text.Should().Be("María López\nIngeniera de software — ñoño, café, ürü");
+    }
+
+    // The catch-all must not swallow cancellation into "corrupt" on the DOCX path either. Pre-cancelled,
+    // the decompression-scan loop's ThrowIfCancellationRequested fires and propagates.
+    [Fact]
+    public async Task Docx_WithACancelledToken_PropagatesTheCancellation()
+    {
+        using var cancelled = new CancellationTokenSource();
+        cancelled.Cancel();
+
+        var act = () => Extractor.ExtractAsync(
+            new MemoryStream(DocxBytes("text")), DocxContentType, cancelled.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
     // ---------------------------------------------------------------- Plain text
 
     [Fact]
@@ -284,6 +378,30 @@ public sealed class DocumentTextExtractionTests
         result.Value!.Text.Should().BeEmpty();
         result.Value.Warnings.Should().ContainSingle()
             .Which.Should().Be(PlainTextExtractor.NoTextWarning);
+    }
+
+    // Spanish accents through the plain-text path. UTF-8 without a BOM: the í, ó and ñ each carry a
+    // high bit but never a NUL byte, so the binary guard lets them through and the StreamReader decodes
+    // them.
+    [Fact]
+    public async Task PlainText_WithSpanishAccents_RoundTripsExactly()
+    {
+        var result = await Extract(Encoding.UTF8.GetBytes("María López — ñoño, café"), "text/plain");
+
+        result.IsSuccess.Should().BeTrue(result.Error);
+        result.Value!.Text.Should().Be("María López — ñoño, café");
+    }
+
+    [Fact]
+    public async Task PlainText_WithACancelledToken_PropagatesTheCancellation()
+    {
+        using var cancelled = new CancellationTokenSource();
+        cancelled.Cancel();
+
+        var act = () => Extractor.ExtractAsync(
+            new MemoryStream(Encoding.UTF8.GetBytes("text")), "text/plain", cancelled.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
     }
 
     // ---------------------------------------------------------------- Dispatch and bounds
@@ -386,6 +504,98 @@ public sealed class DocumentTextExtractionTests
         }
 
         return builder.Build();
+    }
+
+    // The fix for the original PR's structural incapability: a PDF fixture that embeds a real TrueType
+    // font, so accented text can be written at all. Standard-14 in PdfPig's writer throws on 'í'/'ó',
+    // which is why the ASCII PdfBytes helper above cannot express a Spanish name.
+    private static byte[] AccentedPdfBytes(string fontPath, params string[] pages)
+    {
+        var builder = new PdfDocumentBuilder();
+        var font = builder.AddTrueTypeFont(File.ReadAllBytes(fontPath));
+        foreach (var text in pages)
+        {
+            var page = builder.AddPage(UglyToad.PdfPig.Content.PageSize.A4);
+            page.AddText(text, 12, new PdfPoint(25, 700), font);
+        }
+
+        return builder.Build();
+    }
+
+    // A proportional Latin TrueType font with the accented glyphs a Spanish CV needs. Known install
+    // paths first (fast), then a recursive search of the standard font roots for a known Latin-complete
+    // family — so it finds one wherever fonts live, not only at the exact path a given distro uses.
+    private static string? LocateLatinFont()
+    {
+        string[] knownPaths =
+        [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",       // Debian/Ubuntu (ubuntu-latest CI)
+            "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf",     // Fedora
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/liberation-sans-fonts/LiberationSans-Regular.ttf",
+            "/Library/Fonts/Arial.ttf",                              // macOS
+            "C:\\Windows\\Fonts\\arial.ttf"
+        ];
+        var direct = knownPaths.FirstOrDefault(File.Exists);
+        if (direct is not null)
+            return direct;
+
+        // Named families known to carry full Latin coverage — not just any .ttf, which could be an
+        // icon or symbol font with no letters at all.
+        string[] families =
+        [
+            "DejaVuSans.ttf", "LiberationSans-Regular.ttf", "LiberationSerif-Regular.ttf",
+            "NotoSans-Regular.ttf", "FreeSans.ttf", "Arial.ttf"
+        ];
+        string[] roots =
+        [
+            "/usr/share/fonts", "/usr/local/share/fonts", "/Library/Fonts", "/System/Library/Fonts"
+        ];
+        foreach (var root in roots.Where(Directory.Exists))
+            foreach (var family in families)
+            {
+                var hit = Directory.EnumerateFiles(root, family, SearchOption.AllDirectories).FirstOrDefault();
+                if (hit is not null)
+                    return hit;
+            }
+
+        return null;
+    }
+
+    // The amplification fixture: a VALID OPC package whose word/document.xml is one repeated
+    // <w:p><w:r><w:t>x</w:t></w:r></w:p>, streamed straight to the entry so building it costs no memory
+    // either. The wrapper parts are the minimum WordprocessingDocument.Open accepts.
+    private static byte[] AmplifyingDocx(int paragraphs)
+    {
+        const string contentTypes =
+            """<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>""";
+        const string rels =
+            """<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>""";
+
+        using var stream = new MemoryStream();
+        using (var archive = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            void Write(string name, string content)
+            {
+                var entry = archive.CreateEntry(name, CompressionLevel.SmallestSize);
+                using var entryStream = entry.Open();
+                entryStream.Write(Encoding.UTF8.GetBytes(content));
+            }
+
+            Write("[Content_Types].xml", contentTypes);
+            Write("_rels/.rels", rels);
+
+            var document = archive.CreateEntry("word/document.xml", CompressionLevel.SmallestSize);
+            using var documentStream = document.Open();
+            using var writer = new StreamWriter(documentStream, new UTF8Encoding(false));
+            writer.Write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>");
+            writer.Write("<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body>");
+            for (var i = 0; i < paragraphs; i++)
+                writer.Write("<w:p><w:r><w:t>x</w:t></w:r></w:p>");
+            writer.Write("</w:body></w:document>");
+        }
+
+        return stream.ToArray();
     }
 
     private static byte[] DocxBytes(params string[] paragraphs)
