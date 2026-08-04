@@ -1,4 +1,4 @@
-using BuildCv.Application.Resumes;
+using BuildCv.Application.Common;
 using BuildCv.Domain.Common.ValueObjects;
 
 namespace BuildCv.Api.Common;

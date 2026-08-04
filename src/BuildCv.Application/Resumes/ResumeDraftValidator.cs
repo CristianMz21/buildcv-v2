@@ -1,10 +1,10 @@
 namespace BuildCv.Application.Resumes;
 
-using System.Globalization;
+using BuildCv.Application.Common;
 using BuildCv.Domain.Common.ValueObjects;
-using BuildCv.Domain.Exceptions;
 using BuildCv.Domain.Identity;
 using BuildCv.Domain.Resumes;
+using static BuildCv.Application.Common.FieldErrorCollector;
 
 /// <summary>
 /// Turns a reviewed <see cref="ResumeDraft"/> into either a complete <see cref="Resume"/> or the full
@@ -43,12 +43,6 @@ using BuildCv.Domain.Resumes;
 /// </remarks>
 public static class ResumeDraftValidator
 {
-    private const string DateFormat = "yyyy-MM-dd";
-    private const string RequiredMessage = "Value is required.";
-    private const string ControlCharacterMessage = "Value must not contain control characters.";
-    private const string InvalidDateMessage = "Invalid date. Expected yyyy-MM-dd.";
-    private const string InvalidNumberMessage = "Invalid number.";
-
     // Word for word what the endpoints in ResumeEndpoints.cs already answer for the same input, so a
     // candidate is not told two different things about one field depending on which route they used.
     private const string InvalidExperienceTypeMessage = "Invalid experience type.";
@@ -326,39 +320,6 @@ public static class ResumeDraftValidator
                 name, Optional(item.Position), company, email, phoneNumber, Optional(item.ReferenceText))));
         });
 
-    // Walks one section, or refuses to. Over-cap returns WITHOUT iterating — building a hundred
-    // thousand value objects is exactly the work the cap exists to decline — but only this section is
-    // skipped, so the errors in the sections beside it are still collected.
-    //
-    // A NULL ELEMENT is a field error at its own index, not a crash. `[null]` and `[{}, null]` are
-    // valid JSON and System.Text.Json does not enforce nullable reference annotations, so a null
-    // arrives here as a real element whatever the declared type says. Handling it once, here, covers
-    // every one of the eleven sections and the two nested text lists.
-    private static void ForEachCapped<TDraft>(
-        IReadOnlyList<TDraft?>? items, string path, int limit, List<FieldError> errors, Action<TDraft, string> handle)
-        where TDraft : class
-    {
-        if (items is null || items.Count == 0)
-            return;
-
-        if (items.Count > limit)
-        {
-            errors.Add(new FieldError(path, $"Too many items. At most {limit} are accepted."));
-            return;
-        }
-
-        for (var index = 0; index < items.Count; index++)
-        {
-            var itemPath = $"{path}[{index}]";
-            var item = items[index];
-
-            if (item is null)
-                errors.Add(new FieldError(itemPath, RequiredMessage));
-            else
-                handle(item, itemPath);
-        }
-    }
-
     // Highlights and keywords, which take RequiredText rather than Required: the Domain accepts control
     // characters in these lists today (they are unvalidated encrypted string lists, and the per-section
     // routes store them as sent), so refusing a bullet that happens to contain a newline would be this
@@ -387,237 +348,5 @@ public static class ResumeDraftValidator
                 accepted.Add(technology);
         });
         return accepted;
-    }
-
-    // The ONE place a domain rule becomes a field error. Every factory in the Domain signals a
-    // violation as a DomainException (invariants) or an ArgumentException (null, blank, out of range),
-    // and the message it carries is the message the candidate reads.
-    private static T? Build<T>(string path, List<FieldError> errors, Func<T> create) where T : class
-    {
-        try
-        {
-            return create();
-        }
-        catch (DomainException exception)
-        {
-            errors.Add(new FieldError(path, exception.Message));
-            return null;
-        }
-        catch (ArgumentException exception)
-        {
-            errors.Add(new FieldError(path, ForACandidate(exception.Message)));
-            return null;
-        }
-    }
-
-    // Same two catches for the mutating half — Resume.AddSkill and friends enforce the duplicate rules,
-    // which no constructor can see because they are about the aggregate, not the item.
-    private static void Add(string path, List<FieldError> errors, Action add)
-    {
-        try
-        {
-            add();
-        }
-        catch (DomainException exception)
-        {
-            errors.Add(new FieldError(path, exception.Message));
-        }
-        catch (ArgumentException exception)
-        {
-            errors.Add(new FieldError(path, ForACandidate(exception.Message)));
-        }
-    }
-
-    // ArgumentException appends " (Parameter 'x')" to its message and ArgumentOutOfRangeException adds a
-    // second line, "Actual value was N." Both are C# talking to a developer, and this text is rendered
-    // on a review screen — the same reason Required states its own message for a blank rather than
-    // letting the factory's parameter name through.
-    //
-    // The VERDICT is untouched; only the presentation is trimmed, and only for ArgumentException.
-    // DomainException messages are written for a person and pass through unchanged.
-    private static string ForACandidate(string message)
-    {
-        var firstLine = message.AsSpan();
-        var lineBreak = firstLine.IndexOfAny('\r', '\n');
-        if (lineBreak >= 0)
-            firstLine = firstLine[..lineBreak];
-
-        var parameterSuffix = firstLine.LastIndexOf(" (Parameter '");
-        return parameterSuffix < 0 ? firstLine.ToString() : firstLine[..parameterSuffix].ToString();
-    }
-
-    // Blank is reported here rather than left to the factory only because the factory's own message for
-    // it names a C# parameter ("Value cannot be null. (Parameter 'value')"), which is not something to
-    // put on a review screen. The VERDICT is unchanged: every factory used below rejects null and blank
-    // through ArgumentException.ThrowIfNullOrWhiteSpace, so this cannot accept something they refuse.
-    private static T? BuildRequired<T>(string path, string? value, Func<string, T> create, List<FieldError> errors)
-        where T : class
-    {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            errors.Add(new FieldError(path, RequiredMessage));
-            return null;
-        }
-
-        return Build(path, errors, () => create(value));
-    }
-
-    // Blank is ABSENT, not invalid. Extraction routinely yields "" for a field it could not find, and
-    // the per-section handlers already treat a missing optional as null.
-    private static T? BuildOptional<T>(string path, string? value, Func<string, T> create, List<FieldError> errors)
-        where T : class =>
-        string.IsNullOrWhiteSpace(value) ? null : Build(path, errors, () => create(value));
-
-    // Required plain text, for the identity fields a Domain record declares non-nullable while enforcing
-    // nothing else about them — Experience.Position, Project.Name, Certificate.Name, Award.Title,
-    // Publication.Title, Interest.Name, Reference.Name and Profile.Network. The non-null declaration IS
-    // the rule they have.
-    //
-    // CONTROL CHARACTERS ARE REFUSED, matching what every sibling value object already does:
-    // PersonName.Create, OrganizationName.Create and Technology.Create all reject
-    // `.Any(char.IsControl)`, and IsNullOrWhiteSpace does not — `"Music \r\nadmin: true"` is not
-    // whitespace. These are short single-line values, several of which land in a plaintext column;
-    // BuildTextList uses RequiredText instead because a free-text bullet is a different thing.
-    //
-    // This is the one place the import is STRICTER than the per-section routes: nullable reference types
-    // are not enforced by System.Text.Json, so POST /resumes/{id}/interests with a null name stores a
-    // null name today. A draft is a whole CV, and a nameless row in it is not something a candidate can
-    // see or fix on a review screen.
-    private static string? Required(string path, string? value, List<FieldError> errors)
-    {
-        var text = RequiredText(path, value, errors);
-        if (text is null)
-            return null;
-
-        if (!text.Any(char.IsControl))
-            return text;
-
-        errors.Add(new FieldError(path, ControlCharacterMessage));
-        return null;
-    }
-
-    private static string? RequiredText(string path, string? value, List<FieldError> errors)
-    {
-        if (!string.IsNullOrWhiteSpace(value))
-            return value;
-
-        errors.Add(new FieldError(path, RequiredMessage));
-        return null;
-    }
-
-    private static string? Optional(string? value) => string.IsNullOrWhiteSpace(value) ? null : value;
-
-    // yyyy-MM-dd exactly, because that is what the rest of the API already speaks: the per-section
-    // routes bind DateOnly through System.Text.Json, whose converter accepts the ISO 8601 full-date
-    // form and nothing else. TryParse with the ambient culture would make 03/04/2020 mean different
-    // days on different servers.
-    private static DateOnly? ParseDate(string path, string? value, List<FieldError> errors)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-            return null;
-
-        if (DateOnly.TryParseExact(value, DateFormat, CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed))
-            return parsed;
-
-        errors.Add(new FieldError(path, InvalidDateMessage));
-        return null;
-    }
-
-    private static int? ParseInt(string path, string? value, List<FieldError> errors)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-            return null;
-
-        if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
-            return parsed;
-
-        errors.Add(new FieldError(path, InvalidNumberMessage));
-        return null;
-    }
-
-    private static DateRange? BuildRequiredPeriod(
-        string startPath, string? start, string endPath, string? end, List<FieldError> errors)
-    {
-        var startDate = ParseDate(startPath, start, errors);
-        var endDate = ParseDate(endPath, end, errors);
-
-        if (startDate is null)
-        {
-            // A blank start is missing data. An unparseable one was already reported by ParseDate, and
-            // reporting it twice would put two messages on one input.
-            if (string.IsNullOrWhiteSpace(start))
-                errors.Add(new FieldError(startPath, RequiredMessage));
-            return null;
-        }
-
-        // An end that was sent and did not parse is already a recorded error, so nothing is silently
-        // dropped by stopping here — but checking the range rule against a pair the candidate did not
-        // send would answer a question they never asked.
-        if (endDate is null && !string.IsNullOrWhiteSpace(end))
-            return null;
-
-        // "End date must be null or on/after start date." is DateRange.Create's own message, reported at
-        // the END path because that is the input a review screen can usefully highlight.
-        return Build(endPath, errors, () => DateRange.Create(startDate.Value, endDate));
-    }
-
-    private static DateRange? BuildOptionalPeriod(
-        string startPath, string? start, string endPath, string? end, List<FieldError> errors)
-    {
-        var startDate = ParseDate(startPath, start, errors);
-        var endDate = ParseDate(endPath, end, errors);
-
-        if (startDate is null)
-        {
-            // AddCertificateHandler drops a lone end date on the floor (`ValidityStart is null ? null :
-            // ...`). A draft is extracted text a candidate is correcting, so silently discarding a value
-            // they can see on their own screen is the wrong answer; it is refused instead.
-            if (string.IsNullOrWhiteSpace(start) && !string.IsNullOrWhiteSpace(end))
-                errors.Add(new FieldError(startPath, RequiredMessage));
-            return null;
-        }
-
-        if (endDate is null && !string.IsNullOrWhiteSpace(end))
-            return null;
-
-        return Build(endPath, errors, () => DateRange.Create(startDate.Value, endDate));
-    }
-
-    private static TEnum? ParseRequiredEnum<TEnum>(
-        string path, string? value, string invalidMessage, List<FieldError> errors)
-        where TEnum : struct, Enum
-    {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            errors.Add(new FieldError(path, RequiredMessage));
-            return null;
-        }
-
-        return ParseOptionalEnum<TEnum>(path, value, invalidMessage, errors);
-    }
-
-    // IsDefined is not belt-and-braces on top of TryParse. TryParse ACCEPTS any numeric string, and all
-    // four of these enums persist as tinyint (ResumeConfiguration) through an unchecked conversion:
-    // "-1" wraps to 255 — above LanguageProficiency.Native — and "99" stores as 99, silently.
-    //
-    // ResumeEndpoints.cs has four parse sites and only TWO of them guard this way: the education-level
-    // and language-proficiency lambdas do, the skill-level and experience-type ones do not, and
-    // Skill.Level and Experience.Type are tinyint columns as well. Applying it to all four here closes
-    // that pre-existing gap for the import path without touching the routes that still have it.
-    //
-    // It lives HERE rather than in the import endpoint so there is one enum rule per draft field, and so
-    // a bad level comes back as a field path beside the other failures instead of as a bare 400.
-    private static TEnum? ParseOptionalEnum<TEnum>(
-        string path, string? value, string invalidMessage, List<FieldError> errors)
-        where TEnum : struct, Enum
-    {
-        if (string.IsNullOrWhiteSpace(value))
-            return null;
-
-        if (Enum.TryParse<TEnum>(value, ignoreCase: true, out var parsed) && Enum.IsDefined(parsed))
-            return parsed;
-
-        errors.Add(new FieldError(path, invalidMessage));
-        return null;
     }
 }

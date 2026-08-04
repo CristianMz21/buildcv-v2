@@ -1,3 +1,4 @@
+using BuildCv.Application.Common;
 using BuildCv.Application.Resumes;
 using BuildCv.Application.Tests.Fakes;
 using BuildCv.Domain.Common.ValueObjects;

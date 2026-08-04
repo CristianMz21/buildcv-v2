@@ -1,4 +1,5 @@
 using System.Reflection;
+using BuildCv.Application.Common;
 using BuildCv.Application.Resumes;
 using BuildCv.Domain.Common.ValueObjects;
 using BuildCv.Domain.Identity;

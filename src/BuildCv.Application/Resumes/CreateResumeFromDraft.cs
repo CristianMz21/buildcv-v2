@@ -1,5 +1,6 @@
 namespace BuildCv.Application.Resumes;
 
+using BuildCv.Application.Common;
 using BuildCv.Application.Common.Abstractions;
 using BuildCv.Application.Common.Repositories;
 using BuildCv.Domain.Identity;
