@@ -13,6 +13,7 @@ using BuildCv.Domain.Jobs;
 using BuildCv.Domain.Organizations;
 using BuildCv.Domain.Resumes;
 using BuildCv.Domain.Scoring;
+using BuildCv.Infrastructure.Documents;
 using BuildCv.Infrastructure.Persistence;
 using BuildCv.Infrastructure.Persistence.BlindIndexes;
 using BuildCv.Infrastructure.Persistence.EfCore;
@@ -92,6 +93,14 @@ public static class DependencyInjection
 
         services.AddSingleton<IScoringEngine, ScoringEngine>();
 
+        // Document text extraction. The dispatcher is the port; the per-format adapters are registered
+        // as themselves so the graph stays explicit — there is no reflection-driven "all extractors"
+        // collection to quietly pick up a fourth format nobody reviewed.
+        services.AddSingleton<PdfPigTextExtractor>();
+        services.AddSingleton<OpenXmlDocxTextExtractor>();
+        services.AddSingleton<PlainTextExtractor>();
+        services.AddSingleton<IDocumentTextExtractor, DocumentTextExtractor>();
+
         // Identity
         services.AddScoped<ICommandHandler<RegisterAccountCommand, Result<AccountDto>>, RegisterAccountHandler>();
         services.AddScoped<ICommandHandler<LoginCommand, Result<AuthResult>>, LoginHandler>();
@@ -104,6 +113,7 @@ public static class DependencyInjection
         // Resumes
         services.AddScoped<ICommandHandler<CreateResumeCommand, Result<Resume>>, CreateResumeHandler>();
         services.AddScoped<ICommandHandler<CreateResumeFromDraftCommand, ResumeImportResult>, CreateResumeFromDraftHandler>();
+        services.AddScoped<ICommandHandler<ExtractDocumentTextCommand, Result<DocumentExtraction>>, ExtractDocumentTextHandler>();
         services.AddScoped<IQueryHandler<GetResumeQuery, Result<Resume>>, GetResumeHandler>();
         services.AddScoped<IQueryHandler<GetResumesByOwnerQuery, Result<Page<Resume>>>, GetResumesByOwnerHandler>();
         services.AddScoped<ICommandHandler<DeleteResumeCommand, Result<ResumeId>>, DeleteResumeHandler>();
