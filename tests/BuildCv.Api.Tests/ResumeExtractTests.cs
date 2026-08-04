@@ -139,6 +139,45 @@ public sealed class ResumeExtractTests
         response.Content.Headers.ContentType!.MediaType.Should().Be("application/problem+json");
     }
 
+    // A MALFORMED (unterminated) multipart body is the one extract-route error that is NOT
+    // ProblemDetails-shaped — a bare 400 with no body and no content type, the second such response in
+    // this API beside the 413. This is not an oversight: measured, minimal-API IFormFile binding
+    // SWALLOWS the IOException the multipart reader throws ("Unexpected end of Stream") into an empty
+    // 400 that never reaches an IExceptionHandler, so MalformedRequestExceptionHandler cannot see it.
+    // Shaping it would mean abandoning IFormFile binding for a manual ReadFormAsync, which — measured —
+    // also turns the confirmed-solid torn-down 413 into a catchable, shaped one; that is a change to
+    // size-enforcement behavior not worth making for a malformed-framing 400. Documented in CLAUDE.md
+    // and pinned here so a future framework upgrade that starts shaping it trips this test for review.
+    [Fact]
+    public async Task Extract_WithAnUnterminatedMultipartBody_IsABare400()
+    {
+        using var factory = new ApiTestFactory();
+        using var client = factory.CreateClient();
+        var (_, token) = await client.RegisterAndLoginAsync(TestHelpers.CandidateEmail);
+
+        const string boundary = "BuildCvBoundary";
+        // A valid part header and content, but no closing --boundary--: the reader hits end of stream
+        // mid-part.
+        var body = Encoding.ASCII.GetBytes(
+            $"--{boundary}\r\n"
+            + "Content-Disposition: form-data; name=\"file\"; filename=\"cv.txt\"\r\n"
+            + "Content-Type: text/plain\r\n\r\n"
+            + "some content with no terminating boundary");
+        var content = new ByteArrayContent(body);
+        content.Headers.ContentType = new MediaTypeHeaderValue("multipart/form-data");
+        content.Headers.ContentType.Parameters.Add(new NameValueHeaderValue("boundary", boundary));
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/resumes/import/extract")
+        {
+            Content = content,
+        }.WithBearer(token);
+        var response = await client.SendAsync(request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await response.Content.ReadAsStringAsync()).Should().BeEmpty("form binding swallows the framing error into a bare 400");
+        response.Content.Headers.ContentType.Should().BeNull("no IExceptionHandler runs, so nothing shapes it");
+    }
+
     [Fact]
     public async Task Extract_Unauthenticated_Is401()
     {

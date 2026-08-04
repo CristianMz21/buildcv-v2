@@ -61,6 +61,18 @@ public sealed class DomainExceptionHandler : IExceptionHandler
 /// input, two wrong answers, neither of them ProblemDetails.
 /// </para>
 /// <para>
+/// ALSO DOES NOT COVER — and cannot, for a different reason — a MALFORMED MULTIPART body on the one
+/// form endpoint (<c>POST /resumes/import/extract</c>). Measured: minimal-API <c>IFormFile</c> binding
+/// catches the multipart reader's <c>IOException</c> ("Unexpected end of Stream") INSIDE the binding
+/// and writes a bare 400 itself, so no exception ever propagates to this handler — <c>ThrowOnBadRequest</c>
+/// does not redirect form-binding failures the way it does body-binding ones. The only way to shape it
+/// is to abandon <c>IFormFile</c> for a manual <c>ReadFormAsync</c>, which also converts the
+/// torn-down 413 on that route into a catchable, shaped one — a change to size-enforcement behavior
+/// not worth making for a framing 400. It is the second bare response in this API beside the 413, is
+/// stated in CLAUDE.md, and is pinned by
+/// <c>ResumeExtractTests.Extract_WithAnUnterminatedMultipartBody_IsABare400</c>.
+/// </para>
+/// <para>
 /// The exception's own message is used as the detail. These are framework strings describing the
 /// SHAPE of the request ("Failed to read parameter ... from the request body as JSON"), not echoes of
 /// its content, so unlike the persistence handler below there is nothing here to withhold.

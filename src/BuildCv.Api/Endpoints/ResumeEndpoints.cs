@@ -135,8 +135,14 @@ public static class ResumeEndpoints
         {
             var accountId = httpContext.User.GetAccountId();
 
-            // Before anything touches the file: parsing is synchronous and CPU-bound, so the throttle
-            // is the primary defence on this route — see DocumentExtractionRateLimiter for the numbers.
+            // This throttles PARSING, not INGEST, and the distinction is deliberate. IFormFile binding
+            // has already run by the time this lambda executes — the body is read and (past 64 KB)
+            // spilled to a temp file before this line — so acquiring the lease here cannot refuse a
+            // request before its bytes arrive. It does not need to: ingest is bounded per-upload by the
+            // 5 MiB request-size ceiling below and per-source by the global 100/min limiter, and neither
+            // depends on the principal. What this limiter bounds is the expensive half — synchronous
+            // parsing, the most CPU- and memory-heavy work in the API — keyed to the account, which is
+            // the right unit because the caller is always authenticated. See DocumentExtractionRateLimiter.
             using var lease = await rateLimiter.AcquireAsync(accountId, cancellationToken);
             if (!lease.IsAcquired)
             {
