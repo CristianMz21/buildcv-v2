@@ -34,6 +34,7 @@ builder.Services.AddScoped<ICurrentUser, HttpContextCurrentUser>();
 
 builder.Services.AddSingleton<PasswordChangeRateLimiter>();
 builder.Services.AddSingleton<ResumeImportRateLimiter>();
+builder.Services.AddSingleton<DocumentExtractionRateLimiter>();
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer()
