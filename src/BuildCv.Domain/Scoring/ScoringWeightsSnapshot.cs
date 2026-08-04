@@ -32,12 +32,13 @@ public sealed record ScoringWeightsSnapshot
     // rather than reasoned about from the deserializer's documented default.
     //
     // AND THE UNREADABLE BRANCH IS UNREACHABLE ON REAL DATA TODAY, so do not plan a deployment around
-    // it. Languages carries weight only when the posting states a language requirement, and nothing in
-    // the shipped API can put one there: JobPosting.AddLanguageRequirement has no caller in src/ (nor
-    // does AddRequirement or SetEducationLevel — CreateJobRequest carries title, company and
-    // description, and there is no update route). Every row any deployment can actually write takes
-    // the second branch and loads into a pre-PR-1 build unchanged. The test above reaches the first
-    // branch by constructing the payload directly, which is the only way anything reaches it.
+    // it. Languages carries weight only when the posting states a LANGUAGE requirement, and nothing in
+    // the shipped API can put one there: JobPosting.AddLanguageRequirement and SetEducationLevel still
+    // have no caller in src/. (POST /job-offers/import DOES now call AddRequirement, so a candidate's
+    // Draft offer can state SKILL requirements -- but skills drive the Skills weight, never the
+    // Languages weight, so that path does not reach this branch.) Every row any deployment can actually
+    // write takes the second branch and loads into a pre-PR-1 build unchanged. The test above reaches
+    // the first branch by constructing the payload directly, which is the only way anything reaches it.
     //
     // THE ROLLBACK HAZARD THAT IS REACHABLE is not here at all — it is the migration.
     // Persistence/Migrations/20260801140223_AddSectionScoringAndRecommendations.Down() drops the
