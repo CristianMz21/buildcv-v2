@@ -48,11 +48,13 @@ public sealed record ScoreResumeRequest(Guid ResumeId, Guid JobPostingId);
 /// fact.
 /// </para>
 /// <para>
-/// <b><c>Weights.Skills</c> and <c>Weights.Languages</c> are 0 on every analysis this build can
-/// produce</b>, and that is a missing feature rather than anything a recruiter chose. No endpoint puts
-/// a skill or language requirement on a posting: <c>POST /jobs</c> carries only a title, company and
-/// description, and there is no update endpoint. A UI that renders those two zeros as "this job listed
-/// no skill requirements" would say it about every job in the product.
+/// <b><c>Weights.Languages</c> is 0 on every analysis this build can produce</b>, and that is a missing
+/// feature rather than anything a recruiter chose: no endpoint puts a language requirement on a posting.
+/// <b><c>Weights.Skills</c> is no longer always 0</b> — <c>POST /job-offers/import</c> lets a candidate
+/// state skill requirements on their own Draft offer, so an analysis scored against an imported offer
+/// carries a NONZERO skills weight. It is still 0 for a posting created through <c>POST /jobs</c>, which
+/// carries only a title, company and description. A UI must read the weight per analysis, not assume
+/// either is always 0.
 /// </para>
 /// <para>
 /// The remaining weights are RENORMALIZED to still total 1.0, so the ceiling is 100 for every posting.

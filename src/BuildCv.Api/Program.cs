@@ -185,6 +185,7 @@ if (app.Environment.IsDevelopment())
 app.MapAuthEndpoints();
 app.MapResumeEndpoints();
 app.MapJobEndpoints();
+app.MapJobOfferEndpoints();
 app.MapOrganizationEndpoints();
 app.MapScoringEndpoints();
 
