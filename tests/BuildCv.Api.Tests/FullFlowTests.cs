@@ -46,7 +46,7 @@ public sealed class FullFlowTests
         var jobResponse = await client.SendAsync(createJob);
         jobResponse.StatusCode.Should().Be(HttpStatusCode.Created);
         using var jobJson = JsonDocument.Parse(await jobResponse.Content.ReadAsStringAsync());
-        var jobId = jobJson.RootElement.GetProperty("id").GetProperty("value").GetGuid();
+        var jobId = jobJson.RootElement.GetProperty("id").GetGuid();
 
         using var publish = new HttpRequestMessage(HttpMethod.Post, $"/v1/jobs/{jobId}/publish")
             .WithBearer(recruiterToken);

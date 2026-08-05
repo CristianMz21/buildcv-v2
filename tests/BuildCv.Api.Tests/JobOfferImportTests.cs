@@ -125,15 +125,15 @@ public sealed class JobOfferImportTests
 
         var posting = await GetJobAsync(client, token, jobId);
         posting.GetProperty("title").GetString().Should().Be("Distinct Title");
-        posting.GetProperty("companyName").GetProperty("value").GetString().Should().Be("Distinct Company");
-        posting.GetProperty("status").GetInt32().Should().Be(0, "an imported offer is a Draft");
+        posting.GetProperty("companyName").GetString().Should().Be("Distinct Company");
+        posting.GetProperty("status").GetString().Should().Be("Draft", "an imported offer is a Draft");
 
         var requirements = posting.GetProperty("requirements").EnumerateArray().ToList();
-        requirements[0].GetProperty("skill").GetProperty("name").GetString().Should().Be("Rust");
-        requirements[0].GetProperty("priority").GetInt32().Should().Be(0, "RequirementPriority.MustHave");
+        requirements[0].GetProperty("skill").GetString().Should().Be("Rust");
+        requirements[0].GetProperty("priority").GetString().Should().Be("MustHave");
         requirements[0].GetProperty("weight").GetDouble().Should().Be(1.0, "weight derives from MustHave");
-        requirements[1].GetProperty("skill").GetProperty("name").GetString().Should().Be("Kafka");
-        requirements[1].GetProperty("priority").GetInt32().Should().Be(1, "RequirementPriority.NiceToHave");
+        requirements[1].GetProperty("skill").GetString().Should().Be("Kafka");
+        requirements[1].GetProperty("priority").GetString().Should().Be("NiceToHave");
         requirements[1].GetProperty("weight").GetDouble().Should().Be(0.5, "weight derives from NiceToHave");
     }
 
@@ -218,7 +218,7 @@ public sealed class JobOfferImportTests
         var response = await PostImportAsync(client, token, body);
         response.StatusCode.Should().Be(HttpStatusCode.Created);
         using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-        return json.RootElement.GetProperty("id").GetProperty("value").GetGuid();
+        return json.RootElement.GetProperty("id").GetGuid();
     }
 
     private static async Task<Guid> CreateResumeAsync(HttpClient client, string token)

@@ -53,27 +53,27 @@ public class JobContractTests
         json.RootElement.GetProperty("educationLevel").ValueKind.Should().Be(JsonValueKind.Null);
     }
 
-    // The fields that PREDATE this chain keep their old encoding, and this is a deliberate
-    // inconsistency with the two names above rather than an oversight. Same trade AnalysisResponse
-    // made with `band`: flipping an encoding that already has clients is a repo-wide change, not a
-    // scoring one, and a consistent bad convention beats a half-flipped one.
+    // The v1 settlement on the fields this DTO used to defer: both remaining enums carry names, ids
+    // are bare guids, and the single-value wrappers are gone — `companyName` answers "Contoso", not
+    // {"value": "Contoso"}, and `skill` answers "C#", not {"name": "C#"}, which is what the
+    // /v1/job-offers extract and import sides already said. Bare means bare: GetGuid()/GetString() on
+    // the property itself throws if a wrapper object ever comes back.
     [Fact]
-    public void Serialized_PreChainFieldsKeepTheirOldEncoding()
+    public void Serialized_EnumsCarryNamesAndIdsAndWrappedStringsAreBare()
     {
         using var json = JsonDocument.Parse(
             JsonSerializer.Serialize(JobPostingResponse.From(BuildFullPosting()), WebOptions));
         var root = json.RootElement;
 
-        root.GetProperty("status").ValueKind.Should().Be(JsonValueKind.Number,
-            "JobPostingStatus shipped as an integer before this chain and has clients");
-        root.GetProperty("requirements")[0].GetProperty("priority").ValueKind.Should().Be(JsonValueKind.Number,
-            "RequirementPriority predates this chain too — only the two NEW enums were named");
+        root.GetProperty("status").GetString().Should().Be("Draft",
+            "every enum on the v1 wire carries its name — JobPostingStatus was one of the two integers left");
+        root.GetProperty("requirements")[0].GetProperty("priority").GetString().Should().Be("MustHave",
+            "RequirementPriority was the other");
 
-        root.GetProperty("id").GetProperty("value").ValueKind.Should().Be(JsonValueKind.String);
-        root.GetProperty("ownerId").GetProperty("value").ValueKind.Should().Be(JsonValueKind.String);
-        root.GetProperty("companyName").GetProperty("value").GetString().Should().Be("Contoso");
-        root.GetProperty("requirements")[0].GetProperty("skill").GetProperty("name").GetString()
-            .Should().Be("C#");
+        root.GetProperty("id").GetGuid().Should().NotBeEmpty();
+        root.GetProperty("ownerId").GetGuid().Should().NotBeEmpty();
+        root.GetProperty("companyName").GetString().Should().Be("Contoso");
+        root.GetProperty("requirements")[0].GetProperty("skill").GetString().Should().Be("C#");
     }
 
     // The full property list, in order, at every level — captured off the live endpoint BEFORE the DTO
@@ -96,20 +96,14 @@ public class JobContractTests
         NamesOf(root.GetProperty("languageRequirements")[0]).Should().Equal("name", "minimumLevel");
     }
 
-    // THE LIVE HALF, AND IT NEEDS A STORE THAT STATES SOMETHING. Written this way after the obvious
-    // version failed its own control: asserting the live shape against a posting the API can create
-    // passes IDENTICALLY with the mapper removed, because for such a posting the DTO and the aggregate
-    // serialize key for key — `educationLevel` is null and `languageRequirements` is [] either way.
-    // That is exactly why this fix is free today, and it is also why "the live shape is unchanged" is
-    // documentation rather than a guard. Only a posting that states the two new fields can tell a
-    // mapped endpoint from an unmapped one, and no request can build one.
-    //
-    // So the store hands back a posting that does, which is what the authoring endpoints will produce
-    // in the next phase, and then the wire has to say "Bachelor" and "Professional".
-    //
-    // Controlled: with the four `JobPostingResponse.From` calls removed, exactly these two cases fail,
-    // and they fail with "the target element has type 'Number'" — the integers, back on the wire, read
-    // off the response rather than argued from the absence of a JsonStringEnumConverter.
+    // THE LIVE HALF FOR THE TWO FIELDS NO REQUEST CAN SET, AND IT NEEDS A STORE THAT STATES THEM.
+    // `educationLevel` is null and `languageRequirements` is [] on every posting the API can create —
+    // CreateJobRequest carries no field for either and there is no update endpoint — so only a store
+    // handing back a posting that states both (what the authoring endpoints will produce in a later
+    // phase) can prove the live wire says "Bachelor" and "Professional" rather than the persisted
+    // numbers. Since the v1 unwrap, the OTHER fields distinguish a mapped endpoint from an unmapped
+    // one on any posting — a bare-posting live test is no longer blind to a removed mapper — but
+    // these two stay unreachable without the decorated store, which is why it remains.
     [Theory]
     [InlineData("GET", "")]
     [InlineData("POST", "/publish")]
@@ -122,7 +116,7 @@ public class JobContractTests
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
         var (_, token) = await client.RegisterAndLoginAsync(TestHelpers.RecruiterEmail, role: "Recruiter");
 
-        var id = (await PostJobAsync(client, token)).GetProperty("id").GetProperty("value").GetGuid();
+        var id = (await PostJobAsync(client, token)).GetProperty("id").GetGuid();
 
         var body = await ReadAsync(client, token, new HttpMethod(method), $"/v1/jobs/{id}{suffix}");
 
@@ -132,19 +126,19 @@ public class JobContractTests
             .Should().Be("Professional");
     }
 
-    // The shape a client sees today, on all four routes. This one is NOT a guard on the mapper — see
-    // above, it passes with the mapper removed — and it is kept for the property it does prove: the DTO
-    // is behaviour-neutral for every posting the API can currently produce, which is the claim that
-    // makes landing it now cheap rather than a break.
+    // The v1 shape a client sees, on all four routes: the full key list, `status` as a name on every
+    // response, and null `educationLevel` staying null. Unlike its pre-v1 ancestor this IS a mapper
+    // guard — an endpoint returning the aggregate now ships enveloped ids and a numeric status, and
+    // the assertions below refuse both.
     [Fact]
-    public async Task TheLiveEndpoints_ReproduceTodaysShapeOnCreateGetPublishAndClose()
+    public async Task TheLiveEndpoints_ServeTheV1ShapeOnCreateGetPublishAndClose()
     {
         using var factory = new ApiTestFactory();
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
         var (_, token) = await client.RegisterAndLoginAsync(TestHelpers.RecruiterEmail, role: "Recruiter");
 
         var created = await PostJobAsync(client, token);
-        var id = created.GetProperty("id").GetProperty("value").GetGuid();
+        var id = created.GetProperty("id").GetGuid();
 
         var read = await ReadAsync(client, token, HttpMethod.Get, $"/v1/jobs/{id}");
         var published = await ReadAsync(client, token, HttpMethod.Post, $"/v1/jobs/{id}/publish");
@@ -164,15 +158,15 @@ public class JobContractTests
                 },
                 "the {0} response is reproduced key for key", name);
 
-            body.GetProperty("status").ValueKind.Should().Be(JsonValueKind.Number);
+            body.GetProperty("status").ValueKind.Should().Be(JsonValueKind.String);
             body.GetProperty("educationLevel").ValueKind.Should().Be(JsonValueKind.Null,
                 "no endpoint can state one yet — which is what makes naming the enum free today");
             body.GetProperty("languageRequirements").GetArrayLength().Should().Be(0,
                 "nor add a language requirement");
         }
 
-        published.GetProperty("status").GetInt32().Should().Be((int)JobPostingStatus.Published);
-        closed.GetProperty("status").GetInt32().Should().Be((int)JobPostingStatus.Closed);
+        published.GetProperty("status").GetString().Should().Be(nameof(JobPostingStatus.Published));
+        closed.GetProperty("status").GetString().Should().Be(nameof(JobPostingStatus.Closed));
     }
 
     private static IEnumerable<string> NamesOf(JsonElement element) =>

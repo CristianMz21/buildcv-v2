@@ -349,7 +349,7 @@ public sealed class AnalysisReadTests
         using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         var items = json.RootElement.GetProperty("items")
             .EnumerateArray()
-            .Select(item => item.GetProperty("id").GetProperty("value").GetGuid())
+            .Select(item => item.GetProperty("id").GetGuid())
             .ToList();
 
         var nextCursor = json.RootElement.GetProperty("nextCursor");
@@ -359,7 +359,7 @@ public sealed class AnalysisReadTests
     private static Guid IdOf(string analysisJson)
     {
         using var json = JsonDocument.Parse(analysisJson);
-        return json.RootElement.GetProperty("id").GetProperty("value").GetGuid();
+        return json.RootElement.GetProperty("id").GetGuid();
     }
 
     // Stands in for the one thing the in-memory store cannot reproduce: a database handing back an owned
