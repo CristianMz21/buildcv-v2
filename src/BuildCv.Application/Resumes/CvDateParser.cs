@@ -12,9 +12,14 @@ using System.Text.RegularExpressions;
 /// Null otherwise. See <see cref="CvDateParser"/> for why month-and-year is deliberately NOT enough.
 /// </param>
 /// <param name="Recognized">
-/// True when the text held something date-shaped at all (a year, a month name, a full date), even if
-/// <see cref="Value"/> is null. Lets the caller flag "there was a date here I could not complete" rather
-/// than stay silent.
+/// True when the parser is willing to TREAT this span as a date — a full date, a month name + year, a
+/// bare year, a numeric month/year, or a numeric date with a 2-digit year — even if <see cref="Value"/>
+/// is null because it could not be pinned to a full <c>yyyy-MM-dd</c>. A recognised atom is what lets a
+/// line become a dated entry, so the caller can flag "there was a date here I could not complete" rather
+/// than stay silent. False marks a date-SHAPED span the parser will NOT stand behind as a date on its own
+/// — a <c>"&lt;word&gt; &lt;year&gt;"</c> whose word is not a month ("Invierno 2020", "Engineer 2019").
+/// Such a span never turns a line into a dated entry by itself, but it still HOLDS its position inside a
+/// range, so the real date beside it is not misattributed to the wrong end (see <see cref="FindRange"/>).
 /// </param>
 /// <param name="SourceText">The exact snippet recognised, for the review screen to show back.</param>
 public sealed record CvDate(string? Value, bool Recognized, string SourceText);
@@ -67,11 +72,12 @@ public static class CvDateParser
         + @"|(?<monthyear>\b(?<mw>\p{L}+)\.?\s+(?:del?\s+)?(?<my>\d{4})\b)"
         + @"|(?<nummonthyear>\b\d{1,2}/\d{4}\b)"
         + @"|(?<yearmonth>\b\d{4}[-/]\d{1,2}\b)"
+        + @"|(?<shortdate>\b(?<sm>\d{1,2})[/.](?<sy>\d{2})\b)"
         + @"|(?<year>\b(?:19|20)\d{2}\b)",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
-    /// <summary>The first date found in <paramref name="text"/>, or null when there is none.</summary>
-    public static CvDate? ParseSingle(string text) => ScanAtoms(text).FirstOrDefault();
+    /// <summary>The first RECOGNISED date in <paramref name="text"/>, or null when there is none.</summary>
+    public static CvDate? ParseSingle(string text) => ScanAtoms(text).FirstOrDefault(atom => atom.Recognized);
 
     /// <summary>The start–end span in <paramref name="line"/>, or null when the line has no date at all.</summary>
     public static CvDateRange? FindRange(string line)
@@ -80,7 +86,12 @@ public static class CvDateParser
         var presentMatch = PresentMarker.Match(line);
         var hasPresent = presentMatch.Success;
 
-        if (atoms.Count == 0)
+        // A line becomes a dated entry only if at least one span was RECOGNISED as a date. A placeholder
+        // atom — a "<word> <year>" whose word is not a month — never anchors an entry on its own (else a
+        // title line like "Software Engineer 2019" would sprout a phantom job), but when a recognised date
+        // IS present the placeholder keeps its position, so the surviving date holds its true start/end
+        // slot rather than being silently promoted to the wrong end.
+        if (!atoms.Any(atom => atom.Recognized))
             return null;
 
         var start = atoms[0];
@@ -118,8 +129,27 @@ public static class CvDateParser
             }
             else if (match.Groups["monthyear"].Success)
             {
-                // Only a real month word makes this a date; "de 2019" or "Ingeniero 2019" is not one.
-                if (Months.ContainsKey(ResumeSectionHeadings.Normalize(match.Groups["mw"].Value)))
+                // Only a real month word makes this a date; "de 2019" or "Ingeniero 2019" is not one. A
+                // non-month word+year is still yielded, but as an UNRECOGNISED placeholder: the regex has
+                // already consumed the span, so dropping it silently would let a following date slide into
+                // the slot this one occupied — "Invierno 2020 - 15/03/2021" would promote 15/03/2021 to the
+                // START and lose the real start. The placeholder does not turn a line into a dated entry on
+                // its own (FindRange requires a RECOGNISED atom), but it holds this position inside a range.
+                yield return Months.ContainsKey(ResumeSectionHeadings.Normalize(match.Groups["mw"].Value))
+                    ? new CvDate(null, Recognized: true, source)
+                    : new CvDate(null, Recognized: false, source);
+            }
+            else if (match.Groups["shortdate"].Success)
+            {
+                // A numeric date with a 2-DIGIT year (mm/yy), e.g. "03/95". Recognised as a date ATTEMPT so
+                // a job dated only "03/95 - 06/98" still becomes an entry (its dates flagged NotExtracted)
+                // instead of vanishing with no trace — but never resolved to a full yyyy-MM-dd, because a
+                // 2-digit year is ambiguous. Guarded so a ratio like "8/10" or "15/20" is not read as a
+                // date: the month must be 1..12 AND the year 13..99 (unambiguously a year, not a month or a
+                // small denominator). 2-digit years 00..12 stay unrecognised on purpose — the ambiguity
+                // there is not worth reading "9/10" as a date.
+                if (int.TryParse(match.Groups["sm"].Value, out var sm) && sm is >= 1 and <= 12
+                    && int.TryParse(match.Groups["sy"].Value, out var sy) && sy is >= 13 and <= 99)
                     yield return new CvDate(null, Recognized: true, source);
             }
             else

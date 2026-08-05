@@ -119,6 +119,20 @@ public static class ResumeTextParser
         foreach (var line in lines)
         {
             var kind = ResumeSectionHeadings.Classify(line);
+
+            // A bare "Label:" line (SectionKind.Unknown — matched by the label-shape fallback in Classify,
+            // never by the heading dictionary) INSIDE a date-anchored section is almost always an in-entry
+            // sub-label — "Responsibilities:", "Logros:", "Funciones:", "Objetivo Profesional:" — not a new
+            // top-level section. Resetting the section to Unknown there would drop every line after it until
+            // the next recognised heading, swallowing a whole second job whose org, title and date parse
+            // fine. So inside Experience / Education we demote the label to body content: DatedEntries
+            // anchors on dates and trims context to the last two lines, so a stray sub-label does no harm
+            // while the dated entries beneath it still parse. The unrecognised-section WARNING is then
+            // reserved for genuine top-level headings (a label seen in the header, summary, skills or
+            // languages context), where nothing dated is at risk below it.
+            if (kind == SectionKind.Unknown && current is SectionKind.Experience or SectionKind.Education)
+                kind = null;
+
             if (kind is null)
             {
                 if (current == SectionKind.Header)
@@ -279,8 +293,12 @@ public static class ResumeTextParser
 
                 var index = skills.Count;
                 fields.Add(new FieldProvenance($"skills[{index}].name", FieldConfidence.Medium, name));
-                if (level is not null)
-                    fields.Add(new FieldProvenance($"skills[{index}].level", FieldConfidence.High, name));
+                // Level is flagged either way, exactly like Record does for a contact field: High with the
+                // source token when a parenthetical named it, NotExtracted when the skill states no level.
+                // The draft's Level is null in the second case, so "absent and flagged" stays one fact.
+                fields.Add(level is not null
+                    ? new FieldProvenance($"skills[{index}].level", FieldConfidence.High, name)
+                    : new FieldProvenance($"skills[{index}].level", FieldConfidence.NotExtracted));
 
                 skills.Add(new SkillDraft(Name: cleanName, Level: level?.ToString()));
             }
@@ -315,8 +333,17 @@ public static class ResumeTextParser
 
             var index = languages.Count;
             fields.Add(new FieldProvenance($"languages[{index}].name", FieldConfidence.Medium, name));
-            if (level is not null)
-                fields.Add(new FieldProvenance($"languages[{index}].level", FieldConfidence.High, fluencyValue));
+            // Fluency is the raw free text after the separator and is written onto the draft as-is, so it
+            // must carry its own provenance — a populated field with no confidence entry is exactly the gap
+            // "absent and flagged" forbids. Medium when present (a positional split that is usually right),
+            // NotExtracted when the line named only the language. Level is the enum mapped from that same
+            // fluency text: High when it maps, NotExtracted (draft null) when it does not.
+            fields.Add(fluencyValue is not null
+                ? new FieldProvenance($"languages[{index}].fluency", FieldConfidence.Medium, fluencyValue)
+                : new FieldProvenance($"languages[{index}].fluency", FieldConfidence.NotExtracted));
+            fields.Add(level is not null
+                ? new FieldProvenance($"languages[{index}].level", FieldConfidence.High, fluencyValue)
+                : new FieldProvenance($"languages[{index}].level", FieldConfidence.NotExtracted));
 
             languages.Add(new LanguageDraft(Name: name, Fluency: fluencyValue, Level: level?.ToString()));
         }
@@ -361,10 +388,15 @@ public static class ResumeTextParser
             var path = $"educations[{index}]";
 
             RecordContext(fields, $"{path}.institution", institution);
-            if (degree is not null)
-                fields.Add(new FieldProvenance($"{path}.degree", FieldConfidence.Low, degree));
-            if (level is not null)
-                fields.Add(new FieldProvenance($"{path}.level", FieldConfidence.High, degree));
+            // Degree and level are flagged either way, like every other field the parser reasons about:
+            // present with their source, or NotExtracted paired with a null draft value. Emitting nothing
+            // when absent is the gap "absent and flagged" forbids.
+            fields.Add(degree is not null
+                ? new FieldProvenance($"{path}.degree", FieldConfidence.Low, degree)
+                : new FieldProvenance($"{path}.degree", FieldConfidence.NotExtracted));
+            fields.Add(level is not null
+                ? new FieldProvenance($"{path}.level", FieldConfidence.High, degree)
+                : new FieldProvenance($"{path}.level", FieldConfidence.NotExtracted));
             var (start, end) = RecordRange(fields, path, range);
 
             educations.Add(new EducationDraft(

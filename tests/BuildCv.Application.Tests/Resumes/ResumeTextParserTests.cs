@@ -300,6 +300,118 @@ public sealed class ResumeTextParserTests
         confidence.Warnings.Should().Contain("The PDF has no text layer.");
     }
 
+    // FINDING B: a bare "Label:" line inside an experience body — "Responsibilities:", "Logros:",
+    // "Funciones:", "Objetivo Profesional:" — must NOT reset the section and swallow every job beneath it.
+    // The reviewer's exact reproduction: two jobs, a "Responsibilities:" line in the first job's body. The
+    // second job (org, title, date) must survive, so TWO experiences come back.
+    [Fact]
+    public void Parse_ASubLabelInsideAnExperienceBody_DoesNotSwallowTheNextJob()
+    {
+        var (draft, _) = ResumeTextParser.Parse(
+            """
+            Sam Doe
+            sam@example.com
+
+            EXPERIENCE
+            Senior Engineer
+            Stripe
+            15/03/2019 - 20/06/2021
+            Responsibilities:
+            Led the migration.
+
+            Software Engineer
+            Google
+            06/2015 - 02/2019
+            """);
+
+        draft.Experiences!.Should().HaveCount(2, "the 'Responsibilities:' sub-label must not swallow the second job");
+        draft.Experiences![0]!.Organization.Should().Be("Stripe");
+        draft.Experiences[1]!.Organization.Should().Be("Google");
+        draft.Experiences[1]!.Position.Should().Be("Software Engineer");
+    }
+
+    // FINDING A: a range whose leading span cannot be parsed — "Invierno 2020", a word+year whose word is
+    // not a month — must NOT silently promote the surviving date into the START slot. The one parseable
+    // date is the END; the unparseable start is left blank and flagged.
+    [Fact]
+    public void Parse_ARangeWhoseStartCannotBeParsed_DoesNotPromoteTheEndToStart()
+    {
+        var (draft, confidence) = ResumeTextParser.Parse(
+            """
+            Sam Doe
+            sam@example.com
+
+            EXPERIENCE
+            Engineer
+            Acme
+            Invierno 2020 - 15/03/2021
+            """);
+
+        draft.Experiences![0]!.Start.Should().BeNull(
+            "'Invierno 2020' is not parseable and must not be replaced by the end date");
+        Provenance(confidence, "experiences[0].start")!.Confidence.Should().Be(FieldConfidence.NotExtracted);
+        draft.Experiences[0]!.End.Should().Be("2021-03-15", "the one parseable date is the END, not the start");
+    }
+
+    // FINDING C: a job whose date uses 2-digit years ("03/95 - 06/98") must NOT vanish. The parser cannot
+    // resolve a 2-digit year to a full date, but the ENTRY still surfaces (dates blank and flagged) so the
+    // job before a later 4-digit-year job is not silently lost with no trace on the review screen.
+    [Fact]
+    public void Parse_AJobDatedWithTwoDigitYears_StillSurfacesInsteadOfVanishing()
+    {
+        var (draft, confidence) = ResumeTextParser.Parse(
+            """
+            Sam Doe
+            sam@example.com
+
+            EXPERIENCE
+            Engineer
+            OldCo
+            03/95 - 06/98
+
+            Senior Engineer
+            NewCo
+            15/03/2019 - 20/06/2021
+            """);
+
+        draft.Experiences!.Should().HaveCount(2, "the 2-digit-year job must not vanish before the 4-digit-year one");
+        draft.Experiences![0]!.Organization.Should().Be("OldCo");
+        draft.Experiences[1]!.Organization.Should().Be("NewCo");
+
+        draft.Experiences[0]!.Start.Should().BeNull("a 2-digit year cannot be resolved to a full date");
+        Provenance(confidence, "experiences[0].start")!.Confidence.Should().Be(FieldConfidence.NotExtracted);
+        Provenance(confidence, "experiences[0].start")!.SourceText
+            .Should().Be("03/95", "the raw snippet is preserved for the candidate to complete");
+    }
+
+    // FINDING HIGH: every field the parser reasons about carries a provenance entry, exactly as the
+    // DraftConfidence comment claims. languages[i].fluency populates a real draft value, so it MUST have a
+    // provenance entry — a populated field with no confidence is the defect. A skill with no level must
+    // still emit a NotExtracted flag rather than being silently omitted.
+    [Fact]
+    public void Parse_EveryReasonedField_CarriesProvenance_IncludingLanguageFluency()
+    {
+        var (draft, confidence) = ResumeTextParser.Parse(
+            """
+            Sam Doe
+            sam@example.com
+
+            SKILLS
+            Python
+
+            IDIOMAS
+            Español - Nativo
+            """);
+
+        draft.Languages![0]!.Fluency.Should().Be("Nativo");
+        Provenance(confidence, "languages[0].fluency").Should().NotBeNull("a populated fluency must carry provenance");
+        Provenance(confidence, "languages[0].fluency")!.Confidence.Should().Be(FieldConfidence.Medium);
+
+        var pythonLevel = Provenance(confidence, "skills[0].level");
+        pythonLevel.Should().NotBeNull("a skill with no stated level must still be flagged, not omitted");
+        pythonLevel!.Confidence.Should().Be(FieldConfidence.NotExtracted);
+    }
+
     private static FieldProvenance? Provenance(DraftConfidence confidence, string path) =>
         confidence.Fields.FirstOrDefault(field => field.Path == path);
 }

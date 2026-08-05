@@ -21,12 +21,13 @@ namespace BuildCv.Infrastructure.Tests.Documents;
 // the number reflects the dominant real-world failure rather than hiding it.
 public sealed class ResumeExtractionCorpusTests
 {
-    // MEASURED at 94.2% (49/52) when this corpus was written, then recorded here with a small headroom.
-    // The three misses are genuine (a two-column organisation that kept a leading "at", and a reversed
-    // employer/title order the parser swaps) — the corpus is not a parser grading itself. The corpus uses
-    // only Standard-14 PDF fonts and UTF-8 plain text, so extraction is deterministic across platforms and
-    // this floor is not flaky. A change that breaks three or more labels trips it. Raising it is only
-    // honest after a real parser improvement re-measures higher.
+    // MEASURED at 95.7% (66/69) over 9 CVs after the parser-correctness fixes (findings A/B/C) added their
+    // three regression samples; the original six measured 94.2% (49/52). The three remaining misses are
+    // genuine (a two-column organisation that kept a leading "at", and a reversed employer/title order the
+    // parser swaps) — the corpus is not a parser grading itself. The corpus uses only Standard-14 PDF fonts
+    // and UTF-8 plain text, so extraction is deterministic across platforms and this floor is not flaky. A
+    // change that breaks several labels trips it. The floor stays 0.90 (a regression gate with headroom),
+    // not the measured number; raising it is only honest after a real parser improvement re-measures higher.
     private const double PerFieldAccuracyFloor = 0.90;
 
     private static readonly DocumentTextExtractor Extractor =
@@ -112,7 +113,10 @@ public sealed class ResumeExtractionCorpusTests
         NoBlankLines(),
         WithUnknownSection(),
         TwoColumn(),
-        ReversedOrder()
+        ReversedOrder(),
+        SubLabelInsideExperience(),
+        UnparseableRangeStart(),
+        TwoDigitYearDates()
     ];
 
     // English, one column, full numeric dates — the case the parser should do best on.
@@ -326,6 +330,96 @@ public sealed class ResumeExtractionCorpusTests
             new("exp.start", "2020-01-15", d => d.Experiences?.FirstOrDefault()?.Start),
             new("skill.excel", "Excel", d => Skill(d, "Excel")),
             new("skill.tableau", "Tableau", d => Skill(d, "Tableau")),
+        ]);
+    }
+
+    // FINDING B in the corpus: a bare "Responsibilities:" sub-label inside the first job's body must not
+    // swallow the second job. Both experiences must survive — this used to yield ONE.
+    private static Sample SubLabelInsideExperience()
+    {
+        const string text =
+            """
+            Bruno Costa
+            bruno.costa@example.com
+
+            EXPERIENCE
+            Senior Engineer
+            Stripe
+            15/03/2019 - 20/06/2021
+            Responsibilities:
+            Led the payments migration.
+
+            Software Engineer
+            Google
+            15/06/2015 - 10/02/2019
+            """;
+
+        return new Sample("sub-label-experience", Encoding.UTF8.GetBytes(text), "text/plain",
+        [
+            new("name", "Bruno Costa", d => d.Contact?.FullName),
+            new("email", "bruno.costa@example.com", d => d.Contact?.Email),
+            new("exp.stripe.org", "Stripe", d => Experience(d, "Stripe")?.Organization),
+            new("exp.stripe.position", "Senior Engineer", d => Experience(d, "Stripe")?.Position),
+            new("exp.google.org", "Google", d => Experience(d, "Google")?.Organization),
+            new("exp.google.position", "Software Engineer", d => Experience(d, "Google")?.Position),
+        ]);
+    }
+
+    // FINDING A in the corpus: a range whose leading span is an unparseable word+year ("Invierno 2020")
+    // must not promote the surviving date into the start slot. Start stays blank; the parseable date is the
+    // END — this used to write the end date AS the start.
+    private static Sample UnparseableRangeStart()
+    {
+        const string text =
+            """
+            Carla Ruiz
+            carla.ruiz@example.com
+
+            EXPERIENCE
+            Analista
+            Acme
+            Invierno 2020 - 15/03/2021
+            """;
+
+        return new Sample("unparseable-range-start", Encoding.UTF8.GetBytes(text), "text/plain",
+        [
+            new("name", "Carla Ruiz", d => d.Contact?.FullName),
+            new("email", "carla.ruiz@example.com", d => d.Contact?.Email),
+            new("exp.org", "Acme", d => Experience(d, "Acme")?.Organization),
+            // The unparseable start stays blank; the one real date is the END, not silently promoted.
+            new("exp.start.blank", null, d => Experience(d, "Acme")?.Start),
+            new("exp.end", "2021-03-15", d => Experience(d, "Acme")?.End),
+        ]);
+    }
+
+    // FINDING C in the corpus: a job dated with 2-digit years ("03/95 - 06/98") must still surface — its
+    // dates blank and flagged — instead of vanishing entirely before a later 4-digit-year job.
+    private static Sample TwoDigitYearDates()
+    {
+        const string text =
+            """
+            Diego Marín
+            diego.marin@example.com
+
+            EXPERIENCE
+            Ingeniero
+            OldCo
+            03/95 - 06/98
+
+            Ingeniero Senior
+            NewCo
+            15/03/2019 - 20/06/2021
+            """;
+
+        return new Sample("two-digit-year-dates", Encoding.UTF8.GetBytes(text), "text/plain",
+        [
+            new("name", "Diego Marín", d => d.Contact?.FullName),
+            new("email", "diego.marin@example.com", d => d.Contact?.Email),
+            new("exp.oldco.org", "OldCo", d => Experience(d, "OldCo")?.Organization),
+            // A 2-digit year is recognised but never resolved to a full date — surfaced, not lost.
+            new("exp.oldco.start.blank", null, d => Experience(d, "OldCo")?.Start),
+            new("exp.newco.org", "NewCo", d => Experience(d, "NewCo")?.Organization),
+            new("exp.newco.start", "2019-03-15", d => Experience(d, "NewCo")?.Start),
         ]);
     }
 
