@@ -103,6 +103,12 @@ public sealed class V1ContractShapeTests
         await Collect($"/v1/scoring/{analysisId}", HttpMethod.Get, candidate);
         await Collect($"/v1/resumes/{resumeId}/analyses", HttpMethod.Get, candidate);
 
+        // The readability run. It carries `section`, `priority` and `kind` on every recommendation and
+        // `band` at the root — four names already in the set above — plus `readabilityScore`, which is
+        // genuinely numeric and deliberately absent from it. Rule 1 matters here too: the response is
+        // built from a DTO, so the ResumeId that would otherwise serialize as {"value": guid} is bare.
+        await Collect($"/v1/resumes/{resumeId}/readability", HttpMethod.Post, candidate);
+
         var organizationId = (await Collect("/v1/organizations", HttpMethod.Post, candidate,
             new { name = "Contoso", slug = "contoso" })).GetProperty("id").GetGuid();
         await Collect($"/v1/organizations/{organizationId}", HttpMethod.Get, candidate);
@@ -121,7 +127,7 @@ public sealed class V1ContractShapeTests
 
         // Guards the sweep itself: an empty or truncated list would pass both rules vacuously, and this
         // is the number of routes the walk is claimed to cover.
-        bodies.Should().HaveCount(19);
+        bodies.Should().HaveCount(20);
 
         foreach (var (route, body) in bodies)
         {
