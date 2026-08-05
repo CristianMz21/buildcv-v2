@@ -39,10 +39,18 @@ public sealed class VersioningTests
             "a path that mints tokens for a request it never authenticated would be a routing hole, not a 401");
     }
 
-    // One representative unversioned route per group, requested WITH a valid credential so the 404
-    // cannot be an authentication refusal in disguise. 404 rather than 401 or 403 is also the correct
-    // behaviour, not a shortcut: an unmatched path has no endpoint, so the fallback authorization
+    // One representative unversioned route per group, requested WITH a valid credential so the refusal
+    // cannot be an authentication failure in disguise. 404 rather than 401 or 403 is the correct
+    // behaviour and not a shortcut: an unmatched path has no endpoint, so the fallback authorization
     // policy never runs.
+    //
+    // THE STATUS ALONE IS NOT EVIDENCE, and a negative control proved it: with the jobs group mounted
+    // unversioned, `GET /jobs/{unknown-id}` still answered 404 — from the HANDLER, because no such row
+    // exists — and this test passed while the mutation it exists to catch was live. Three of the six
+    // cases were blind that way. The discriminator is the BODY: a routing miss has none at all, while
+    // every 404 this API produces itself is ProblemDetails with a `detail`. Asserting the absence of a
+    // content type is what makes the case name true, and re-running the same control now reds exactly
+    // the mutated group's case.
     [Theory]
     [InlineData("GET", "/auth/me")]
     [InlineData("GET", "/resumes")]
@@ -50,7 +58,7 @@ public sealed class VersioningTests
     [InlineData("POST", "/job-offers/extract")]
     [InlineData("GET", "/organizations/00000000-0000-0000-0000-000000000001")]
     [InlineData("GET", "/scoring/00000000-0000-0000-0000-000000000001")]
-    public async Task EveryUnversionedGroupPath_Answers404(string method, string path)
+    public async Task EveryUnversionedGroupPath_MatchesNoEndpoint(string method, string path)
     {
         using var factory = new ApiTestFactory();
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
@@ -60,7 +68,13 @@ public sealed class VersioningTests
         if (method == "POST")
             request.Content = JsonContent.Create(new { text = "irrelevant" });
 
-        (await client.SendAsync(request)).StatusCode.Should().Be(HttpStatusCode.NotFound);
+        var response = await client.SendAsync(request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        response.Content.Headers.ContentType.Should().BeNull(
+            "a routing miss carries no body, while a 404 this API produced itself is problem+json — "
+            + "without this line the case passes against a route that exists and merely found no row");
+        (await response.Content.ReadAsStringAsync()).Should().BeEmpty();
     }
 
     // The refresh cookie is path-scoped to the endpoint it feeds. If AuthCookies.RefreshCookiePath
