@@ -97,6 +97,7 @@ internal sealed class ResumeRepository : IResumeRepository
 
         _context.Resumes.Remove(resume);
         await CascadeToAnalysesAsync(id, cancellationToken);
+        await CascadeToReadabilityReportsAsync(id, cancellationToken);
 
         await _context.SaveTranslatingFailuresAsync(cancellationToken);
     }
@@ -126,5 +127,23 @@ internal sealed class ResumeRepository : IResumeRepository
 
         if (analyses.Count > 0)
             _context.Analyses.RemoveRange(analyses);
+    }
+
+    // The SAME decision, applied to the second aggregate derived from a resume — and the argument is if
+    // anything stronger here. A readability recommendation's Message quotes the candidate's own bullet
+    // points and job titles ("Add an entry covering the 14-month gap before 'Backend Developer'"), so a
+    // report left behind after "delete my resume" is not merely joinable derived data: it is a readable
+    // fragment of the document the candidate asked to have removed.
+    //
+    // This must be extended for every future aggregate keyed by ResumeId, for the same reason: there is
+    // no foreign key for the engine to cascade through.
+    private async Task CascadeToReadabilityReportsAsync(ResumeId resumeId, CancellationToken cancellationToken)
+    {
+        var reports = await _context.ReadabilityReports.AsTracking()
+            .Where(report => report.ResumeId == resumeId)
+            .ToListAsync(cancellationToken);
+
+        if (reports.Count > 0)
+            _context.ReadabilityReports.RemoveRange(reports);
     }
 }

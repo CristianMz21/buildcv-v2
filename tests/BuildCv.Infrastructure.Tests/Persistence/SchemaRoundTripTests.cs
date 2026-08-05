@@ -4,6 +4,7 @@ using BuildCv.Domain.Common.ValueObjects;
 using BuildCv.Domain.Identity;
 using BuildCv.Domain.Jobs;
 using BuildCv.Domain.Organizations;
+using BuildCv.Domain.Readability;
 using BuildCv.Domain.Resumes;
 using BuildCv.Domain.Scoring;
 using BuildCv.Infrastructure.Persistence.BlindIndexes;
@@ -482,6 +483,147 @@ public sealed class SchemaRoundTripTests
         kind.Should().Be((byte)RecommendationKind.MissingMustHaveSkill);
     }
 
+    // The readability aggregate, against the real engine running the committed migration. This is where
+    // a mapping that BUILDS but cannot write shows up — a new schema, two new tables and a JSON weights
+    // column, none of which ModelConfigurationTests can execute.
+    [Fact]
+    public async Task ReadabilityReport_RoundTrips_WithBreakdownAndRecommendations()
+    {
+        var report = ReadabilityReport.Create(
+            ReadabilityReportId.New(),
+            ReadabilityBreakdown.Create(0.9, 0.8, 0.7, 0.6, 0.0, ReadabilityWeightsSnapshot.Default()),
+            ResumeId.New(),
+            DateTimeOffset.UtcNow,
+            NewReadabilityRecommendations());
+
+        await using (var context = _fixture.NewContext())
+        {
+            context.ReadabilityReports.Add(report);
+            await context.SaveChangesAsync();
+        }
+
+        await using var reader = _fixture.NewContext();
+        var reloaded = await reader.ReadabilityReports
+            .Include(entity => entity.Recommendations)
+            .SingleAsync(entity => entity.Id == report.Id);
+
+        reloaded.Breakdown.Should().Be(report.Breakdown);
+        reloaded.Breakdown.AtsParseabilityScore.Should().Be(0.0, "the fifth section has a column of its own");
+        reloaded.Breakdown.Weights.Should().Be(ReadabilityWeightsSnapshot.Default(),
+            "the five-member snapshot has to survive the JSON column intact");
+        reloaded.ResumeId.Should().Be(report.ResumeId);
+
+        // BeEquivalentTo rather than Equal: Recommendations is a SET on disk with a surrogate key and no
+        // stored position, so the reload order is the server's to choose.
+        reloaded.Recommendations.Should().BeEquivalentTo(report.Recommendations);
+        reloaded.ReadabilityScore.Should().Be(report.ReadabilityScore);
+        reloaded.Band.Should().Be(report.Band);
+    }
+
+    // The classification for the one encrypted column on this aggregate, checked where it is true or
+    // false: the bytes on disk. Reading it back through EF only proves the converter is symmetric.
+    //
+    // The structure beside it must stay READABLE, and that is asserted in the same statement — sealing
+    // Kind or Section would end "which advice do we give most often", which is the question the
+    // encrypted Message is traded against.
+    [Fact]
+    public async Task ReadabilityReport_StoresRecommendationMessagesAsCiphertext_AndTheirStructureInPlaintext()
+    {
+        var message = $"Add an entry covering the 14-month gap before 'Backend Developer'-{Guid.NewGuid():N}";
+        var report = ReadabilityReport.Create(
+            ReadabilityReportId.New(),
+            ReadabilityBreakdown.Create(0.5, 0.5, 0.5, 0.5, 0.0, ReadabilityWeightsSnapshot.Default()),
+            ResumeId.New(),
+            DateTimeOffset.UtcNow,
+            [
+                ReadabilityRecommendation.Create(
+                    ReadabilitySectionType.Chronology, RecommendationPriority.Critical,
+                    ReadabilityRecommendationKind.UnexplainedEmploymentGap, message, 0.15),
+            ]);
+
+        await using (var context = _fixture.NewContext())
+        {
+            context.ReadabilityReports.Add(report);
+            await context.SaveChangesAsync();
+        }
+
+        await using var reader = _fixture.NewContext();
+        var stored = await reader.Database
+            .SqlQuery<byte[]>(
+                $"SELECT [Message] AS [Value] FROM [readability].[Recommendations] WHERE [ReadabilityReportId] = {report.Id.Value}")
+            .SingleAsync();
+
+        Encoding.UTF8.GetString(stored).Should().NotContain(message, "the sentence quotes the candidate's resume");
+        stored.Should().NotBeEquivalentTo(Encoding.UTF8.GetBytes(message));
+
+        // Plaintext tinyints, queryable by the rollup the (Section, Priority) index exists for.
+        var kind = await reader.Database
+            .SqlQuery<byte>(
+                $"SELECT [Kind] AS [Value] FROM [readability].[Recommendations] WHERE [ReadabilityReportId] = {report.Id.Value}")
+            .SingleAsync();
+
+        kind.Should().Be((byte)ReadabilityRecommendationKind.UnexplainedEmploymentGap);
+    }
+
+    // TWO CONTEXT STRINGS, ONE ARGUMENT, executed at the layer where it is true or false. The AAD binds
+    // an envelope to the column it was written for, so an envelope lifted out of scoring.Recommendations
+    // and dropped into readability.Recommendations must FAIL to decrypt. Sharing "Recommendation.Message"
+    // between the two tables would make that move silent, and no model-shape assertion could see it —
+    // the annotation would be identical either way.
+    [Fact]
+    public async Task AMessageEnvelopeMovedBetweenTheTwoRecommendationTables_FailsToDecrypt()
+    {
+        var message = $"Add more C# projects-{Guid.NewGuid():N}";
+        var analysis = Analysis.Create(
+            AnalysisId.New(),
+            ScoreBreakdown.Create(0.9, 0.8, 0.7, 0.6, 0.5, 0.4, ScoringWeightsSnapshot.Default()),
+            ResumeId.New(),
+            JobPostingId.New(),
+            DateTimeOffset.UtcNow,
+            [
+                Recommendation.Create(
+                    SectionType.Projects, RecommendationPriority.Important,
+                    RecommendationKind.FewerProjectsThanExpected, message, 0.05),
+            ]);
+
+        var report = ReadabilityReport.Create(
+            ReadabilityReportId.New(),
+            ReadabilityBreakdown.Create(0.5, 0.5, 0.5, 0.5, 0.0, ReadabilityWeightsSnapshot.Default()),
+            ResumeId.New(),
+            DateTimeOffset.UtcNow,
+            [
+                ReadabilityRecommendation.Create(
+                    ReadabilitySectionType.Contact, RecommendationPriority.Important,
+                    ReadabilityRecommendationKind.NoPhoneNumber, "Add a phone number.", 0.05),
+            ]);
+
+        await using (var context = _fixture.NewContext())
+        {
+            context.Analyses.Add(analysis);
+            context.ReadabilityReports.Add(report);
+            await context.SaveChangesAsync();
+        }
+
+        await using (var mover = _fixture.NewContext())
+        {
+            await mover.Database.ExecuteSqlAsync(
+                $"""
+                UPDATE readability.Recommendations
+                SET [Message] = (
+                    SELECT TOP 1 [Message] FROM scoring.Recommendations WHERE [AnalysisId] = {analysis.Id.Value})
+                WHERE [ReadabilityReportId] = {report.Id.Value}
+                """);
+        }
+
+        await using var reader = _fixture.NewContext();
+        var act = async () => await reader.ReadabilityReports
+            .Include(entity => entity.Recommendations)
+            .SingleAsync(entity => entity.Id == report.Id);
+
+        await act.Should().ThrowAsync<Exception>(
+            "the envelope is authenticated against the column path it was sealed under");
+    }
+
     [Fact]
     public async Task RefreshToken_RoundTrips_AndIsFoundByItsBlindIndex()
     {
@@ -690,6 +832,17 @@ public sealed class SchemaRoundTripTests
         Recommendation.Create(
             SectionType.Skills, RecommendationPriority.Critical,
             RecommendationKind.MissingMustHaveSkill, "Mention SQL explicitly.", 0.45),
+    ];
+
+    private static IReadOnlyList<ReadabilityRecommendation> NewReadabilityRecommendations() =>
+    [
+        ReadabilityRecommendation.Create(
+            ReadabilitySectionType.Contact, RecommendationPriority.Important,
+            ReadabilityRecommendationKind.NoPhoneNumber, "Add a phone number.", 0.07),
+        ReadabilityRecommendation.Create(
+            ReadabilitySectionType.Chronology, RecommendationPriority.Critical,
+            ReadabilityRecommendationKind.UnexplainedEmploymentGap,
+            "Add an entry covering the 14-month gap before 'Backend Developer'.", 0.16),
     ];
 
     // The other side of the same rule, and the reason the fix has to be scoped to the root being

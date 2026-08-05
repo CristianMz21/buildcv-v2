@@ -1,6 +1,7 @@
 using BuildCv.Domain.Identity;
 using BuildCv.Domain.Jobs;
 using BuildCv.Domain.Organizations;
+using BuildCv.Domain.Readability;
 using BuildCv.Domain.Resumes;
 using BuildCv.Domain.Scoring;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
@@ -28,3 +29,7 @@ internal sealed class OrganizationIdConverter() : ValueConverter<OrganizationId,
 internal sealed class AnalysisIdConverter() : ValueConverter<AnalysisId, Guid>(
     id => id.Value,
     value => new AnalysisId(value));
+
+internal sealed class ReadabilityReportIdConverter() : ValueConverter<ReadabilityReportId, Guid>(
+    id => id.Value,
+    value => new ReadabilityReportId(value));

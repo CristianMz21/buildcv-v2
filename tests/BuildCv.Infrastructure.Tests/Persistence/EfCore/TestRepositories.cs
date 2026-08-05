@@ -24,4 +24,6 @@ internal static class TestRepositories
         new(context, TimeProvider.System);
 
     public static AnalysisRepository Analyses(BuildCvDbContext context) => new(context);
+
+    public static ReadabilityReportRepository ReadabilityReports(BuildCvDbContext context) => new(context);
 }

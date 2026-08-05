@@ -1,6 +1,7 @@
 using BuildCv.Domain.Common.ValueObjects;
 using BuildCv.Domain.Identity;
 using BuildCv.Domain.Jobs;
+using BuildCv.Domain.Readability;
 using BuildCv.Domain.Resumes;
 using BuildCv.Domain.Scoring;
 using BuildCv.Infrastructure.Persistence.Conventions;
@@ -204,6 +205,49 @@ public sealed class ResumeRepositoryTests
         retained.Breakdown.Should().Be(analysis.Breakdown);
     }
 
+    // THE SAME DECISION, applied to the second aggregate keyed by ResumeId — and the argument is if
+    // anything stronger. A readability recommendation's Message quotes the candidate's own bullet points
+    // and job titles, so a report left behind after "delete my resume" is not merely joinable derived
+    // data: it is a readable fragment of the document they asked to have removed.
+    //
+    // Read back through IgnoreQueryFilters rather than through the port, because
+    // IReadabilityReportRepository has no read method yet — which is exactly why this cascade would
+    // otherwise be invisible to every test in the suite.
+    [Fact]
+    public async Task DeleteAsync_AlsoTombstonesTheReadabilityReportsDerivedFromTheResume()
+    {
+        var resume = Minimal(AccountId.New(), "readability-cascade");
+        var report = NewReadabilityReport(resume.Id);
+        var unrelated = NewReadabilityReport(ResumeId.New());
+
+        await using (var writer = _fixture.NewApplicationContext())
+        {
+            await TestRepositories.Resumes(writer).AddAsync(resume);
+            await TestRepositories.ReadabilityReports(writer).AddAsync(report);
+            await TestRepositories.ReadabilityReports(writer).AddAsync(unrelated);
+        }
+
+        await using (var deleter = _fixture.NewApplicationContext())
+            await TestRepositories.Resumes(deleter).DeleteAsync(resume.Id);
+
+        // NewContext, not NewApplicationContext: the shadow assertion below reads DeletedAt off the
+        // CHANGE TRACKER, and the application-shaped context is NoTracking — Entry() on an untracked
+        // instance answers the property's default, which is null, so the assertion would have failed for
+        // a tombstone that really was written. Measured: it did.
+        await using var reader = _fixture.NewContext();
+
+        (await reader.ReadabilityReports.AnyAsync(entity => entity.Id == report.Id))
+            .Should().BeFalse("the query filter hides a tombstoned report");
+        (await reader.ReadabilityReports.AnyAsync(entity => entity.Id == unrelated.Id))
+            .Should().BeTrue("only the deleted resume's reports are tombstoned");
+
+        // Tombstoned, not destroyed: the report survives for audit exactly as the resume does.
+        var retained = await reader.ReadabilityReports.IgnoreQueryFilters()
+            .SingleAsync(entity => entity.Id == report.Id);
+        reader.Entry(retained).Property(ShadowColumns.DeletedAt).CurrentValue.Should().NotBeNull();
+        retained.Breakdown.Should().Be(report.Breakdown);
+    }
+
     [Fact]
     public async Task DeleteAsync_ForAResumeThatIsNotThere_IsANoOp()
     {
@@ -271,5 +315,17 @@ public sealed class ResumeRepositoryTests
                 Recommendation.Create(
                     SectionType.Projects, RecommendationPriority.Important,
                     RecommendationKind.FewerProjectsThanExpected, "Add more C# projects.", 0.05),
+            ]);
+
+    private static ReadabilityReport NewReadabilityReport(ResumeId resumeId) =>
+        ReadabilityReport.Create(
+            ReadabilityReportId.New(),
+            ReadabilityBreakdown.Create(0.9, 0.8, 0.7, 0.6, 0.0, ReadabilityWeightsSnapshot.Default()),
+            resumeId,
+            DateTimeOffset.UtcNow,
+            [
+                ReadabilityRecommendation.Create(
+                    ReadabilitySectionType.Contact, RecommendationPriority.Important,
+                    ReadabilityRecommendationKind.NoPhoneNumber, "Add a phone number.", 0.05),
             ]);
 }
