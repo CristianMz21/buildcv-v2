@@ -1,0 +1,133 @@
+# BuildCv skill lexicon.
+#
+# DATA, NOT CODE, AND NOT A TABLE IN THE DATABASE. It is a scoring input: what is written here changes
+# what a (resume, posting) pair scores. Compiling it in makes a revision a reviewable diff that ships
+# with the build that produced it, so a stored analysis and the lexicon that explained it can never be
+# two independently deployable things. A database table would let one instance score under one lexicon
+# and the next request under another, with SchemaVersion saying they agree.
+#
+# CHANGING THIS FILE IS A SCORING MODEL CHANGE. Bump ScoringWeightsSnapshot.CurrentSchemaVersion in the
+# same commit, so two analyses reporting one version cannot have been scored under two lexicons.
+#
+# ---------------------------------------------------------------------------------------------------
+# FORMAT
+#
+#   Canonical | alias | alias | ...
+#
+# One skill per line. The first field is the canonical token; every other field is a spelling that folds
+# onto it. Lookups are case-, whitespace- and Unicode-insensitive (NFC), so write aliases in the form a
+# reader finds clearest and do not repeat casing variants.
+#
+# A line whose first non-whitespace character is '#' is a comment. That test is on the FIRST character
+# and not on '#' anywhere, because '#' is part of two skill names below.
+#
+# Every key must be unique across the whole file, canonical tokens included. A repeat is a load failure
+# naming both sides, not a last-one-wins overwrite: two skills sharing a key IS the false match this
+# file's rules exist to prevent, and it must not be possible to introduce one quietly.
+#
+# ---------------------------------------------------------------------------------------------------
+# WHAT MAY BE AN ALIAS
+#
+# A false match is worse than a false miss. A miss costs a candidate advice they can still act on; a
+# match tells them they already meet a requirement they do not, in the section they most needed advice
+# on. So an alias must be a different SPELLING, an ABBREVIATION, or a FORMER NAME of ONE skill:
+#
+#   React.js, ReactJS, React js  -> React          spelling
+#   k8s                          -> Kubernetes     abbreviation
+#   .NET Core                    -> .NET           former name of the same runtime
+#
+# NOT ADMITTED, and each of these is in the must-not-match test so it stays out:
+#
+#   React Native   a different framework that shares a name
+#   AngularJS      a different framework, not an old spelling of Angular
+#   SvelteKit      a package built on Svelte, not a spelling of it
+#   GitHub         a platform, not a spelling of Git
+#   SQL Server     its own entry; SQL is the language every one of these products speaks
+#   .NET Framework the legacy runtime a recruiter may be naming on purpose
+#   Golang         see the note on Go below
+#
+# CANONICALIZATION IS SYMMETRIC, and that is the constraint that decides the hard cases. An alias merges
+# in BOTH directions, so "Spring Boot -> Spring" also makes a candidate who wrote only "Spring" satisfy
+# a requirement for "Spring Boot". Every entry below is one where both directions are defensible; where
+# only one is, the entry is absent. That is why .NET Framework is not an alias of .NET while .NET Core
+# is: "modern .NET" and ".NET Core" name the same runtime in either direction, but a posting asking for
+# .NET Framework is asking for something a .NET 8 candidate has not got.
+#
+# TWO-LETTER ALIASES ARE THE HIGHEST-RISK ENTRIES and only two are admitted: js and ts. Both are the
+# ecosystem's own short forms, and neither names any other technology a person would put on a CV. Do not
+# add py, es, ai, ml or friends: "es" alone is both EcmaScript and Elasticsearch, which is the collision
+# in miniature.
+#
+# ---------------------------------------------------------------------------------------------------
+# SEEDED FROM JobRequirementExtractor.KnownTechnologies, all 53 terms, deliberately and identically
+# incomplete. That list leaves out bare "C", "R" and "Go" because it scans PROSE and a capitalised
+# common word would become an invented requirement. Those terms are left out HERE for a different and
+# weaker reason: this file is consulted on a whole skill NAME, where "Go" is unambiguous, but adding a
+# skill the extractor cannot propose buys a match on one side only. When Go earns an entry it belongs in
+# both places. Until then Go and Golang do not match each other, which is a miss and therefore safe.
+#
+# A skill with no alias still gets a line. It is what makes the canonical set complete, and what lets
+# "every seed term canonicalizes to itself" mean something.
+
+# ---- languages and runtimes ----
+C# | csharp | c-sharp | c sharp
+F# | fsharp | f-sharp | f sharp
+C++ | cpp | c plus plus
+.NET | dotnet | dot net | .net core | dotnet core
+ASP.NET | aspnet | asp net | asp.net core | aspnet core
+TypeScript | ts
+JavaScript | js | ecmascript | java script
+Python | python3 | python 3
+Java | core java | java se
+Kotlin
+Swift
+Ruby
+Rust
+Scala
+PHP
+Elixir
+
+# ---- front end ----
+React | react.js | reactjs | react js
+Angular
+Vue | vue.js | vuejs | vue js
+Svelte
+Next.js | nextjs | next js
+
+# ---- back end and frameworks ----
+Node.js | nodejs | node js | node
+Express | express.js | expressjs | express js
+Django
+Flask
+FastAPI | fast api
+Spring | spring boot | springboot | spring framework
+Rails | ruby on rails | rubyonrails
+Laravel
+Blazor
+
+# ---- data stores ----
+SQL
+SQL Server | mssql | ms sql | ms sql server | microsoft sql server | sqlserver | sql-server
+PostgreSQL | postgres | postgre | postgres sql | postgre sql
+MySQL | my sql
+MongoDB | mongo | mongo db
+Redis
+SQLite | sqlite3 | sqlite 3
+Oracle | oracle db | oracle database
+Cassandra | apache cassandra
+Elasticsearch | elastic search
+
+# ---- platform and tooling ----
+Docker
+Kubernetes | k8s
+Terraform
+Ansible
+Jenkins
+GraphQL | graph ql
+gRPC
+Kafka | apache kafka
+RabbitMQ | rabbit mq
+AWS | amazon web services
+Azure | microsoft azure | ms azure
+GCP | google cloud | google cloud platform
+Git

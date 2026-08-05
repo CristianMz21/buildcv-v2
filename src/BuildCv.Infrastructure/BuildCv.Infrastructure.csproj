@@ -18,6 +18,13 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The skill lexicon is DATA, compiled in. LogicalName is stated rather than derived from the
+         folder, so moving the file is a build-time rename here instead of a runtime
+         MissingManifestResourceException on the first score. -->
+    <EmbeddedResource Include="Lexicon\SkillLexicon.txt" LogicalName="BuildCv.Infrastructure.Lexicon.SkillLexicon.txt" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- The EF value converters are internal: they are wiring for this assembly's own model, not a
          public API. The test project needs to exercise them as plain functions. -->
     <InternalsVisibleTo Include="BuildCv.Infrastructure.Tests" />

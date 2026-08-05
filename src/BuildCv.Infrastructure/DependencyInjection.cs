@@ -14,6 +14,7 @@ using BuildCv.Domain.Organizations;
 using BuildCv.Domain.Resumes;
 using BuildCv.Domain.Scoring;
 using BuildCv.Infrastructure.Documents;
+using BuildCv.Infrastructure.Lexicon;
 using BuildCv.Infrastructure.Persistence;
 using BuildCv.Infrastructure.Persistence.BlindIndexes;
 using BuildCv.Infrastructure.Persistence.EfCore;
@@ -91,6 +92,11 @@ public static class DependencyInjection
 
         AddPersistence(services, configuration, environmentName);
 
+        // Parsed HERE rather than behind a lazy static, so a malformed lexicon stops the host at
+        // composition with a message naming the offending line — the same posture as the in-memory
+        // persistence guard below. It is a scoring INPUT, so an instance shared for the host's lifetime
+        // is what lets the singleton engine hold one.
+        services.AddSingleton<ISkillLexicon>(SkillLexicon.Load());
         services.AddSingleton<IScoringEngine, ScoringEngine>();
 
         // Document text extraction. The dispatcher is the port; the per-format adapters are registered
