@@ -25,7 +25,8 @@ public static class OrganizationEndpoints
                 httpContext.User.GetAccountId(),
                 request.Name,
                 request.Slug), cancellationToken);
-            return result.ToHttpResult(org => Results.Created($"/v1/organizations/{org.Id.Value}", org));
+            return result.ToHttpResult(org =>
+                Results.Created($"/v1/organizations/{org.Id.Value}", OrganizationResponse.From(org)));
         });
 
         group.MapGet("/{id:guid}", async (
@@ -36,7 +37,7 @@ public static class OrganizationEndpoints
         {
             var result = await handler.Handle(
                 new GetOrganizationQuery(httpContext.User.GetAccountId(), new OrganizationId(id)), cancellationToken);
-            return result.ToHttpResult();
+            return result.ToHttpResult(organization => Results.Ok(OrganizationResponse.From(organization)));
         });
 
         group.MapGet("/slug/{slug}", async (
@@ -47,7 +48,7 @@ public static class OrganizationEndpoints
         {
             var result = await handler.Handle(
                 new GetOrganizationBySlugQuery(httpContext.User.GetAccountId(), slug), cancellationToken);
-            return result.ToHttpResult();
+            return result.ToHttpResult(organization => Results.Ok(OrganizationResponse.From(organization)));
         });
 
         group.MapPost("/{id:guid}/members", async Task<IResult> (
@@ -65,7 +66,7 @@ public static class OrganizationEndpoints
                 new OrganizationId(id),
                 new AccountId(request.AccountId),
                 role), cancellationToken);
-            return result.ToHttpResult();
+            return result.ToHttpResult(organization => Results.Ok(OrganizationResponse.From(organization)));
         });
 
         group.MapDelete("/{id:guid}/members/{accountId:guid}", async (
@@ -79,7 +80,7 @@ public static class OrganizationEndpoints
                 httpContext.User.GetAccountId(),
                 new OrganizationId(id),
                 new AccountId(accountId)), cancellationToken);
-            return result.ToHttpResult();
+            return result.ToHttpResult(organization => Results.Ok(OrganizationResponse.From(organization)));
         });
 
         return group;

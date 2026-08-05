@@ -210,7 +210,7 @@ public sealed class ScoringEndpointTests
         var response = await client.SendAsync(request);
         response.StatusCode.Should().Be(HttpStatusCode.Created);
         using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-        return json.RootElement.GetProperty("id").GetProperty("value").GetGuid();
+        return json.RootElement.GetProperty("id").GetGuid();
     }
 
     internal static async Task<Guid> CreateJobAsync(HttpClient client, string token)

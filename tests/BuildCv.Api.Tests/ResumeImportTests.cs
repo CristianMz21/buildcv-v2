@@ -31,28 +31,28 @@ public sealed class ResumeImportTests
         response.StatusCode.Should().Be(HttpStatusCode.Created);
 
         using var created = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-        var resumeId = created.RootElement.GetProperty("id").GetProperty("value").GetGuid();
+        var resumeId = created.RootElement.GetProperty("id").GetGuid();
         response.Headers.Location!.ToString().Should().Be($"/v1/resumes/{resumeId}");
 
         var resume = await GetResumeAsync(client, token, resumeId);
 
         var contact = resume.GetProperty("contactInformation");
-        contact.GetProperty("fullName").GetProperty("value").GetString().Should().Be("Jane Candidate");
-        contact.GetProperty("email").GetProperty("value").GetString().Should().Be("jane@example.com");
-        contact.GetProperty("phoneNumber").GetProperty("value").GetString().Should().Be("+541155550123");
+        contact.GetProperty("fullName").GetString().Should().Be("Jane Candidate");
+        contact.GetProperty("email").GetString().Should().Be("jane@example.com");
+        contact.GetProperty("phoneNumber").GetString().Should().Be("+541155550123");
         contact.GetProperty("location").GetString().Should().Be("Buenos Aires");
         contact.GetProperty("summary").GetString().Should().Be("Backend engineer.");
 
         // New capability, not a refactor: neither field could be set through any route before this one.
-        contact.GetProperty("website").GetProperty("value").GetString().Should().Be("https://jane.example.com");
+        contact.GetProperty("website").GetString().Should().Be("https://jane.example.com");
         var profile = contact.GetProperty("profiles").EnumerateArray().Single();
         profile.GetProperty("network").GetString().Should().Be("GitHub");
         profile.GetProperty("username").GetString().Should().Be("janedev");
-        profile.GetProperty("url").GetProperty("value").GetString().Should().Be("https://github.com/janedev");
+        profile.GetProperty("url").GetString().Should().Be("https://github.com/janedev");
 
         var experience = resume.GetProperty("experiences").EnumerateArray().Single();
-        experience.GetProperty("type").GetInt32().Should().Be(0, "ExperienceType.Professional");
-        experience.GetProperty("organization").GetProperty("value").GetString().Should().Be("Mercado Libre");
+        experience.GetProperty("type").GetString().Should().Be("Professional");
+        experience.GetProperty("organization").GetString().Should().Be("Mercado Libre");
         experience.GetProperty("position").GetString().Should().Be("Senior Engineer");
         experience.GetProperty("period").GetProperty("start").GetString().Should().Be("2019-03-01");
         experience.GetProperty("period").GetProperty("end").GetString().Should().Be("2023-06-30");
@@ -61,35 +61,34 @@ public sealed class ResumeImportTests
             .Should().Be("Cut latency in half");
 
         var education = resume.GetProperty("educations").EnumerateArray().Single();
-        education.GetProperty("institution").GetProperty("value").GetString()
+        education.GetProperty("institution").GetString()
             .Should().Be("Universidad de Buenos Aires");
         education.GetProperty("degree").GetString().Should().Be("Ingeniero en Sistemas");
         education.GetProperty("fieldOfStudy").GetString().Should().Be("Software");
         education.GetProperty("grade").GetString().Should().Be("8.4");
-        education.GetProperty("level").GetInt32().Should().Be(2, "EducationLevel.Bachelor");
+        education.GetProperty("level").GetString().Should().Be("Bachelor");
 
         var skill = resume.GetProperty("skills").EnumerateArray().Single();
-        skill.GetProperty("name").GetProperty("name").GetString().Should().Be("C#");
-        skill.GetProperty("level").GetInt32().Should().Be(2, "SkillLevel.Advanced");
+        skill.GetProperty("name").GetString().Should().Be("C#");
+        skill.GetProperty("level").GetString().Should().Be("Advanced");
         skill.GetProperty("yearsOfExperience").GetInt32().Should().Be(7);
 
         var project = resume.GetProperty("projects").EnumerateArray().Single();
         project.GetProperty("name").GetString().Should().Be("buildcv");
         project.GetProperty("description").GetString().Should().Be("A CV scorer.");
-        project.GetProperty("repositoryUrl").GetProperty("value").GetString()
+        project.GetProperty("repositoryUrl").GetString()
             .Should().Be("https://github.com/janedev/buildcv");
-        project.GetProperty("liveDemoUrl").GetProperty("value").GetString()
+        project.GetProperty("liveDemoUrl").GetString()
             .Should().Be("https://buildcv.example.com");
-        project.GetProperty("technologies").EnumerateArray().Single()
-            .GetProperty("name").GetString().Should().Be("dotnet");
+        project.GetProperty("technologies").EnumerateArray().Single().GetString().Should().Be("dotnet");
         project.GetProperty("highlights").EnumerateArray().Single().GetString()
             .Should().Be("Deterministic scoring");
 
         var certificate = resume.GetProperty("certificates").EnumerateArray().Single();
         certificate.GetProperty("name").GetString().Should().Be("AWS Solutions Architect");
-        certificate.GetProperty("issuer").GetProperty("value").GetString().Should().Be("Amazon");
+        certificate.GetProperty("issuer").GetString().Should().Be("Amazon");
         certificate.GetProperty("credentialId").GetString().Should().Be("cred-123");
-        certificate.GetProperty("credentialUrl").GetProperty("value").GetString()
+        certificate.GetProperty("credentialUrl").GetString()
             .Should().Be("https://aws.example.com/cred-123");
         certificate.GetProperty("validityPeriod").GetProperty("start").GetString().Should().Be("2024-01-01");
         certificate.GetProperty("validityPeriod").GetProperty("end").GetString().Should().Be("2027-01-01");
@@ -97,18 +96,18 @@ public sealed class ResumeImportTests
         var language = resume.GetProperty("languages").EnumerateArray().Single();
         language.GetProperty("name").GetString().Should().Be("Español");
         language.GetProperty("fluency").GetString().Should().Be("Bilingüe");
-        language.GetProperty("level").GetInt32().Should().Be(4, "LanguageProficiency.Native");
+        language.GetProperty("level").GetString().Should().Be("Native");
 
         var award = resume.GetProperty("awards").EnumerateArray().Single();
         award.GetProperty("title").GetString().Should().Be("Best Hack");
-        award.GetProperty("awarder").GetProperty("value").GetString().Should().Be("Hackathon AR");
+        award.GetProperty("awarder").GetString().Should().Be("Hackathon AR");
         award.GetProperty("date").GetString().Should().Be("2021-11-05");
         award.GetProperty("summary").GetString().Should().Be("First place.");
 
         var publication = resume.GetProperty("publications").EnumerateArray().Single();
         publication.GetProperty("title").GetString().Should().Be("On Scoring");
-        publication.GetProperty("publisher").GetProperty("value").GetString().Should().Be("ACM");
-        publication.GetProperty("url").GetProperty("value").GetString()
+        publication.GetProperty("publisher").GetString().Should().Be("ACM");
+        publication.GetProperty("url").GetString()
             .Should().Be("https://acm.example.com/on-scoring");
         publication.GetProperty("releaseDate").GetString().Should().Be("2022-05-01");
         publication.GetProperty("summary").GetString().Should().Be("A paper.");
@@ -120,9 +119,9 @@ public sealed class ResumeImportTests
         var reference = resume.GetProperty("references").EnumerateArray().Single();
         reference.GetProperty("name").GetString().Should().Be("John Manager");
         reference.GetProperty("position").GetString().Should().Be("Engineering Manager");
-        reference.GetProperty("company").GetProperty("value").GetString().Should().Be("Mercado Libre");
-        reference.GetProperty("email").GetProperty("value").GetString().Should().Be("john@example.com");
-        reference.GetProperty("phoneNumber").GetProperty("value").GetString().Should().Be("+541155550999");
+        reference.GetProperty("company").GetString().Should().Be("Mercado Libre");
+        reference.GetProperty("email").GetString().Should().Be("john@example.com");
+        reference.GetProperty("phoneNumber").GetString().Should().Be("+541155550999");
         reference.GetProperty("referenceText").GetString().Should().Be("Would hire again.");
     }
 
@@ -270,7 +269,7 @@ public sealed class ResumeImportTests
         created.StatusCode.Should().Be(HttpStatusCode.Created);
 
         using var body = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
-        var resumeId = body.RootElement.GetProperty("id").GetProperty("value").GetGuid();
+        var resumeId = body.RootElement.GetProperty("id").GetGuid();
 
         using var update = new HttpRequestMessage(HttpMethod.Put, $"/v1/resumes/{resumeId}/contact")
         {
@@ -289,7 +288,7 @@ public sealed class ResumeImportTests
         var contact = (await GetResumeAsync(client, token, resumeId)).GetProperty("contactInformation");
 
         contact.GetProperty("location").GetString().Should().Be("Córdoba", "the update did apply");
-        contact.GetProperty("website").GetProperty("value").GetString()
+        contact.GetProperty("website").GetString()
             .Should().Be("https://jane.example.com", "an unsent field means unchanged, not deleted");
         contact.GetProperty("profiles").EnumerateArray().Single()
             .GetProperty("network").GetString().Should().Be("GitHub");
@@ -450,7 +449,11 @@ public sealed class ResumeImportTests
 
     // Every leaf is a string on the wire — dates, the years count and the levels included — so that a
     // draft can never fail at model binding, where the 400 would name no field and collect no siblings.
-    private static object FullDraft() => new
+    //
+    // Internal because V1ContractShapeTests needs the same fully-populated CV: it is the only request
+    // in the API that fills all ten owned collections, and a shape sweep over an empty resume would
+    // pass vacuously. One definition, so the two cannot drift into asserting different CVs.
+    internal static object FullDraft() => new
     {
         contact = new
         {

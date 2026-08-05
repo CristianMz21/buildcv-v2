@@ -13,10 +13,10 @@ public sealed record CreateJobRequest(
 // as raw integers whose numbers are documented in Domain as an append-only PERSISTENCE detail. The
 // moment a client binds to them they are a public API contract too and renumbering breaks it.
 //
-// EVERY ENUM ON THIS RESPONSE CARRIES ITS NAME AND EVERY ID IS A BARE GUID — the same v1 settlement
-// stated on AnalysisResponse, applied to the shapes this file used to defer. It is a claim about the
-// endpoints that map through a DTO, which as of this commit is /jobs and /scoring; see
-// AnalysisResponse for the routes still answering with an aggregate.
+// EVERY ENUM CARRIES ITS NAME AND EVERY ID IS A BARE GUID — the v1 settlement, applied here to the
+// shapes this file used to defer. It holds across every v1 route rather than only this one, and it is
+// EXECUTED rather than claimed: V1ContractShapeTests walks each route's real response body and fails
+// on a single-value wrapper anywhere in the tree or an enum-named property that is a number.
 //
 //   - `status` and `requirements[].priority` shipped as integers and are names now: "Draft", never 0,
 //     from ToString(), so a JsonStringEnumConverter registered later cannot change the wire and a

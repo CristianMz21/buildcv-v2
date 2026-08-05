@@ -35,11 +35,11 @@ public sealed class ResumeLevelFieldsTests
         var language = (await GetResumeAsync(client, token, resumeId))
             .GetProperty("languages").EnumerateArray().Single();
 
-        // Asymmetric, and pre-existing: the level goes IN as a name and comes back OUT as a number,
-        // because no JsonStringEnumConverter is configured and Skill.Level and Experience.Type already
-        // behave this way. The literal is LanguageProficiency.Native's pinned value, so this doubles as
-        // a wire-level guard on the numbering the tinyint column depends on.
-        language.GetProperty("level").GetInt32().Should().Be(4);
+        // Symmetric since v1: the level goes IN as a name and comes back OUT as the same name. It used
+        // to come back as the tinyint 4, because the endpoint answered with the Domain aggregate and no
+        // JsonStringEnumConverter is configured; ResumeResponse states the encoding instead, so the
+        // persisted numbering is no longer part of this API's contract.
+        language.GetProperty("level").GetString().Should().Be("Native");
 
         // The whole point of the pair. "Bilingüe" is in no normalization table anyone would write, and
         // parsing it would score a native Spanish speaker zero on Spanish. It is kept verbatim for
@@ -72,17 +72,20 @@ public sealed class ResumeLevelFieldsTests
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         (await GetResumeAsync(client, token, resumeId))
             .GetProperty("languages").EnumerateArray().Single()
-            .GetProperty("level").GetInt32().Should().Be(4);
+            .GetProperty("level").GetString().Should().Be("Native");
     }
 
-    // The case the IsDefined guard must NOT break. GET returns the level as a number, so a client that
-    // reads a resume, edits it and posts it back legitimately sends "4". Rejecting numeric input
-    // outright would close the hole below by breaking round-tripping; only UNDEFINED numbers may fail.
+    // A DEFINED number is still accepted, and the IsDefined guard must not start rejecting one. The
+    // reason has changed with v1 and is worth stating precisely: GET used to answer the level as a
+    // NUMBER, so numeric input was what read-modify-write required. GET answers the NAME now, so a
+    // round-tripping client sends "Native" and never needs this — what the tolerance protects is every
+    // caller written against the old shape, and the guard below still has to tell 0 and 4 (real
+    // members) from 99, 300 and -1 (not members, and silently corrupting before the guard existed).
     [Theory]
-    [InlineData("0", 0)]
-    [InlineData("4", 4)]
-    public async Task AddLanguage_AcceptsAValidNumericLevel_SoReadModifyWriteKeepsWorking(
-        string level, int expected)
+    [InlineData("0", "Basic")]
+    [InlineData("4", "Native")]
+    public async Task AddLanguage_AcceptsAValidNumericLevel_SoAnOldClientKeepsWorking(
+        string level, string expected)
     {
         using var factory = new ApiTestFactory();
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
@@ -99,7 +102,7 @@ public sealed class ResumeLevelFieldsTests
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         (await GetResumeAsync(client, token, resumeId))
             .GetProperty("languages").EnumerateArray().Single()
-            .GetProperty("level").GetInt32().Should().Be(expected);
+            .GetProperty("level").GetString().Should().Be(expected);
     }
 
     [Fact]
@@ -184,9 +187,9 @@ public sealed class ResumeLevelFieldsTests
         var education = (await GetResumeAsync(client, token, resumeId))
             .GetProperty("educations").EnumerateArray().Single();
 
-        // EducationLevel.Bachelor's pinned number. See the note on the language test above for why the
-        // response is a number while the request was a name.
-        education.GetProperty("level").GetInt32().Should().Be(2);
+        // The name in, the same name out — see the language test above for the v1 encoding this
+        // replaced, where the request carried "Bachelor" and the response answered 2.
+        education.GetProperty("level").GetString().Should().Be("Bachelor");
         education.GetProperty("degree").GetString().Should().Be("Ingeniero en Sistemas",
             "the degree is free text and is never parsed into the level");
     }
@@ -246,7 +249,7 @@ public sealed class ResumeLevelFieldsTests
         response.StatusCode.Should().Be(HttpStatusCode.Created);
 
         using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-        return json.RootElement.GetProperty("id").GetProperty("value").GetGuid();
+        return json.RootElement.GetProperty("id").GetGuid();
     }
 
     private static async Task<JsonElement> GetResumeAsync(HttpClient client, string token, Guid resumeId)

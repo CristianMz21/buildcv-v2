@@ -114,7 +114,7 @@ public sealed class ResumePaginationTests
         response.StatusCode.Should().Be(HttpStatusCode.Created);
 
         using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-        return json.RootElement.GetProperty("id").GetProperty("value").GetGuid();
+        return json.RootElement.GetProperty("id").GetGuid();
     }
 
     private static async Task<(List<Guid> Items, string? NextCursor)> GetPageAsync(
@@ -137,7 +137,7 @@ public sealed class ResumePaginationTests
 
         var items = json.RootElement.GetProperty("items")
             .EnumerateArray()
-            .Select(item => item.GetProperty("id").GetProperty("value").GetGuid())
+            .Select(item => item.GetProperty("id").GetGuid())
             .ToList();
 
         var nextCursor = json.RootElement.GetProperty("nextCursor");

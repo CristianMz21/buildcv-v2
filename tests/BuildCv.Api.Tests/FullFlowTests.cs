@@ -31,7 +31,7 @@ public sealed class FullFlowTests
         var resumeResponse = await client.SendAsync(createResume);
         resumeResponse.StatusCode.Should().Be(HttpStatusCode.Created);
         using var resumeJson = JsonDocument.Parse(await resumeResponse.Content.ReadAsStringAsync());
-        var resumeId = resumeJson.RootElement.GetProperty("id").GetProperty("value").GetGuid();
+        var resumeId = resumeJson.RootElement.GetProperty("id").GetGuid();
 
         using var createJob = new HttpRequestMessage(HttpMethod.Post, "/v1/jobs")
         {

@@ -18,10 +18,14 @@ public sealed record ScoreResumeRequest(Guid ResumeId, Guid JobPostingId);
 //     is the ScoreBand name now ("Good", never 2), so renumbering the enum stays a persistence
 //     concern instead of a client break.
 //   - Ids shipped wrapped as {"value": guid} — the shape a strongly-typed id record happens to
-//     serialize into. They are bare guids now, unwrapped in the same release here and in
-//     JobContracts.cs. THE RESUME ROUTES ARE NOT SETTLED YET and still answer with the Resume
-//     AGGREGATE, so their ids remain enveloped and their level enums remain integers; that is the
-//     next commit, and until it lands "v1 ids are bare" is a claim about this file and /jobs only.
+//     serialize into. They are bare guids now, and so is every id on every other v1 route: the
+//     resume and organization endpoints were still answering with their Domain AGGREGATE, which is
+//     what made the envelope reappear on the two endpoints a candidate actually uses. ResumeResponse
+//     and OrganizationResponse closed that in the same release.
+//
+// THE CONVENTION IS EXECUTED, NOT ASSERTED. V1ContractShapeTests walks the real response body of
+// every v1 route and fails on any object that is a single-value wrapper, or any enum-named property
+// that is a number — which is the test this file's comment could not previously be checked against.
 //
 // Both flips happened in the release that introduced /v1 BECAUSE it was that release: no frontend or
 // third-party client existed yet, so shipping the correct shape was free, exactly once. The moment a

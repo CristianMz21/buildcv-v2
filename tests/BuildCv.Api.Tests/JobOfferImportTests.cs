@@ -238,7 +238,7 @@ public sealed class JobOfferImportTests
         var response = await client.SendAsync(request);
         response.StatusCode.Should().Be(HttpStatusCode.Created);
         using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-        return json.RootElement.GetProperty("id").GetProperty("value").GetGuid();
+        return json.RootElement.GetProperty("id").GetGuid();
     }
 
     private static async Task<HttpResponseMessage> ScoreAsync(HttpClient client, string token, Guid resumeId, Guid jobId)
