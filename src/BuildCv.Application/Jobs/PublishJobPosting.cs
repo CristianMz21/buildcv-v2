@@ -13,7 +13,8 @@ public sealed record PublishJobPostingCommand(AccountId RequesterId, JobPostingI
 
 public sealed class PublishJobPostingHandler(
     IJobPostingRepository jobPostingRepository,
-    IOrganizationRepository organizationRepository)
+    IOrganizationRepository organizationRepository,
+    IAccountRepository accountRepository)
     : ICommandHandler<PublishJobPostingCommand, Result<JobPosting>>
 {
     public async Task<Result<JobPosting>> Handle(PublishJobPostingCommand command, CancellationToken cancellationToken = default)
@@ -44,6 +45,23 @@ public sealed class PublishJobPostingHandler(
 
     private async Task<bool> IsAuthorizedAsync(JobPosting jobPosting, AccountId requesterId, CancellationToken cancellationToken)
     {
+        // Publishing requires CanPostJobs, exactly as CreateJobPostingHandler requires it to create.
+        // Ownership alone is no longer sufficient, and that is the security fix this PR must carry:
+        // POST /job-offers/import gives a candidate ownership of a Draft posting, which is the first
+        // posting an account WITHOUT CanPostJobs can own -- CreateJobPostingHandler refuses everyone
+        // else. A published posting is scored for ANY authenticated caller (ScoreResume admits
+        // Status == Published unconditionally), so without this gate a candidate could publish their
+        // private offer with one call and it would stop being private.
+        //
+        // This is checked FIRST and applies to every path below, so it also covers the org path: an
+        // org Owner/Admin whose account is not a recruiter (reachable -- any active account can found
+        // an organization and any Owner/Admin can add another as Admin, neither gated on role) can no
+        // longer publish an org posting a recruiter colleague drafted, and a locked or suspended
+        // recruiter loses it too. That is a real behaviour change, not a no-op; it is pinned by tests.
+        var requester = await accountRepository.GetByIdAsync(requesterId, cancellationToken);
+        if (requester is null || !requester.CanPostJobs)
+            return false;
+
         if (jobPosting.OwnerId == requesterId)
             return true;
 

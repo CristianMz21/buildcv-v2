@@ -123,15 +123,3 @@ public sealed record ReferenceDraft(
     string? Email = null,
     string? PhoneNumber = null,
     string? ReferenceText = null);
-
-/// <summary>
-/// One rejected field of a draft. <paramref name="Path"/> is the JSON path of the offending value as
-/// the client sent it — <c>experiences[2].end</c>, <c>contact.phoneNumber</c> — so a review screen can
-/// highlight the input the candidate has to fix rather than the request as a whole.
-/// </summary>
-/// <remarks>
-/// This is deliberately NOT expressed through <see cref="BuildCv.Domain.Common.ValueObjects.Result{T}"/>:
-/// that type carries one string, the API routes on its text, and a draft has forty-plus fields across
-/// ten collections. "Invalid phone number." tells a review screen nothing about where to point.
-/// </remarks>
-public sealed record FieldError(string Path, string Message);

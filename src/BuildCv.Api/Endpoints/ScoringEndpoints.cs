@@ -84,9 +84,10 @@ public static class ScoringEndpoints
         + "disagree. The remaining weights are renormalized to still total 1.0, which is why an "
         + "`overallScore` of 0 with only three recommendations is a complete answer rather than a "
         + "truncated one. "
-        + "TODAY `weights.skills` AND `weights.languages` ARE 0 ON EVERY ANALYSIS, and neither is a "
-        + "recruiter's decision: no endpoint can put a skill or language requirement on a posting yet — "
-        + "`POST /jobs` carries only a title, company and description, and there is no update endpoint. "
-        + "Rendering those two zeros as 'this job listed no skill requirements' would say it about every "
-        + "job in the product; it reports a feature that does not exist yet.";
+        + "`weights.languages` IS 0 ON EVERY ANALYSIS this build can produce: no endpoint puts a language "
+        + "requirement on a posting. `weights.skills` is NO LONGER always 0 — `POST /job-offers/import` "
+        + "lets a candidate state skill requirements on their own Draft offer, so an analysis scored "
+        + "against an imported offer carries a nonzero skills weight, while one scored against a `POST "
+        + "/jobs` posting (title, company and description only) still carries 0. Read the weight per "
+        + "analysis rather than assuming either is always 0.";
 }
