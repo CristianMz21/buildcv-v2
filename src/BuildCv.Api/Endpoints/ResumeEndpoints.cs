@@ -392,10 +392,24 @@ public static class ResumeEndpoints
             ICommandHandler<AddSkillCommand, Result<Resume>> handler,
             CancellationToken cancellationToken) =>
         {
+            // IsDefined for the reason spelled out in full on the languages endpoint below: TryParse
+            // accepts ANY numeric string, and skill.Level is mapped to tinyint with an unchecked
+            // conversion (ResumeConfiguration), so "99" stored as 99, "300" truncated to 44 and "-1"
+            // wrapped to 255 — durable values that are members of neither the enum nor the column's
+            // intent. Nothing scores Skill.Level today, so the damage is corrupt data rather than a
+            // wrong score; the day it becomes a scoring input, a stored 255 outranks Expert.
+            //
+            // This guard closes undefined values only. It does NOT narrow the input to the enum's own
+            // names: TryParse OR-combines comma-separated members whether or not the type is [Flags]
+            // — measured, "Intermediate,Advanced" parses to 1|2 = 3 and comes back as Expert, higher
+            // than either name sent, with IsDefined returning true — and it accepts a leading sign
+            // ("+3" is Expert). Both remain reachable and are out of scope here: they yield a real
+            // member, which is what the tinyint column and every reader downstream assume.
             SkillLevel? level = null;
             if (request.Level is not null)
             {
-                if (!Enum.TryParse(request.Level, ignoreCase: true, out SkillLevel parsed))
+                if (!Enum.TryParse(request.Level, ignoreCase: true, out SkillLevel parsed)
+                    || !Enum.IsDefined(parsed))
                     return Results.Problem(detail: "Invalid skill level.", statusCode: StatusCodes.Status400BadRequest);
                 level = parsed;
             }
@@ -416,7 +430,17 @@ public static class ResumeEndpoints
             ICommandHandler<AddExperienceCommand, Result<Resume>> handler,
             CancellationToken cancellationToken) =>
         {
-            if (!Enum.TryParse(request.Type, ignoreCase: true, out ExperienceType type))
+            // Same guard, same reason as the skills endpoint above: experience.Type is tinyint and the
+            // conversion is unchecked, so an undefined value is stored rather than refused.
+            //
+            // This one has a second consequence beyond the corrupt byte. ScoringRules splits the work
+            // history on `== Professional` / `!= Professional`, so an entry typed 99 was counted as
+            // unmarked experience — it failed closed and only cost the candidate who sent it, but it
+            // meant a resume could hold an entry that is neither of the two types the API documents.
+            // The split still reads `!= Professional` for the reason stated there; what changes is
+            // that no new row can reach it that way.
+            if (!Enum.TryParse(request.Type, ignoreCase: true, out ExperienceType type)
+                || !Enum.IsDefined(type))
                 return Results.Problem(detail: "Invalid experience type.", statusCode: StatusCodes.Status400BadRequest);
 
             var result = await handler.Handle(new AddExperienceCommand(
