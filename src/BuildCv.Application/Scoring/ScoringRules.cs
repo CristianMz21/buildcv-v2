@@ -103,12 +103,23 @@ internal static class ScoringRules
     // it, and the technologies on a project. Each is a whole-string test first and a lexicon lookup only
     // if that fails.
     //
-    // ADDITIVE BY CONSTRUCTION, and it is the ordering that makes it so rather than anything in the data.
-    // NamesTheSameSkill answers true whenever the old expression did, because the old expression IS its
-    // first operand, unchanged. So a lexicon entry can turn a miss into a match and can never turn a
-    // match into a miss -- no candidate's score can go down, whatever the file says. With an empty
-    // lexicon Canonicalize is the identity, so the second operand becomes a re-run of the first and the
-    // whole rule collapses to what it was. Both halves are executed by EmptyLexiconEquivalenceTests.
+    // ADDITIVE BY CONSTRUCTION. NamesTheSameSkill answers true whenever the old expression did, because
+    // the old expression IS its first operand, unchanged. So a lexicon entry can turn a miss into a match
+    // and can never turn a match into a miss -- no candidate's score can go down, whatever the file says.
+    // With an empty lexicon Canonicalize is the identity, so the second operand becomes a re-run of the
+    // first and the whole rule collapses to what it was. Both halves are executed by
+    // EmptyLexiconEquivalenceTests.
+    //
+    // WHAT THE ORDERING BUYS, STATED EXACTLY, because the obvious phrasing overclaims. Deleting the exact
+    // comparison and keeping only the canonical one reds nothing against any lexicon that HONOURS the
+    // port contract -- measured with a negative control, not assumed. It cannot: rules 2 and 3 there
+    // (unrecognised terms come back unchanged, recognition ignores case) already make the canonical
+    // comparison true wherever whole-string equality is. So the contract, not this line, is what makes a
+    // conforming lexicon additive. This line is what makes additivity independent OF that contract: every
+    // match the previous engine made survives any implementation, correct or not. The single test that
+    // can see the difference is SkillLexiconMatchingTests.
+    // Match_WhenTheLexiconDisagreesWithItselfAboutCase_TheExactComparisonStillWins, which supplies a
+    // deliberately non-conforming one.
     //
     // WHY THIS IS WORTH DOING AT ALL: whole-string equality told a candidate who had listed "React.js" to
     // ADD "React", at Critical priority and with an exact Impact beside it. Authoritative-looking, and

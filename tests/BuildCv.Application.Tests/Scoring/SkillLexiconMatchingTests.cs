@@ -130,6 +130,34 @@ public class SkillLexiconMatchingTests
         SkillsScoreFor(ResumeWithSkill("js"), Lexicon, required: "Java").Should().Be(0.0);
     }
 
+    // ---- the exact comparison runs first, and stays first -------------------------------------------
+
+    // THE ONLY TEST THAT CAN SEE THE ORDERING. Deleting the exact comparison from
+    // ScoringRules.NamesTheSameSkill and leaving the canonical one reds nothing else in the repository —
+    // measured, not assumed — because a lexicon obeying the port contract returns unrecognised terms
+    // unchanged and recognises case-insensitively, which makes the second comparison true wherever the
+    // first would have been.
+    //
+    // So the ordering is not what makes a CONFORMING lexicon additive. What it buys is that additivity
+    // does not depend on conformance: every match the previous engine made survives ANY implementation.
+    // MisbehavingSkillLexicon is one that would otherwise break it — it recognises "React" and not
+    // "react", so its canonical forms disagree about two strings that are OrdinalIgnoreCase-equal.
+    //
+    // Without the first operand this is 0.0, and a candidate who wrote their skill in lower case would
+    // have lost a match they had before the lexicon existed.
+    [Fact]
+    public void Match_WhenTheLexiconDisagreesWithItselfAboutCase_TheExactComparisonStillWins()
+    {
+        var misbehaving = MisbehavingSkillLexicon.RecognisingOnly("React", "React Canonical");
+
+        misbehaving.Canonicalize("react").Should().Be("react",
+            "the double must really break the contract or this test proves nothing");
+        misbehaving.Canonicalize("React").Should().Be("React Canonical");
+
+        SkillsScoreFor(ResumeWithSkill("react"), misbehaving, required: "React").Should().Be(1.0,
+            "whole-string equality matched this before the lexicon existed, and no lexicon may take it away");
+    }
+
     // ---- the user-visible bug ----------------------------------------------------------------------
 
     // THE BUG THIS MILESTONE EXISTS TO FIX, named as such.
