@@ -31,7 +31,7 @@ public static class JobEndpoints
                 request.CompanyId is { } companyId ? new OrganizationId(companyId) : null,
                 request.Description), cancellationToken);
             return result.ToHttpResult(job =>
-                Results.Created($"/jobs/{job.Id.Value}", JobPostingResponse.From(job)));
+                Results.Created($"/v1/jobs/{job.Id.Value}", JobPostingResponse.From(job)));
         })
         .RequireAuthorization(AuthorizationPolicies.Recruiter);
 

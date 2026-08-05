@@ -52,7 +52,7 @@ public sealed class ResumePaginationTests
         var (_, token) = await client.RegisterAndLoginAsync(TestHelpers.CandidateEmail);
         await CreateResumeAsync(client, token, "Only Resume");
 
-        using var request = new HttpRequestMessage(HttpMethod.Get, "/resumes").WithBearer(token);
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/v1/resumes").WithBearer(token);
         var response = await client.SendAsync(request);
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
@@ -74,7 +74,7 @@ public sealed class ResumePaginationTests
         var (_, token) = await client.RegisterAndLoginAsync(TestHelpers.CandidateEmail);
         await CreateResumeAsync(client, token, "Only Resume");
 
-        using var request = new HttpRequestMessage(HttpMethod.Get, $"/resumes?limit=2&cursor={cursor}")
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"/v1/resumes?limit=2&cursor={cursor}")
             .WithBearer(token);
         var response = await client.SendAsync(request);
 
@@ -98,7 +98,7 @@ public sealed class ResumePaginationTests
 
     private static async Task<Guid> CreateResumeAsync(HttpClient client, string token, string fullName)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/resumes")
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/resumes")
         {
             Content = JsonContent.Create(new
             {
@@ -121,8 +121,8 @@ public sealed class ResumePaginationTests
         HttpClient client, string token, int limit, string? cursor)
     {
         var url = cursor is null
-            ? $"/resumes?limit={limit}"
-            : $"/resumes?limit={limit}&cursor={Uri.EscapeDataString(cursor)}";
+            ? $"/v1/resumes?limit={limit}"
+            : $"/v1/resumes?limit={limit}&cursor={Uri.EscapeDataString(cursor)}";
 
         using var request = new HttpRequestMessage(HttpMethod.Get, url).WithBearer(token);
         var response = await client.SendAsync(request);

@@ -17,7 +17,7 @@ public sealed class RefreshTokenTests
         login.EnsureSuccessStatusCode();
         var oldRefreshCookie = TestHelpers.GetCookieValue(login, "refresh_token");
 
-        using var refreshRequest = new HttpRequestMessage(HttpMethod.Post, "/auth/refresh");
+        using var refreshRequest = new HttpRequestMessage(HttpMethod.Post, "/v1/auth/refresh");
         refreshRequest.Headers.Add("Cookie", oldRefreshCookie);
         var refresh = await client.SendAsync(refreshRequest);
 
@@ -25,7 +25,7 @@ public sealed class RefreshTokenTests
         TestHelpers.GetSetCookie(refresh, "access_token");
         TestHelpers.GetSetCookie(refresh, "refresh_token");
 
-        using var replayRequest = new HttpRequestMessage(HttpMethod.Post, "/auth/refresh");
+        using var replayRequest = new HttpRequestMessage(HttpMethod.Post, "/v1/auth/refresh");
         replayRequest.Headers.Add("Cookie", oldRefreshCookie);
         var replay = await client.SendAsync(replayRequest);
 
@@ -38,7 +38,7 @@ public sealed class RefreshTokenTests
         using var factory = new ApiTestFactory();
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
 
-        var response = await client.PostAsync("/auth/refresh", content: null);
+        var response = await client.PostAsync("/v1/auth/refresh", content: null);
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
     }
 }

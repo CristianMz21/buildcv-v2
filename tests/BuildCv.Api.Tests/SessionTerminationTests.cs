@@ -44,7 +44,7 @@ public sealed class SessionTerminationTests
 
     private static async Task<HttpResponseMessage> ReplayRefreshTokenAsync(HttpClient client, string refreshCookie)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/auth/refresh");
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/auth/refresh");
         request.Headers.Add("Cookie", refreshCookie);
         return await client.SendAsync(request);
     }
@@ -101,7 +101,7 @@ public sealed class SessionTerminationTests
 
     private static HttpRequestMessage CreateResumeRequest(string cookieHeader, string antiforgeryToken)
     {
-        var request = new HttpRequestMessage(HttpMethod.Post, "/resumes")
+        var request = new HttpRequestMessage(HttpMethod.Post, "/v1/resumes")
         {
             Content = JsonContent.Create(new
             {
@@ -139,7 +139,7 @@ public sealed class SessionTerminationTests
     }
 
     private static HttpRequestMessage ChangePasswordRequest(string accessToken, string currentPassword) =>
-        new HttpRequestMessage(HttpMethod.Post, "/auth/change-password")
+        new HttpRequestMessage(HttpMethod.Post, "/v1/auth/change-password")
         {
             Content = JsonContent.Create(new { currentPassword, newPassword = NewPassword })
         }.WithBearer(accessToken);
@@ -153,7 +153,7 @@ public sealed class SessionTerminationTests
         var (accessToken, capturedRefreshCookie) =
             await RegisterAndCaptureSessionAsync(client, TestHelpers.CandidateEmail);
 
-        using var logoutRequest = new HttpRequestMessage(HttpMethod.Post, "/auth/logout").WithBearer(accessToken);
+        using var logoutRequest = new HttpRequestMessage(HttpMethod.Post, "/v1/auth/logout").WithBearer(accessToken);
         var logout = await client.SendAsync(logoutRequest);
         logout.StatusCode.Should().Be(HttpStatusCode.NoContent);
 
@@ -235,7 +235,7 @@ public sealed class SessionTerminationTests
         // is what StaleAccessTokenCookie_WithAuthenticatedBoundAntiforgeryToken_Returns403 pins.
         var (requestToken, antiforgeryCookie) = await client.GetAntiforgeryTokenAndCookieAsync();
 
-        using var logoutRequest = new HttpRequestMessage(HttpMethod.Post, "/auth/logout");
+        using var logoutRequest = new HttpRequestMessage(HttpMethod.Post, "/v1/auth/logout");
         logoutRequest.Headers.Add("Cookie", $"{staleCookie}; {antiforgeryCookie}");
         logoutRequest.Headers.Add(CsrfGuardMiddleware.CsrfHeaderName, requestToken);
         var logout = await client.SendAsync(logoutRequest);
@@ -256,7 +256,7 @@ public sealed class SessionTerminationTests
             await RegisterAndCaptureSessionAsync(client, TestHelpers.CandidateEmail);
         var expiredToken = StaleTokenFrom(accessToken);
 
-        using var logoutRequest = new HttpRequestMessage(HttpMethod.Post, "/auth/logout").WithBearer(expiredToken);
+        using var logoutRequest = new HttpRequestMessage(HttpMethod.Post, "/v1/auth/logout").WithBearer(expiredToken);
         var logout = await client.SendAsync(logoutRequest);
         logout.StatusCode.Should().Be(HttpStatusCode.NoContent);
 
@@ -305,10 +305,10 @@ public sealed class SessionTerminationTests
     // opened a protected endpoint, ignoring `exp` would have bought a session extension instead of
     // a logout.
     [Theory]
-    [InlineData("GET", "/auth/me")]
-    [InlineData("GET", "/resumes")]
-    [InlineData("POST", "/resumes")]
-    [InlineData("POST", "/jobs")]
+    [InlineData("GET", "/v1/auth/me")]
+    [InlineData("GET", "/v1/resumes")]
+    [InlineData("POST", "/v1/resumes")]
+    [InlineData("POST", "/v1/jobs")]
     public async Task ExpiredAccessToken_IsStillRejectedByEveryOtherEndpoint(string method, string route)
     {
         using var factory = new ApiTestFactory();
@@ -344,7 +344,7 @@ public sealed class SessionTerminationTests
         var (accessToken, capturedRefreshCookie) =
             await RegisterAndCaptureSessionAsync(client, TestHelpers.CandidateEmail);
 
-        using var logoutRequest = new HttpRequestMessage(HttpMethod.Post, "/auth/logout").WithBearer(accessToken);
+        using var logoutRequest = new HttpRequestMessage(HttpMethod.Post, "/v1/auth/logout").WithBearer(accessToken);
         var logout = await client.SendAsync(logoutRequest);
 
         logout.StatusCode.Should().Be(HttpStatusCode.InternalServerError);
@@ -367,7 +367,7 @@ public sealed class SessionTerminationTests
             await RegisterAndCaptureSessionAsync(client, TestHelpers.CandidateEmail);
         var forgedToken = StaleTokenFrom(accessToken, signingKey: "attacker-signing-key-min-32-characters-long");
 
-        using var logoutRequest = new HttpRequestMessage(HttpMethod.Post, "/auth/logout").WithBearer(forgedToken);
+        using var logoutRequest = new HttpRequestMessage(HttpMethod.Post, "/v1/auth/logout").WithBearer(forgedToken);
         (await client.SendAsync(logoutRequest)).StatusCode.Should().Be(HttpStatusCode.NoContent);
 
         var replay = await ReplayRefreshTokenAsync(client, capturedRefreshCookie);
@@ -404,7 +404,7 @@ public sealed class SessionTerminationTests
         using var factory = new ApiTestFactory();
         using var client = CreateRawClient(factory);
 
-        var logout = await client.PostAsync("/auth/logout", content: null);
+        var logout = await client.PostAsync("/v1/auth/logout", content: null);
 
         logout.StatusCode.Should().Be(HttpStatusCode.NoContent);
         TestHelpers.GetCookieValue(logout, "access_token").Should().Be("access_token=");
@@ -425,7 +425,7 @@ public sealed class SessionTerminationTests
         var accessCookie = TestHelpers.GetCookieValue(login, "access_token");
         var capturedRefreshCookie = TestHelpers.GetCookieValue(login, "refresh_token");
 
-        using var logoutRequest = new HttpRequestMessage(HttpMethod.Post, "/auth/logout");
+        using var logoutRequest = new HttpRequestMessage(HttpMethod.Post, "/v1/auth/logout");
         logoutRequest.Headers.Add("Cookie", accessCookie);
         var logout = await client.SendAsync(logoutRequest);
 
@@ -445,7 +445,7 @@ public sealed class SessionTerminationTests
             await RegisterAndCaptureSessionAsync(client, TestHelpers.RecruiterEmail, role: "Recruiter");
         var (accessToken, _) = await RegisterAndCaptureSessionAsync(client, TestHelpers.CandidateEmail);
 
-        using var logoutRequest = new HttpRequestMessage(HttpMethod.Post, "/auth/logout").WithBearer(accessToken);
+        using var logoutRequest = new HttpRequestMessage(HttpMethod.Post, "/v1/auth/logout").WithBearer(accessToken);
         (await client.SendAsync(logoutRequest)).StatusCode.Should().Be(HttpStatusCode.NoContent);
 
         var replay = await ReplayRefreshTokenAsync(client, bystanderRefreshCookie);

@@ -6,7 +6,10 @@ public static class AuthCookies
 {
     public const string AccessTokenCookie = "access_token";
     public const string RefreshTokenCookie = "refresh_token";
-    public const string RefreshCookiePath = "/auth/refresh";
+    // The refresh endpoint's full path, /v1 prefix included: the browser only sends a cookie whose
+    // Path matches the request, so a stale value here means the refresh token is never presented
+    // and every session silently dies at access-token expiry.
+    public const string RefreshCookiePath = "/v1/auth/refresh";
 
     // Development is the only environment allowed to serve auth cookies without Secure, so that
     // local http debugging keeps working. Every other environment — Staging, QA, Preview,

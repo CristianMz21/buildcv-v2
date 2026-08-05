@@ -161,7 +161,7 @@ public sealed class ScoringEndpointTests
 
         var resumeId = await CreateResumeAsync(client, candidateToken);
 
-        using var addExperience = new HttpRequestMessage(HttpMethod.Post, $"/resumes/{resumeId}/experiences")
+        using var addExperience = new HttpRequestMessage(HttpMethod.Post, $"/v1/resumes/{resumeId}/experiences")
         {
             Content = JsonContent.Create(new
             {
@@ -194,7 +194,7 @@ public sealed class ScoringEndpointTests
 
     internal static async Task<Guid> CreateResumeAsync(HttpClient client, string token)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/resumes")
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/resumes")
         {
             Content = JsonContent.Create(new
             {
@@ -214,7 +214,7 @@ public sealed class ScoringEndpointTests
 
     internal static async Task<Guid> CreateJobAsync(HttpClient client, string token)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/jobs")
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/jobs")
         {
             Content = JsonContent.Create(new
             {
@@ -233,14 +233,14 @@ public sealed class ScoringEndpointTests
 
     internal static async Task PublishAsync(HttpClient client, string token, Guid jobId)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Post, $"/jobs/{jobId}/publish").WithBearer(token);
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"/v1/jobs/{jobId}/publish").WithBearer(token);
         (await client.SendAsync(request)).StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
     internal static async Task<HttpResponseMessage> ScoreAsync(
         HttpClient client, string token, Guid resumeId, Guid jobId)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/scoring/score")
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/scoring/score")
         {
             Content = JsonContent.Create(new { resumeId, jobPostingId = jobId })
         }.WithBearer(token);

@@ -25,7 +25,7 @@ public static class OrganizationEndpoints
                 httpContext.User.GetAccountId(),
                 request.Name,
                 request.Slug), cancellationToken);
-            return result.ToHttpResult(org => Results.Created($"/organizations/{org.Id.Value}", org));
+            return result.ToHttpResult(org => Results.Created($"/v1/organizations/{org.Id.Value}", org));
         });
 
         group.MapGet("/{id:guid}", async (

@@ -32,7 +32,7 @@ public sealed class ResumeImportTests
 
         using var created = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         var resumeId = created.RootElement.GetProperty("id").GetProperty("value").GetGuid();
-        response.Headers.Location!.ToString().Should().Be($"/resumes/{resumeId}");
+        response.Headers.Location!.ToString().Should().Be($"/v1/resumes/{resumeId}");
 
         var resume = await GetResumeAsync(client, token, resumeId);
 
@@ -191,7 +191,7 @@ public sealed class ResumeImportTests
 
         // The list, not the response: "it answered 400" and "nothing was stored" are different claims,
         // and a half-import would satisfy only the first.
-        using var request = new HttpRequestMessage(HttpMethod.Get, "/resumes").WithBearer(token);
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/v1/resumes").WithBearer(token);
         var list = await client.SendAsync(request);
         list.StatusCode.Should().Be(HttpStatusCode.OK);
 
@@ -272,7 +272,7 @@ public sealed class ResumeImportTests
         using var body = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
         var resumeId = body.RootElement.GetProperty("id").GetProperty("value").GetGuid();
 
-        using var update = new HttpRequestMessage(HttpMethod.Put, $"/resumes/{resumeId}/contact")
+        using var update = new HttpRequestMessage(HttpMethod.Put, $"/v1/resumes/{resumeId}/contact")
         {
             Content = JsonContent.Create(new
             {
@@ -343,7 +343,7 @@ public sealed class ResumeImportTests
         using var client = factory.CreateCookieClient();
         await client.RegisterAndLoginAsync(TestHelpers.CandidateEmail);
 
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/resumes/import")
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/resumes/import")
         {
             Content = JsonContent.Create(FullDraft()),
         };
@@ -359,7 +359,7 @@ public sealed class ResumeImportTests
         await client.RegisterAndLoginAsync(TestHelpers.CandidateEmail);
         var csrfToken = await client.GetAntiforgeryTokenAsync();
 
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/resumes/import")
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/resumes/import")
         {
             Content = JsonContent.Create(FullDraft()),
         };
@@ -422,7 +422,7 @@ public sealed class ResumeImportTests
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
         var (_, token) = await client.RegisterAndLoginAsync(TestHelpers.CandidateEmail);
 
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/resumes/import")
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/resumes/import")
         {
             Content = new StringContent(body, Encoding.UTF8, System.Net.Mime.MediaTypeNames.Application.Json),
         }.WithBearer(token);
@@ -443,7 +443,7 @@ public sealed class ResumeImportTests
         using var factory = new ApiTestFactory();
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
 
-        var response = await client.PostAsJsonAsync("/resumes/import", FullDraft());
+        var response = await client.PostAsJsonAsync("/v1/resumes/import", FullDraft());
 
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
     }
@@ -547,7 +547,7 @@ public sealed class ResumeImportTests
 
     private static async Task<HttpResponseMessage> PostImportAsync(HttpClient client, string token, object body)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/resumes/import")
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/resumes/import")
         {
             Content = JsonContent.Create(body),
         }.WithBearer(token);
@@ -557,7 +557,7 @@ public sealed class ResumeImportTests
 
     private static async Task<JsonElement> GetResumeAsync(HttpClient client, string token, Guid resumeId)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Get, $"/resumes/{resumeId}").WithBearer(token);
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"/v1/resumes/{resumeId}").WithBearer(token);
         var response = await client.SendAsync(request);
         response.StatusCode.Should().Be(HttpStatusCode.OK);
 

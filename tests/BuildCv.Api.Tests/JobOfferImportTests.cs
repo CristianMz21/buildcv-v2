@@ -55,7 +55,7 @@ public sealed class JobOfferImportTests
         var (_, token) = await client.RegisterAndLoginAsync(TestHelpers.CandidateEmail);
         var jobId = await ImportOfferAsync(client, token, MustHave("C#"));
 
-        using var publish = new HttpRequestMessage(HttpMethod.Post, $"/jobs/{jobId}/publish").WithBearer(token);
+        using var publish = new HttpRequestMessage(HttpMethod.Post, $"/v1/jobs/{jobId}/publish").WithBearer(token);
 
         (await client.SendAsync(publish)).StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
@@ -144,7 +144,7 @@ public sealed class JobOfferImportTests
         using var client = BearerClient(factory);
         var (_, token) = await client.RegisterAndLoginAsync(TestHelpers.CandidateEmail);
 
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/job-offers/extract")
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/job-offers/extract")
         {
             Content = JsonContent.Create(new { text = "Our stack is C# and Docker." })
         }.WithBearer(token);
@@ -168,7 +168,7 @@ public sealed class JobOfferImportTests
         using var client = factory.CreateCookieClient();
         await client.RegisterAndLoginAsync(TestHelpers.CandidateEmail);
 
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/job-offers/import")
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/job-offers/import")
         {
             Content = JsonContent.Create(new { title = "Role", companyName = "Contoso", requirements = MustHave("C#") })
         };
@@ -184,7 +184,7 @@ public sealed class JobOfferImportTests
         await client.RegisterAndLoginAsync(TestHelpers.CandidateEmail);
         var csrfToken = await client.GetAntiforgeryTokenAsync();
 
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/job-offers/import")
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/job-offers/import")
         {
             Content = JsonContent.Create(new { title = "Role", companyName = "Contoso", requirements = MustHave("C#") })
         };
@@ -202,7 +202,7 @@ public sealed class JobOfferImportTests
 
     private static async Task<HttpResponseMessage> PostImportAsync(HttpClient client, string token, object body)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/job-offers/import")
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/job-offers/import")
         {
             Content = JsonContent.Create(body, options: Web)
         }.WithBearer(token);
@@ -223,7 +223,7 @@ public sealed class JobOfferImportTests
 
     private static async Task<Guid> CreateResumeAsync(HttpClient client, string token)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/resumes")
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/resumes")
         {
             Content = JsonContent.Create(new
             {
@@ -243,7 +243,7 @@ public sealed class JobOfferImportTests
 
     private static async Task<HttpResponseMessage> ScoreAsync(HttpClient client, string token, Guid resumeId, Guid jobId)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/scoring/score")
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/scoring/score")
         {
             Content = JsonContent.Create(new { resumeId, jobPostingId = jobId })
         }.WithBearer(token);
@@ -252,7 +252,7 @@ public sealed class JobOfferImportTests
 
     private static async Task<JsonElement> GetJobAsync(HttpClient client, string token, Guid jobId)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Get, $"/jobs/{jobId}").WithBearer(token);
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"/v1/jobs/{jobId}").WithBearer(token);
         var response = await client.SendAsync(request);
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         return JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement.Clone();

@@ -14,12 +14,17 @@ public sealed class CsrfGuardMiddleware(RequestDelegate next)
         "POST", "PUT", "DELETE", "PATCH"
     };
 
+    // Matched on the request path, so these literals carry the /v1 prefix the routes mount under —
+    // stale entries here fail OPEN in one direction (a moved route silently loses its exemption and
+    // starts answering 403) and never fail closed, which is why both directions are pinned:
+    // VersioningTests proves /v1/auth/refresh stays exempt, and SessionTerminationTests proves
+    // /v1/auth/logout stays guarded.
     private static readonly PathString[] ExemptPaths =
     [
-        "/auth/antiforgery",
-        "/auth/login",
-        "/auth/register",
-        "/auth/refresh"
+        "/v1/auth/antiforgery",
+        "/v1/auth/login",
+        "/v1/auth/register",
+        "/v1/auth/refresh"
     ];
 
     public async Task Invoke(HttpContext context, IAntiforgery antiforgery)

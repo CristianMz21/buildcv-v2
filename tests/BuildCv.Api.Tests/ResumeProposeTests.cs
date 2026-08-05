@@ -60,7 +60,7 @@ public sealed class ResumeProposeTests
         var propose = await PostProposeAsync(client, token, Pdf("Jane Doe", "jane.doe@example.com"));
         propose.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        using var listRequest = new HttpRequestMessage(HttpMethod.Get, "/resumes").WithBearer(token);
+        using var listRequest = new HttpRequestMessage(HttpMethod.Get, "/v1/resumes").WithBearer(token);
         var list = await client.SendAsync(listRequest);
         list.StatusCode.Should().Be(HttpStatusCode.OK);
 
@@ -82,7 +82,7 @@ public sealed class ResumeProposeTests
         using var proposed = JsonDocument.Parse(await propose.Content.ReadAsStringAsync());
         var draftJson = proposed.RootElement.GetProperty("draft").GetRawText();
 
-        using var importRequest = new HttpRequestMessage(HttpMethod.Post, "/resumes/import")
+        using var importRequest = new HttpRequestMessage(HttpMethod.Post, "/v1/resumes/import")
         {
             Content = new StringContent(draftJson, Encoding.UTF8, "application/json"),
         }.WithBearer(token);
@@ -140,7 +140,7 @@ public sealed class ResumeProposeTests
         using var factory = new ApiTestFactory();
         using var client = factory.CreateClient();
 
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/resumes/import/propose")
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/resumes/import/propose")
         {
             Content = Upload(Encoding.UTF8.GetBytes("text"), "text/plain", "cv.txt"),
         };
@@ -157,7 +157,7 @@ public sealed class ResumeProposeTests
         using var client = factory.CreateCookieClient();
         await client.RegisterAndLoginAsync(TestHelpers.CandidateEmail);
 
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/resumes/import/propose")
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/resumes/import/propose")
         {
             Content = Upload(Encoding.UTF8.GetBytes("text"), "text/plain", "cv.txt"),
         };
@@ -173,7 +173,7 @@ public sealed class ResumeProposeTests
         await client.RegisterAndLoginAsync(TestHelpers.CandidateEmail);
         var csrfToken = await client.GetAntiforgeryTokenAsync();
 
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/resumes/import/propose")
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/resumes/import/propose")
         {
             Content = Upload(Encoding.UTF8.GetBytes("Jane Doe\njane@example.com"), "text/plain", "cv.txt"),
         };
@@ -204,7 +204,7 @@ public sealed class ResumeProposeTests
     private static async Task<HttpResponseMessage> PostProposeAsync(
         HttpClient client, string token, HttpContent content)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/resumes/import/propose")
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/resumes/import/propose")
         {
             Content = content,
         }.WithBearer(token);

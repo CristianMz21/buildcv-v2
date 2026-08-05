@@ -23,7 +23,7 @@ public sealed class ResumeLevelFieldsTests
         var (_, token) = await client.RegisterAndLoginAsync(TestHelpers.CandidateEmail);
         var resumeId = await CreateResumeAsync(client, token);
 
-        var response = await PostAsync(client, token, $"/resumes/{resumeId}/languages", new
+        var response = await PostAsync(client, token, $"/v1/resumes/{resumeId}/languages", new
         {
             name = "Español",
             fluency = "Bilingüe",
@@ -62,7 +62,7 @@ public sealed class ResumeLevelFieldsTests
         var (_, token) = await client.RegisterAndLoginAsync(TestHelpers.CandidateEmail);
         var resumeId = await CreateResumeAsync(client, token);
 
-        var response = await PostAsync(client, token, $"/resumes/{resumeId}/languages", new
+        var response = await PostAsync(client, token, $"/v1/resumes/{resumeId}/languages", new
         {
             name = "English",
             fluency = (string?)null,
@@ -89,7 +89,7 @@ public sealed class ResumeLevelFieldsTests
         var (_, token) = await client.RegisterAndLoginAsync(TestHelpers.CandidateEmail);
         var resumeId = await CreateResumeAsync(client, token);
 
-        var response = await PostAsync(client, token, $"/resumes/{resumeId}/languages", new
+        var response = await PostAsync(client, token, $"/v1/resumes/{resumeId}/languages", new
         {
             name = "English",
             fluency = (string?)null,
@@ -110,7 +110,7 @@ public sealed class ResumeLevelFieldsTests
         var (_, token) = await client.RegisterAndLoginAsync(TestHelpers.CandidateEmail);
         var resumeId = await CreateResumeAsync(client, token);
 
-        var response = await PostAsync(client, token, $"/resumes/{resumeId}/languages", new
+        var response = await PostAsync(client, token, $"/v1/resumes/{resumeId}/languages", new
         {
             name = "English",
             fluency = "Conversational-ish"
@@ -145,7 +145,7 @@ public sealed class ResumeLevelFieldsTests
         var (_, token) = await client.RegisterAndLoginAsync(TestHelpers.CandidateEmail);
         var resumeId = await CreateResumeAsync(client, token);
 
-        var response = await PostAsync(client, token, $"/resumes/{resumeId}/languages", new
+        var response = await PostAsync(client, token, $"/v1/resumes/{resumeId}/languages", new
         {
             name = "Español",
             fluency = "Nativo",
@@ -168,7 +168,7 @@ public sealed class ResumeLevelFieldsTests
         var (_, token) = await client.RegisterAndLoginAsync(TestHelpers.CandidateEmail);
         var resumeId = await CreateResumeAsync(client, token);
 
-        var response = await PostAsync(client, token, $"/resumes/{resumeId}/educations", new
+        var response = await PostAsync(client, token, $"/v1/resumes/{resumeId}/educations", new
         {
             institution = "Universidad de Buenos Aires",
             degree = "Ingeniero en Sistemas",
@@ -204,7 +204,7 @@ public sealed class ResumeLevelFieldsTests
         var (_, token) = await client.RegisterAndLoginAsync(TestHelpers.CandidateEmail);
         var resumeId = await CreateResumeAsync(client, token);
 
-        var response = await PostAsync(client, token, $"/resumes/{resumeId}/educations", new
+        var response = await PostAsync(client, token, $"/v1/resumes/{resumeId}/educations", new
         {
             institution = "Universidad de Buenos Aires",
             degree = "Ingeniero en Sistemas",
@@ -235,7 +235,7 @@ public sealed class ResumeLevelFieldsTests
 
     private static async Task<Guid> CreateResumeAsync(HttpClient client, string token)
     {
-        var response = await PostAsync(client, token, "/resumes", new
+        var response = await PostAsync(client, token, "/v1/resumes", new
         {
             fullName = "Jane Candidate",
             email = $"{Guid.NewGuid():N}@example.com",
@@ -251,7 +251,7 @@ public sealed class ResumeLevelFieldsTests
 
     private static async Task<JsonElement> GetResumeAsync(HttpClient client, string token, Guid resumeId)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Get, $"/resumes/{resumeId}").WithBearer(token);
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"/v1/resumes/{resumeId}").WithBearer(token);
         var response = await client.SendAsync(request);
         response.StatusCode.Should().Be(HttpStatusCode.OK);
 

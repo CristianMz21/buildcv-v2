@@ -33,9 +33,9 @@ public static class JobOfferEndpoints
 
         // The confirmed draft in, a candidate-owned Draft posting out. 201 with the same JobPostingResponse
         // /jobs answers, because it is the same aggregate; a rejected draft answers the standard
-        // ProblemDetails validation shape, keyed by JSON field path, exactly like POST /resumes/import.
+        // ProblemDetails validation shape, keyed by JSON field path, exactly like POST /v1/resumes/import.
         //
-        // The Location points at GET /jobs/{id}, which admits the owner -- so the candidate can read back
+        // The Location points at GET /v1/jobs/{id}, which admits the owner -- so the candidate can read back
         // the offer they just created. The posting is a Draft, scorable by its owner and by nobody else
         // until published, and PublishJobPostingHandler refuses a candidate the publish.
         group.MapPost("/import", async Task<IResult> (
@@ -50,7 +50,7 @@ public static class JobOfferEndpoints
 
             return result.IsSuccess
                 ? Results.Created(
-                    $"/jobs/{result.JobPosting!.Id.Value}", JobPostingResponse.From(result.JobPosting))
+                    $"/v1/jobs/{result.JobPosting!.Id.Value}", JobPostingResponse.From(result.JobPosting))
                 : result.FieldErrors.ToValidationProblem();
         })
         // The framework enforces IRequestSizeLimitMetadata on its own for minimal APIs, chunked bodies
@@ -62,7 +62,7 @@ public static class JobOfferEndpoints
             + "at model binding: an unknown priority comes back as a field error rather than a framework "
             + "400 naming nothing. Validation is all-or-nothing and collects EVERY bad field in one pass, "
             + "keyed by JSON field path (`requirements[2].skill`). The posting is a private Draft owned by "
-            + "the caller: scorable by them via POST /scoring/score and by nobody else, and it CANNOT be "
+            + "the caller: scorable by them via POST /v1/scoring/score and by nobody else, and it CANNOT be "
             + "published -- publishing is a recruiter action. A requirement priority left blank defaults "
             + "to NiceToHave; duplicate skills are reported against the LATER occurrence.");
 

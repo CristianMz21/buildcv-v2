@@ -34,7 +34,7 @@ public sealed class ResumeImportSizeLimitTests
 
         var endpoint = factory.Services.GetRequiredService<EndpointDataSource>()
             .Endpoints.OfType<RouteEndpoint>()
-            .Single(candidate => candidate.RoutePattern.RawText == "/resumes/import");
+            .Single(candidate => candidate.RoutePattern.RawText == "/v1/resumes/import");
 
         endpoint.Metadata.GetMetadata<IRequestSizeLimitMetadata>()!.MaxRequestBodySize
             .Should().Be(ResumeEndpoints.ImportRequestSizeLimitBytes);

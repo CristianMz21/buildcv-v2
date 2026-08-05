@@ -10,7 +10,7 @@ public sealed class SecurityHeadersTests
         using var factory = new ApiTestFactory();
         using var client = factory.CreateClient();
 
-        var response = await client.GetAsync("/auth/me");
+        var response = await client.GetAsync("/v1/auth/me");
 
         response.Headers.GetValues("X-Content-Type-Options").Should().Contain("nosniff");
         response.Headers.GetValues("X-Frame-Options").Should().Contain("DENY");

@@ -85,9 +85,9 @@ public static class ScoringEndpoints
         + "`overallScore` of 0 with only three recommendations is a complete answer rather than a "
         + "truncated one. "
         + "`weights.languages` IS 0 ON EVERY ANALYSIS this build can produce: no endpoint puts a language "
-        + "requirement on a posting. `weights.skills` is NO LONGER always 0 — `POST /job-offers/import` "
+        + "requirement on a posting. `weights.skills` is NO LONGER always 0 — `POST /v1/job-offers/import` "
         + "lets a candidate state skill requirements on their own Draft offer, so an analysis scored "
         + "against an imported offer carries a nonzero skills weight, while one scored against a `POST "
-        + "/jobs` posting (title, company and description only) still carries 0. Read the weight per "
+        + "/v1/jobs` posting (title, company and description only) still carries 0. Read the weight per "
         + "analysis rather than assuming either is always 0.";
 }

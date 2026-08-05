@@ -36,8 +36,8 @@ public sealed record ScoreResumeRequest(Guid ResumeId, Guid JobPostingId);
 // property, so a JsonStringEnumConverter registered globally later cannot silently change any of it.
 // That makes the response converter-proof, which is the property that matters — not the numbering.
 /// <summary>
-/// One scoring run, as returned by <c>POST /scoring/score</c>, <c>GET /scoring/{analysisId}</c> and
-/// each entry of <c>GET /resumes/{id}/analyses</c>. One shape for one aggregate, on purpose.
+/// One scoring run, as returned by <c>POST /v1/scoring/score</c>, <c>GET /v1/scoring/{analysisId}</c>
+/// and each entry of <c>GET /v1/resumes/{id}/analyses</c>. One shape for one aggregate, on purpose.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -50,11 +50,11 @@ public sealed record ScoreResumeRequest(Guid ResumeId, Guid JobPostingId);
 /// <para>
 /// <b><c>Weights.Languages</c> is 0 on every analysis this build can produce</b>, and that is a missing
 /// feature rather than anything a recruiter chose: no endpoint puts a language requirement on a posting.
-/// <b><c>Weights.Skills</c> is no longer always 0</b> — <c>POST /job-offers/import</c> lets a candidate
-/// state skill requirements on their own Draft offer, so an analysis scored against an imported offer
-/// carries a NONZERO skills weight. It is still 0 for a posting created through <c>POST /jobs</c>, which
-/// carries only a title, company and description. A UI must read the weight per analysis, not assume
-/// either is always 0.
+/// <b><c>Weights.Skills</c> is no longer always 0</b> — <c>POST /v1/job-offers/import</c> lets a
+/// candidate state skill requirements on their own Draft offer, so an analysis scored against an
+/// imported offer carries a NONZERO skills weight. It is still 0 for a posting created through
+/// <c>POST /v1/jobs</c>, which carries only a title, company and description. A UI must read the weight
+/// per analysis, not assume either is always 0.
 /// </para>
 /// <para>
 /// The remaining weights are RENORMALIZED to still total 1.0, so the ceiling is 100 for every posting.

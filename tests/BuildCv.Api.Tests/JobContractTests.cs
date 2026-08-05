@@ -124,7 +124,7 @@ public class JobContractTests
 
         var id = (await PostJobAsync(client, token)).GetProperty("id").GetProperty("value").GetGuid();
 
-        var body = await ReadAsync(client, token, new HttpMethod(method), $"/jobs/{id}{suffix}");
+        var body = await ReadAsync(client, token, new HttpMethod(method), $"/v1/jobs/{id}{suffix}");
 
         body.GetProperty("educationLevel").GetString().Should().Be("Bachelor",
             "the aggregate would have put the persisted number 2 here");
@@ -146,9 +146,9 @@ public class JobContractTests
         var created = await PostJobAsync(client, token);
         var id = created.GetProperty("id").GetProperty("value").GetGuid();
 
-        var read = await ReadAsync(client, token, HttpMethod.Get, $"/jobs/{id}");
-        var published = await ReadAsync(client, token, HttpMethod.Post, $"/jobs/{id}/publish");
-        var closed = await ReadAsync(client, token, HttpMethod.Post, $"/jobs/{id}/close");
+        var read = await ReadAsync(client, token, HttpMethod.Get, $"/v1/jobs/{id}");
+        var published = await ReadAsync(client, token, HttpMethod.Post, $"/v1/jobs/{id}/publish");
+        var closed = await ReadAsync(client, token, HttpMethod.Post, $"/v1/jobs/{id}/close");
 
         foreach (var (name, body) in new[]
         {
@@ -180,7 +180,7 @@ public class JobContractTests
 
     private static async Task<JsonElement> PostJobAsync(HttpClient client, string token)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/jobs")
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/jobs")
         {
             Content = JsonContent.Create(new
             {
