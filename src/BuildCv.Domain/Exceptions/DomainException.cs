@@ -35,6 +35,11 @@ public sealed class InvalidTechnologyException : DomainException
     public InvalidTechnologyException(string message) : base(message) { }
 }
 
+public sealed class InvalidLanguageException : DomainException
+{
+    public InvalidLanguageException(string message) : base(message) { }
+}
+
 public sealed class InvalidAccountException : DomainException
 {
     public InvalidAccountException(string message) : base(message) { }

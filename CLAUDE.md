@@ -50,6 +50,22 @@ Follow this strictly; don't mix tiers:
 2. **Application** handlers catch `DomainException`/`ArgumentException` and return `Result<T>` (`Domain/Common/ValueObjects/Result.cs`, with `Map`/`Bind`/`Match`).
 3. **Api** converts `Result<T>` to HTTP via `Common/ResultExtensions.ToHttpResult()` (403 for "Forbidden.", 404 for errors ending in "not found.", else 400); anything that leaks is turned into RFC 7807 ProblemDetails by the `IExceptionHandler`s in `Common/ApiExceptionHandlers.cs`. All error responses are ProblemDetails-shaped.
 
+Two deliberate qualifications to "all error responses are ProblemDetails-shaped":
+
+- `RouteHandlerOptions.ThrowOnBadRequest` is on **in every environment** (not its `IsDevelopment()` default), so binding failures — malformed JSON, a bare `null` body, `MaxDepth` — reach `MalformedRequestExceptionHandler` and come back as ProblemDetails. Left at the default, the same input answered an empty 400 in production and a logged 500 in Development.
+- The **413 is the one response that is not ProblemDetails-shaped and cannot be made so**: Kestrel enforces `IRequestSizeLimitMetadata` and tears the connection down inside the server before any `IExceptionHandler` runs. Measured, with `ThrowOnBadRequest` both off and on. Do not add middleware to shape it — that produces two different bodies for one class of refusal (see the remarks on `MalformedRequestExceptionHandler`).
+
+### Resume import — the field-error path
+
+`POST /resumes/import` (`Application/Resumes/CreateResumeFromDraft.cs`) is the one use case that does not fit `Result<T>`'s single error string: a reviewed draft carries forty-plus fields, so failures are collected **all in one pass** and keyed by field path (`experience[2].endDate`), surfacing as the `errors` object of a ProblemDetails 400 — the same shape ASP.NET model validation emits. Rules that keep it honest:
+
+- **`ResumeDraft` is all nullable strings, on purpose.** It holds untrusted extracted text; typing a field would move parsing to the binding boundary, where a failure cannot carry a field path or collect siblings.
+- **Validation and construction are the same pass** (`ResumeDraftValidator`): every verdict comes from calling the real Domain factory and catching what it threw. Do not add a check-first-build-later validator beside it — two statements of one rule is how they diverge.
+- **All-or-nothing, one `AddAsync`.** Nothing is persisted if any field fails; `FakeResumeRepository.WriteCount` pins the single write.
+- **Error messages name positions, never values.** The duplicate-entry messages on `Resume` say `"Duplicates the skill at index 0."` because `Certificate.Name`/`Interest.Name` are encrypted at rest and the old messages echoed them back in plaintext. The field path already carries the later index; the message carries the earlier one.
+- **Bounded plaintext columns need a Domain rule** (`Language.Name` ≤ 100 is the precedent). A value that reaches SQL Server too long is error 2628, translated by `SaveChangesExtensions` to `ValueTooLongException` (400) **with the inner exception deliberately dropped** — SQL Server's own message quotes the offending value, and attaching it would put candidate text in the error log. The translation is the net; the Domain rule is the fix.
+- **Throttled per account, not per IP** (`Security/ResumeImportRateLimiter`, acquired inside the endpoint like `PasswordChangeRateLimiter` and for the same reason). An accepted import is the most durable write in the API — one request can create ~9,000 owned rows that load eagerly forever after. The body ceiling is 2 MiB via `RequestSizeLimitAttribute` metadata, which **the framework enforces on its own** for minimal APIs, chunked bodies included — measured; do not reintroduce a middleware for it.
+
 ### List queries — keyset pagination
 
 **There are no unbounded list methods on any repository port, and adding one back is a regression.** Every list is `GetPage*Async(key, PageRequest, ct)` returning `Page<T>` (`Application/Common/Pagination/`).

@@ -130,7 +130,7 @@ public sealed class ResumeRepositoryTests
             var loaded = await repository.GetByIdAsync(resume.Id);
             loaded!.RemoveSkill("Fortran");
             loaded.AddSkill(Skill.Create(Technology.Create("Lisp"), SkillLevel.Intermediate, 3));
-            loaded.AddLanguage(new Language("Spanish", "Native"));
+            loaded.AddLanguage(Language.Create("Spanish", "Native"));
             await repository.UpdateAsync(loaded);
         }
 
@@ -247,7 +247,7 @@ public sealed class ResumeRepositoryTests
         resume.AddProject(new Project("Difference Engine", period, "A mechanical computer."));
         resume.AddCertificate(new Certificate(
             "Azure Architect", OrganizationName.Create("Microsoft"), "CRED-123", null, period));
-        resume.AddLanguage(new Language("English", "Native"));
+        resume.AddLanguage(Language.Create("English", "Native"));
         resume.AddAward(new Award(
             "Turing Award", OrganizationName.Create("ACM"), new DateOnly(2022, 3, 1), "For services."));
         resume.AddPublication(new Publication(

@@ -89,8 +89,15 @@ public sealed class Resume
     public void AddSkill(Skill skill)
     {
         ArgumentNullException.ThrowIfNull(skill);
-        if (_skills.Any(s => s.Name.Name.Equals(skill.Name.Name, StringComparison.OrdinalIgnoreCase)))
-            throw new DuplicateSkillException($"Skill '{skill.Name}' already exists.");
+        // NAMES THE POSITION, NOT THE VALUE. This message is surfaced verbatim in the 400 body of
+        // POST /resumes/import, keyed by the field path of the LATER occurrence, so the value in it was
+        // pure repetition — and Certificate.Name and Interest.Name are classified CONFIDENTIAL and
+        // encrypted at rest, which made echoing them back in an error string the wrong default. The
+        // index is the earlier entry, so a review screen can highlight both rows.
+        var duplicateSkill = _skills.FindIndex(
+            s => s.Name.Name.Equals(skill.Name.Name, StringComparison.OrdinalIgnoreCase));
+        if (duplicateSkill >= 0)
+            throw new DuplicateSkillException($"Duplicates the skill at index {duplicateSkill}.");
 
         _skills.Add(skill);
         Touch();
@@ -139,8 +146,10 @@ public sealed class Resume
     public void AddCertificate(Certificate certificate)
     {
         ArgumentNullException.ThrowIfNull(certificate);
-        if (_certificates.Any(c => c.Name.Equals(certificate.Name, StringComparison.OrdinalIgnoreCase)))
-            throw new DuplicateEntryException($"Certificate '{certificate.Name}' already exists.");
+        var duplicateCertificate = _certificates.FindIndex(
+            c => c.Name.Equals(certificate.Name, StringComparison.OrdinalIgnoreCase));
+        if (duplicateCertificate >= 0)
+            throw new DuplicateEntryException($"Duplicates the certificate at index {duplicateCertificate}.");
 
         _certificates.Add(certificate);
         Touch();
@@ -157,8 +166,10 @@ public sealed class Resume
     public void AddLanguage(Language language)
     {
         ArgumentNullException.ThrowIfNull(language);
-        if (_languages.Any(l => l.Name.Equals(language.Name, StringComparison.OrdinalIgnoreCase)))
-            throw new DuplicateEntryException($"Language '{language.Name}' already exists.");
+        var duplicateLanguage = _languages.FindIndex(
+            l => l.Name.Equals(language.Name, StringComparison.OrdinalIgnoreCase));
+        if (duplicateLanguage >= 0)
+            throw new DuplicateEntryException($"Duplicates the language at index {duplicateLanguage}.");
 
         _languages.Add(language);
         Touch();
@@ -205,8 +216,10 @@ public sealed class Resume
     public void AddInterest(Interest interest)
     {
         ArgumentNullException.ThrowIfNull(interest);
-        if (_interests.Any(i => i.Name.Equals(interest.Name, StringComparison.OrdinalIgnoreCase)))
-            throw new DuplicateEntryException($"Interest '{interest.Name}' already exists.");
+        var duplicateInterest = _interests.FindIndex(
+            i => i.Name.Equals(interest.Name, StringComparison.OrdinalIgnoreCase));
+        if (duplicateInterest >= 0)
+            throw new DuplicateEntryException($"Duplicates the interest at index {duplicateInterest}.");
 
         _interests.Add(interest);
         Touch();

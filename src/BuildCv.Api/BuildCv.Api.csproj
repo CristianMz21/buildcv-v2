@@ -17,4 +17,10 @@
     <ProjectReference Include="..\BuildCv.Infrastructure\BuildCv.Infrastructure.csproj" />
   </ItemGroup>
 
+  <!-- Matches BuildCv.Infrastructure. ProjectedList is an internal wire-mapping detail whose only
+       interesting property (Count projects nothing) cannot be observed from outside the assembly. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="BuildCv.Api.Tests" />
+  </ItemGroup>
+
 </Project>

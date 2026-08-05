@@ -83,9 +83,9 @@ public class ResumeCollectionTests
     public void Resume_adding_duplicate_language_throws_duplicate_entry()
     {
         var resume = BuildResume();
-        resume.AddLanguage(new Language("English", "Native"));
+        resume.AddLanguage(Language.Create("English", "Native"));
 
-        var act = () => resume.AddLanguage(new Language("english", "Fluent"));
+        var act = () => resume.AddLanguage(Language.Create("english", "Fluent"));
 
         act.Should().Throw<DuplicateEntryException>();
     }

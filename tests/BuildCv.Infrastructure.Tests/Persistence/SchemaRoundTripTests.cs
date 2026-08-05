@@ -157,7 +157,7 @@ public sealed class SchemaRoundTripTests
             Url.Create("https://learn.example.com/verify/CRED-123"),
             period));
 
-        resume.AddLanguage(new Language("Spanish", "Native", LanguageProficiency.Native));
+        resume.AddLanguage(Language.Create("Spanish", "Native", LanguageProficiency.Native));
         resume.AddAward(new Award("Turing Award", OrganizationName.Create("ACM"), new DateOnly(2022, 3, 1), "For services."));
         resume.AddPublication(new Publication(
             "Notes on the Engine",
@@ -235,7 +235,7 @@ public sealed class SchemaRoundTripTests
     {
         var fluency = $"nativo, aprendido de mi abuela colombiana-{Guid.NewGuid():N}";
         var resume = Resume.Create(AccountId.New(), MinimalContact("fluency"));
-        resume.AddLanguage(new Language("Español", fluency, LanguageProficiency.Native));
+        resume.AddLanguage(Language.Create("Español", fluency, LanguageProficiency.Native));
 
         await using (var context = _fixture.NewContext())
         {
@@ -602,7 +602,7 @@ public sealed class SchemaRoundTripTests
         resume.AddProject(new Project("A-0 Compiler", period, "The first compiler."));
         resume.AddCertificate(new Certificate(
             "Naval Reserve", OrganizationName.Create("US Navy"), "NR-1", null, period));
-        resume.AddLanguage(new Language("English", "Native"));
+        resume.AddLanguage(Language.Create("English", "Native"));
         resume.AddAward(new Award("Medal of Technology", OrganizationName.Create("USA"), new DateOnly(1991, 1, 1), null));
         resume.AddPublication(new Publication(
             "Compiling Routines", OrganizationName.Create("ACM"), null, new DateOnly(1952, 1, 1), null));

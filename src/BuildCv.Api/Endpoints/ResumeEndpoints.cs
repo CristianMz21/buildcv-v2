@@ -8,11 +8,15 @@ using BuildCv.Application.Scoring;
 using BuildCv.Domain.Common.ValueObjects;
 using BuildCv.Domain.Resumes;
 using BuildCv.Domain.Scoring;
+using Microsoft.AspNetCore.Mvc;
 
 namespace BuildCv.Api.Endpoints;
 
 public static class ResumeEndpoints
 {
+    // Exposed so a test can send exactly one byte over it rather than restating the number.
+    public const long ImportRequestSizeLimitBytes = 2 * 1024 * 1024;
+
     public static RouteGroupBuilder MapResumeEndpoints(this IEndpointRouteBuilder app)
     {
         var group = app.MapGroup("/resumes")
@@ -34,6 +38,86 @@ public static class ResumeEndpoints
                 request.Summary), cancellationToken);
             return result.ToHttpResult(resume => Results.Created($"/resumes/{resume.Id.Value}", resume));
         });
+
+        // One whole CV in one request, in place of POST /resumes plus up to fifteen per-section calls.
+        // It is the endpoint a HUMAN REVIEW SCREEN posts to: extraction reaches roughly 65% field
+        // accuracy on real CVs, so the corrected draft is what reaches the domain, never the raw
+        // extraction.
+        //
+        // NO ENUM PARSING HERE, unlike the four routes below that do it in the lambda. Every enum in a
+        // draft is parsed by ResumeDraftValidator instead, so a bad level comes back as a FIELD ERROR
+        // beside whatever else is wrong rather than as a bare 400 that names nothing. Copying the
+        // endpoint guard into a second place would be one rule stated twice, and the two would drift.
+        //
+        // 201 with the aggregate, which is the same body POST /resumes already answers. A second
+        // response shape for one aggregate is how a client ends up with two models of a resume.
+        group.MapPost("/import", async Task<IResult> (
+            ImportResumeRequest request,
+            ICommandHandler<CreateResumeFromDraftCommand, ResumeImportResult> handler,
+            ResumeImportRateLimiter rateLimiter,
+            ILogger<Program> logger,
+            HttpContext httpContext,
+            CancellationToken cancellationToken) =>
+        {
+            var accountId = httpContext.User.GetAccountId();
+
+            // Per account, not per IP, and acquired here rather than as a named policy — see
+            // ResumeImportRateLimiter. An accepted import is the most durable write in this API, and
+            // the global 100/min per-IP limiter was the only thing bounding it.
+            using var lease = await rateLimiter.AcquireAsync(accountId, cancellationToken);
+            if (!lease.IsAcquired)
+            {
+                RateLimitResponse.SetRetryAfter(httpContext.Response, lease);
+                AuditLog.Log(logger, "resume_import_throttled", accountId, httpContext);
+                return Results.Problem(
+                    detail: "Too many resume imports.",
+                    statusCode: StatusCodes.Status429TooManyRequests);
+            }
+
+            var result = await handler.Handle(
+                new CreateResumeFromDraftCommand(accountId, request.ToDraft()),
+                cancellationToken);
+
+            return result.IsSuccess
+                ? Results.Created($"/resumes/{result.Resume!.Id.Value}", result.Resume)
+                : result.FieldErrors.ToValidationProblem();
+        })
+        // THE ONLY REQUEST-SIZE LIMIT IN THIS API, and the first endpoint that needed one. Kestrel's
+        // default is 30,000,000 bytes (~28.6 MB) and nothing here changes it, so without this a 28 MB
+        // body of `{"projects":[{},{},...]}` was fully deserialized before ResumeDraftLimits could
+        // decline it.
+        //
+        // THE FRAMEWORK ENFORCES THIS ON ITS OWN. Kestrel applies IRequestSizeLimitMetadata while the
+        // body is READ, which is why a handler that never touches its body is never refused for the
+        // size of one — and measuring exactly that is how an earlier revision of this file talked
+        // itself into a middleware nothing needed. Measured properly, on a real Kestrel host against
+        // an endpoint that binds a body: under the limit 200, over it 413, and chunked with no
+        // Content-Length also 413. ResumeImportSizeLimitTests pins that behaviour so the claim is
+        // executed rather than asserted.
+        //
+        // The 413 comes back with Content-Length: 0 and Connection: close, and no IExceptionHandler
+        // runs, so it is the one error in this API that is not ProblemDetails-shaped. That cannot be
+        // fixed from inside the app — see MalformedRequestExceptionHandler, which covers the malformed
+        // bodies that CAN be shaped and explains why this one cannot.
+        //
+        // 2 MiB. Arithmetic, not a round number: a draft filled to every cap is roughly 700 KB of JSON —
+        // 50 experiences at ~5 KB each once their 50 highlights are counted, 50 projects at ~6.5 KB with
+        // technologies and highlights, 200 publications at ~400 bytes, and the rest well under that. 2
+        // MiB is about three times the largest draft the caps can admit and one fifteenth of the
+        // framework default.
+        .WithMetadata(new RequestSizeLimitAttribute(ImportRequestSizeLimitBytes))
+        .WithSummary("Creates a complete resume from one reviewed draft.")
+        .WithDescription(
+            "Every field is sent as a STRING, including dates (yyyy-MM-dd), numbers and levels, so that no "
+            + "VALUE can be rejected at model binding: a malformed date or an unknown level comes back as "
+            + "a field error rather than as a framework 400 naming nothing. Malformed JSON, a null body "
+            + "and a body over 2 MiB are still refused by the server before validation runs. "
+            + "Validation is all-or-nothing and collects EVERY bad field in one pass: a rejected draft "
+            + "answers 400 with the standard ProblemDetails `errors` object, keyed by JSON field path "
+            + "(`experiences[2].end`, `contact.phoneNumber`), and creates nothing. A null array element "
+            + "is reported at its own index. Levels accept the enum name or its number. Duplicate skills, "
+            + "certificates, languages and interests are reported against the LATER occurrence — that is "
+            + "the line to delete — including when that item has another bad field as well.");
 
         // Keyset paged, and there is no way to ask for the whole list: limit is clamped to a ceiling
         // and cursor is the only way forward. `limit` and `cursor` bind from the query string because

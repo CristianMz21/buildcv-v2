@@ -2,6 +2,7 @@ using BuildCv.Domain.Exceptions;
 using BuildCv.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.WebUtilities;
 
 namespace BuildCv.Api.Common;
 
@@ -35,6 +36,59 @@ public sealed class DomainExceptionHandler : IExceptionHandler
     }
 }
 
+/// <summary>
+/// Turns a malformed request that minimal-API parameter binding rejected into ProblemDetails, instead
+/// of the empty body it would otherwise carry.
+/// </summary>
+/// <remarks>
+/// COVERS: a body that is not valid JSON, a bare <c>null</c> body, a body exceeding
+/// <c>JsonSerializerOptions.MaxDepth</c>, and a route or query value that failed to parse. All of them
+/// answered an EMPTY 400 with no content type — contradicting this repository's "every error response
+/// is ProblemDetails-shaped" rule and the import endpoint's own OpenAPI description.
+/// <para>
+/// DOES NOT COVER — and cannot — a body refused for SIZE. Measured on a real Kestrel host: a request
+/// over the endpoint's <c>IRequestSizeLimitMetadata</c> ceiling answers <b>413 with
+/// <c>Content-Length: 0</c> and <c>Connection: close</c></b>, and no <c>IExceptionHandler</c> is
+/// invoked at all — with <c>ThrowOnBadRequest</c> both off and on. The connection is torn down inside
+/// the server before the pipeline can shape anything. That asymmetry is a property of the platform,
+/// not an oversight here, and it is deliberately NOT papered over with middleware: shaping only the
+/// half that happens to be reachable produces two different bodies for one class of refusal.
+/// </para>
+/// <para>
+/// It works at all only because <c>RouteHandlerOptions.ThrowOnBadRequest</c> is turned on for every
+/// environment in Program.cs. Left at its default it is <c>IsDevelopment()</c>, which is why this
+/// class of request answered an empty 400 in production and a logged 500 in Development — the same
+/// input, two wrong answers, neither of them ProblemDetails.
+/// </para>
+/// <para>
+/// The exception's own message is used as the detail. These are framework strings describing the
+/// SHAPE of the request ("Failed to read parameter ... from the request body as JSON"), not echoes of
+/// its content, so unlike the persistence handler below there is nothing here to withhold.
+/// </para>
+/// </remarks>
+public sealed class MalformedRequestExceptionHandler : IExceptionHandler
+{
+    public async ValueTask<bool> TryHandleAsync(
+        HttpContext httpContext, Exception exception, CancellationToken cancellationToken)
+    {
+        if (exception is not BadHttpRequestException badRequest)
+            return false;
+
+        httpContext.Response.StatusCode = badRequest.StatusCode;
+        await httpContext.Response.WriteAsJsonAsync(
+            new ProblemDetails
+            {
+                Title = ReasonPhrases.GetReasonPhrase(badRequest.StatusCode),
+                Detail = badRequest.Message,
+                Status = badRequest.StatusCode
+            },
+            options: null,
+            contentType: "application/problem+json",
+            cancellationToken);
+        return true;
+    }
+}
+
 // Storage conflicts. Both are 409: the request was well formed and the server understood it, but another
 // write got there first, and the caller's move in either case is to reload and retry.
 //
@@ -50,6 +104,7 @@ public sealed class PersistenceExceptionHandler(ILogger<PersistenceExceptionHand
         {
             ConcurrencyConflictException => "The record was modified by another request. Reload it and try again.",
             DuplicateKeyException => "A record with the same unique value already exists.",
+            ValueTooLongException => "A value in the request is too long to be stored.",
             _ => null
         };
 
@@ -63,12 +118,18 @@ public sealed class PersistenceExceptionHandler(ILogger<PersistenceExceptionHand
         logger.LogWarning(exception, "Persistence conflict on {Method} {Path}",
             httpContext.Request.Method, httpContext.Request.Path);
 
-        httpContext.Response.StatusCode = StatusCodes.Status409Conflict;
+        // A truncation is the caller's value being wrong, not two writers racing, so it is a 400 rather
+        // than the 409 the two conflict cases share.
+        var status = exception is ValueTooLongException
+            ? StatusCodes.Status400BadRequest
+            : StatusCodes.Status409Conflict;
+
+        httpContext.Response.StatusCode = status;
         await httpContext.Response.WriteAsJsonAsync(new ProblemDetails
         {
-            Title = "Conflict",
+            Title = ReasonPhrases.GetReasonPhrase(status),
             Detail = detail,
-            Status = StatusCodes.Status409Conflict
+            Status = status
         }, cancellationToken);
         return true;
     }

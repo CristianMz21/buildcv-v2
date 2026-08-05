@@ -74,6 +74,11 @@ public class AddCertificateHandlerTests
         var result = await _handler.Handle(BuildCommand(ownerId, resume.Id));
 
         result.IsSuccess.Should().BeFalse();
-        result.Error.Should().Contain("AWS Solutions Architect");
+
+        // The message names the POSITION of the entry it duplicates, never the value. Certificate.Name is
+        // classified CONFIDENTIAL and encrypted at rest; echoing it into an error string put it back in
+        // plaintext in a response body and in any log that captured one.
+        result.Error.Should().Be("Duplicates the certificate at index 0.");
+        result.Error.Should().NotContain("AWS Solutions Architect");
     }
 }

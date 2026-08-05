@@ -28,7 +28,7 @@ public sealed class AddLanguageHandler(IResumeRepository resumeRepository)
             if (resume.OwnerId != command.RequesterId)
                 return Result<Resume>.Failure("Forbidden.");
 
-            var language = new Language(command.Name, command.Fluency, command.Level);
+            var language = Language.Create(command.Name, command.Fluency, command.Level);
             resume.AddLanguage(language);
             await resumeRepository.UpdateAsync(resume, cancellationToken);
 

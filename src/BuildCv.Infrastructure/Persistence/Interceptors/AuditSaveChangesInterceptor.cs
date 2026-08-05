@@ -115,7 +115,7 @@ public sealed class AuditSaveChangesInterceptor : SaveChangesInterceptor
 
                     // Reference identity, not value equality. Several owned types are records, and
                     // the dictionary spans the WHOLE tracker: two resumes each holding
-                    // new Language("English", "Native") are Equals to one another, so a value-keyed
+                    // Language.Create("English", "Native") are Equals to one another, so a value-keyed
                     // ToDictionary would throw on the duplicate key — on every SaveChanges, not just
                     // on a lookup that happened to collide.
                     tracked ??= entries.ToDictionary(
