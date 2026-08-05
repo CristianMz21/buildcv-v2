@@ -2,11 +2,38 @@ namespace BuildCv.Domain.Scoring;
 
 public sealed record ScoringWeightsSnapshot
 {
-    // Which WEIGHTING produced a set of numbers — not which shape they serialize in.
+    // THE SCORING MODEL VERSION: which WEIGHTS **AND WHICH FORMULAS** produced a set of numbers — not
+    // which shape they serialize in.
     //
     // It is 2 because Languages now carries weight and is now computed: a score explained by these
     // weights is NOT the score the five-section model produced for the same resume, and a row that
     // could not say which model explained it would make every historical comparison a lie.
+    //
+    // "WEIGHTING" WAS THE ORIGINAL WORDING AND IT WAS TOO NARROW. The formulas live in ScoringRules, in
+    // another project, and nothing couples them to this number: commit 3508f35 replaced an unasked
+    // section's score of 0.5 with 0.0 — a change its own comment describes as moving real candidates'
+    // totals — and left this constant at the 2 an earlier commit had already set. So analyses on both
+    // sides of that change are stamped v2 and were not scored by the same model, which is exactly the
+    // comparison this number exists to keep honest.
+    //
+    // THAT INCONSISTENCY IS RECORDED HERE, NOT REPAIRED HERE. Bumping to 3 would restamp every future
+    // score and reclassify every existing row as "some other model", which is a behavioural change and
+    // belongs to the release that earns it — the next engine change — rather than to a re-documentation.
+    //
+    // THE BUMP RULE, stated for whoever changes the engine next: bump this when anything changes what a
+    // given (resume, posting) would score. That is the weights in Default(); every constant and predicate
+    // in ScoringRules — the caps, the two education rungs, NotApplicableScore, IsSatisfiedBy; and any
+    // DATA those rules consult, so a skill-lexicon revision is a model change even though no weight moved.
+    // It is not bumped for renaming, reordering or reserializing anything.
+    //
+    // The reference date is the one input that changes a score WITHOUT being a model change: it is data
+    // about when the score was taken, and it is carried per row by Analysis.ScoredAt. Two analyses of one
+    // resume taken on different days are the same model applied to a different day, not two models.
+    //
+    // ONE NUMBER, DELIBERATELY, and a second one must not be added beside it. Separate "weights version"
+    // and "formula version" integers would require a comparability matrix — which pairs of which are
+    // comparable — and every reader of a score would have to carry it. A single number that only ever
+    // means "same model or not" needs no matrix.
     //
     // THE ONE-WAY DOOR, stated precisely, because this sentence ends up in a deployment plan and both
     // of its obvious phrasings are wrong.
@@ -142,9 +169,10 @@ public sealed record ScoringWeightsSnapshot
     // Identity when every section applies: the divisor is 1.0, so each weight is returned bit-for-bit
     // and a fully-specified posting is scored under exactly Default().
     //
-    // SchemaVersion is CARRIED, NOT BUMPED. It names which weighting RULE produced the numbers; the
-    // snapshot itself names the RESULT. Every v2 analysis is explained by "v2 weights, renormalized to
-    // what this posting asked", and the row stores the actual divisor's output, so the arithmetic is
+    // SchemaVersion is CARRIED, NOT BUMPED. It names which scoring MODEL produced the numbers — the
+    // weights and the formulas together; the snapshot itself names the RESULT of applying that model to
+    // one posting. Every v2 analysis is explained by "the v2 model, renormalized to what this posting
+    // asked", and the row stores the actual divisor's output, so the arithmetic is
     // reproducible from the row alone. Bumping per posting would make the version vary within one
     // model, which is the one thing it exists not to do.
     //

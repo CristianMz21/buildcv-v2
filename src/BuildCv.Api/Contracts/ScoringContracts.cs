@@ -65,8 +65,10 @@ public sealed record ScoreResumeRequest(Guid ResumeId, Guid JobPostingId);
 /// <para>
 /// Two analyses can therefore report the same <c>Weights.SchemaVersion</c> and still have been scored
 /// under different weightings, because each posting asks about a different set of sections. The
-/// version names the weighting RULE; the snapshot names the RESULT. Compare the weights before
-/// comparing two <see cref="OverallScore"/> values across postings.
+/// version names the scoring MODEL — the weights and the formulas together; the snapshot names the
+/// RESULT of applying that model to one posting. Compare the weights before comparing two
+/// <see cref="OverallScore"/> values across postings, and treat a different version as "not
+/// comparable at all" rather than as a difference to explain.
 /// </para>
 /// </remarks>
 public sealed record AnalysisResponse(
@@ -126,6 +128,11 @@ public sealed record ScoreBreakdownResponse(
 // Which weighting explained this score. SchemaVersion travels with it deliberately: a client comparing
 // two analyses from either side of a redistribution needs to know the two are not measured in the same
 // units.
+//
+// SchemaVersion names the SCORING MODEL — weights or formulas. The engine's formulas are not visible
+// anywhere else in this response, so this integer is the only thing that can tell a client two scores
+// were produced by different rules; the six weights beside it cannot, because a formula change moves a
+// score without moving a weight.
 public sealed record ScoringWeightsResponse(
     double Skills,
     double Experience,
