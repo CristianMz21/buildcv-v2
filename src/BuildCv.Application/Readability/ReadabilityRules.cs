@@ -140,12 +140,49 @@ internal static class ReadabilityRules
         return (quantified, actionLed, total);
     }
 
-    // ANY DIGIT, and the looseness is deliberate rather than unnoticed. A stricter rule -- ignore
-    // four-digit years, require a unit beside the number -- reads as more accurate and is the kind of
-    // clever this engine refuses: it cannot be stated in one sentence, so a candidate could not check
-    // it, and every extra clause is another way for the advice to promise a gain the rule then declines
-    // to pay. The cost is that "Migrated 3 services" and "Joined in 2019" both count.
-    internal static bool StatesANumber(string highlight) => highlight.Any(char.IsDigit);
+    // ANY DIGIT, EXCEPT A BARE CALENDAR YEAR. Still one sentence, so a candidate can check it against
+    // their own bullet, which is the property that keeps the advice honest -- a rule nobody can verify
+    // promises a gain it may then decline to pay.
+    //
+    // The exclusion earns its clause because THE FAILURE HAS A DIRECTION. Counting any digit credits
+    // "Led the 2019 migration" as quantified, so the candidate is NOT told to add metrics -- and the
+    // person who writes years instead of numbers is exactly the person that advice was written for.
+    // Withholding it is the expensive mistake; offering advice someone can ignore is the cheap one.
+    // Achievements carries 0.25 of the readability total, so this is a quarter of the score.
+    //
+    // Any standalone 1900-2100 token is excluded, REGARDLESS of what it means in the sentence. So
+    // "Resolved 2019 incidents" is under-counted: the rule cannot tell a count from a date without
+    // reading the words around it, and that is the clause creep this comment is otherwise avoiding.
+    // Under-counting is the direction to fail in -- it offers advice the candidate can dismiss rather
+    // than withholding advice they needed. "Migrated 3 services", "cut latency 40%" and "v2 of the
+    // API" all still count, because none of those digits stand alone as a year.
+    internal static bool StatesANumber(string highlight)
+    {
+        foreach (var token in highlight.Split(NumberTokenSeparators, StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (!token.Any(char.IsDigit))
+                continue;
+
+            if (!IsBareCalendarYear(token))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static readonly char[] NumberTokenSeparators =
+        [' ', '\t', '\n', '\r', ',', ';', '(', ')', '[', ']', '"', '\''];
+
+    // 1900-2100 written on its own, optionally closed by sentence punctuation: the shape a date takes
+    // in a bullet point. A year glued to anything else ("2019-2021", "2019x") is not this.
+    private static bool IsBareCalendarYear(string token)
+    {
+        var trimmed = token.TrimEnd('.', ':', '-', '–', '—');
+        return trimmed.Length == 4
+            && trimmed.All(char.IsAsciiDigit)
+            && int.TryParse(trimmed, out var year)
+            && year is >= 1900 and <= 2100;
+    }
 
     // CHRONOLOGY -- the share of experience entries that continue the timeline without an unexplained
     // break: the first entry always counts, and each later one counts when it starts within six months

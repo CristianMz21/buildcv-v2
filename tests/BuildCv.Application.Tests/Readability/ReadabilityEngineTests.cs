@@ -182,6 +182,16 @@ public class ReadabilityEngineTests
     [InlineData(new[] { "Responsible for 3 services" }, 0.5)]
     [InlineData(new[] { "Responsible for services" }, 0.0)]
     [InlineData(new[] { "Reduced latency by 40%", "Responsible for services" }, 0.5)]
+    // A BARE YEAR IS NOT A METRIC. Counting it would credit the bullet as quantified and withhold the
+    // advice to add numbers -- from the candidate who writes years instead of numbers, who is the one
+    // that advice exists for. "Led" is an action verb, so this scores the action half and not the
+    // number half.
+    [InlineData(new[] { "Led the 2019 migration" }, 0.5)]
+    // The exclusion is blind to meaning: a standalone 1900-2100 token is dropped even when it IS a
+    // count. Under-counting is the safe direction -- it offers advice the candidate can dismiss.
+    [InlineData(new[] { "Resolved 2019 incidents" }, 0.5)]
+    // A digit that is not a bare year still counts, so the exclusion cannot swallow real metrics.
+    [InlineData(new[] { "Shipped v2 of the API" }, 1.0)]
     public void Achievements_scores_quantification_and_action_verbs_over_the_highlights(
         string[] highlights, double expected)
     {
