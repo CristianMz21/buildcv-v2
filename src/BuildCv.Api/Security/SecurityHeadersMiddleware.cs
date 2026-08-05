@@ -18,6 +18,12 @@ namespace BuildCv.Api.Security;
 // Measured, on the same host, so the choice is not a trade of one lost case for another: OnStarting
 // fires for Kestrel's OWN refusals too. The 413 that POST /resumes/import declares — produced inside
 // the server, with no IExceptionHandler involved — carries the headers under both shapes.
+//
+// THERE IS NO `headers.Remove("Server")` HERE, and there used to be. It never did anything: measured on
+// a real Kestrel host, removing the header from the response collection — eagerly or from OnStarting —
+// leaves `Server: Kestrel` on the wire, because the server writes its own default after the callbacks
+// run. What actually suppresses it is `AddServerHeader = false` in Program.cs, one line, at the only
+// level that can. The line here read like the control while a different line was doing the work.
 public sealed class SecurityHeadersMiddleware(RequestDelegate next)
 {
     public Task Invoke(HttpContext context)
@@ -35,7 +41,6 @@ public sealed class SecurityHeadersMiddleware(RequestDelegate next)
             headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()";
             headers["Cross-Origin-Opener-Policy"] = "same-origin";
             headers["Cross-Origin-Resource-Policy"] = "same-origin";
-            headers.Remove("Server");
             return Task.CompletedTask;
         }, context);
 

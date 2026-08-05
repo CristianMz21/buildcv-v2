@@ -3,8 +3,10 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using BuildCv.Application.Common.Services;
 using FluentAssertions;
+using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Options;
 
 namespace BuildCv.Api.Tests;
 
@@ -63,6 +65,24 @@ public sealed class SecurityHeadersTests
         AssertTheFullSet(response);
     }
 
+    // THE ONE HEADER THE MIDDLEWARE CANNOT REACH. Kestrel writes `Server: Kestrel` from its own defaults
+    // after the OnStarting callbacks have run, so removing the header from the response collection there
+    // achieves nothing — measured on a real Kestrel host, in both the eager and the callback shape. The
+    // only lever is AddServerHeader, and until now nothing pinned it: deleting that line from Program.cs
+    // reddened no test, while the NotContain assertion above looked as though it covered the case.
+    //
+    // Asserted against the real application's options rather than over a socket, which is the same split
+    // ResumeImportSizeLimitTests uses for the request-size ceiling: the app DECLARES, the server
+    // ENFORCES, and only the first half is this repository's to state.
+    [Fact]
+    public void TheHostSuppressesKestrelsServerHeader()
+    {
+        using var factory = new ApiTestFactory();
+
+        factory.Services.GetRequiredService<IOptions<KestrelServerOptions>>()
+            .Value.AddServerHeader.Should().BeFalse();
+    }
+
     // Stated once so the two callers cannot drift, and stated in FULL on purpose: the bug this file now
     // covers dropped all seven at once, so a test asserting a representative one or two would have
     // reported the same green for a fix that only reinstated the ones it happened to name.
@@ -80,7 +100,7 @@ public sealed class SecurityHeadersTests
 
         // TestServer never sets a Server header, so this line passes whether or not anything removes one
         // — it is a regression guard against something in the pipeline ADDING one, and it is NOT evidence
-        // that the middleware suppresses the one Kestrel writes in production.
+        // about production. TheHostSuppressesKestrelsServerHeader below is where that lives.
         response.Headers.Should().NotContain(h => h.Key == "Server");
     }
 
