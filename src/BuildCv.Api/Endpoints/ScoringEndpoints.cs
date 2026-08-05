@@ -18,7 +18,7 @@ public static class ScoringEndpoints
 
         group.MapPost("/score", async (
             ScoreResumeRequest request,
-            ICommandHandler<ScoreResumeCommand, Result<Analysis>> handler,
+            ICommandHandler<ScoreResumeCommand, Result<AnalysisView>> handler,
             HttpContext httpContext,
             CancellationToken cancellationToken) =>
         {
@@ -31,7 +31,7 @@ public static class ScoringEndpoints
             // put RecommendationKind and RecommendationPriority on the wire as raw integers — numbers
             // this repo documents as an append-only persistence detail. AnalysisResponse states the
             // contract instead, and the ordering the aggregate deliberately does not guarantee.
-            return result.ToHttpResult(analysis => Results.Ok(AnalysisResponse.From(analysis)));
+            return result.ToHttpResult(view => Results.Ok(AnalysisResponse.From(view.Analysis, view.IsStale)));
         })
         .WithSummary("Scores a resume against a job posting and stores the result.")
         .WithDescription(ZeroWeightContract);
@@ -47,14 +47,14 @@ public static class ScoringEndpoints
         // server happened to return, differently between two reads of the same row.
         group.MapGet("/{analysisId:guid}", async (
             Guid analysisId,
-            IQueryHandler<GetAnalysisByIdQuery, Result<Analysis>> handler,
+            IQueryHandler<GetAnalysisByIdQuery, Result<AnalysisView>> handler,
             HttpContext httpContext,
             CancellationToken cancellationToken) =>
         {
             var result = await handler.Handle(new GetAnalysisByIdQuery(
                 httpContext.User.GetAccountId(), new AnalysisId(analysisId)), cancellationToken);
 
-            return result.ToHttpResult(analysis => Results.Ok(AnalysisResponse.From(analysis)));
+            return result.ToHttpResult(view => Results.Ok(AnalysisResponse.From(view.Analysis, view.IsStale)));
         })
         .WithSummary("Returns one stored analysis, readable only by the owner of the resume it scored.")
         .WithDescription(

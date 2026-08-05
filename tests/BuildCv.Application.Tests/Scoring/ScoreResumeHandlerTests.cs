@@ -72,13 +72,13 @@ public class ScoreResumeHandlerTests
         var result = await _handler.Handle(new ScoreResumeCommand(ownerId, resume.Id, jobPosting.Id));
 
         result.IsSuccess.Should().BeTrue();
-        result.Value!.Breakdown.SkillsScore.Should().Be(1.0);
-        result.Value.Breakdown.ExperienceScore.Should().Be(1.0);
+        result.Value!.Analysis.Breakdown.SkillsScore.Should().Be(1.0);
+        result.Value.Analysis.Breakdown.ExperienceScore.Should().Be(1.0);
 
         // The posting states no language requirement, so Languages is renormalized out and the other
         // five are scored out of 0.90: Skills 0.45/0.90 = 0.50, Experience 0.20/0.90 = 0.2222.
         // 0.50*1.0 + 0.2222*1.0 = 0.65/0.90 = 0.7222 -> 72. Nothing else on this resume scores.
-        result.Value.OverallScore.Should().Be(72);
+        result.Value.Analysis.OverallScore.Should().Be(72);
         (await _analyses.GetPageByResumeIdAsync(resume.Id, PageRequests.Of())).Items.Should().HaveCount(1);
     }
 
@@ -95,12 +95,12 @@ public class ScoreResumeHandlerTests
         var result = await _handler.Handle(new ScoreResumeCommand(ownerId, resume.Id, jobPosting.Id));
 
         result.IsSuccess.Should().BeTrue();
-        result.Value!.Breakdown.SkillsScore.Should().Be(0.0);
+        result.Value!.Analysis.Breakdown.SkillsScore.Should().Be(0.0);
 
         // Experience alone, renormalized: 0.20/0.90 = 0.2222 -> 22. The unmatched skills section still
         // carries its full renormalized 0.50 and scores zero against it, which is what a candidate who
         // matches nothing the posting asked for should see.
-        result.Value.OverallScore.Should().Be(22);
+        result.Value.Analysis.OverallScore.Should().Be(22);
     }
 
     [Fact]
@@ -142,11 +142,11 @@ public class ScoreResumeHandlerTests
         var result = await _handler.Handle(new ScoreResumeCommand(ownerId, resume.Id, jobPosting.Id));
 
         result.IsSuccess.Should().BeTrue();
-        result.Value!.Recommendations.Should().NotBeEmpty();
+        result.Value!.Analysis.Recommendations.Should().NotBeEmpty();
 
         var stored = (await _analyses.GetPageByResumeIdAsync(resume.Id, PageRequests.Of())).Items
             .Should().ContainSingle().Subject;
-        stored.Recommendations.Should().Equal(result.Value.Recommendations);
+        stored.Recommendations.Should().Equal(result.Value.Analysis.Recommendations);
         stored.Recommendations.Should().BeInAscendingOrder(RecommendationOrder.Display,
             "the ten that survive the cap are chosen by this order, so the stored set is already in it");
     }
@@ -188,7 +188,7 @@ public class ScoreResumeHandlerTests
             .Should().BeApproximately(stored.Breakdown.WeightedTotal, 1e-9,
                 "the stored weights and the stored scores must reproduce the stored total");
 
-        result.Value!.Breakdown.Weights.Should().Be(weights, "and the caller was shown the same set");
+        result.Value!.Analysis.Breakdown.Weights.Should().Be(weights, "and the caller was shown the same set");
     }
 
     // The three corners of published-or-owned. The first is the normal candidate flow; the second is
@@ -303,7 +303,7 @@ public class ScoreResumeHandlerTests
 
         var referenceDate = engine.ReferenceDates.Should().ContainSingle().Subject;
         referenceDate.Should().Be(new DateOnly(2026, 8, 4), "the first read is still yesterday");
-        DateOnly.FromDateTime(result.Value!.ScoredAt.UtcDateTime).Should().Be(referenceDate,
+        DateOnly.FromDateTime(result.Value!.Analysis.ScoredAt.UtcDateTime).Should().Be(referenceDate,
             "an analysis must be stamped with the day it was actually scored against");
     }
 
@@ -323,7 +323,7 @@ public class ScoreResumeHandlerTests
         first.IsSuccess.Should().BeTrue();
         second.IsSuccess.Should().BeTrue();
         _analyses.WriteCount.Should().Be(1, "the second run is the same score, not a second scoring event");
-        second.Value!.Id.Should().Be(first.Value!.Id, "and the caller is handed the row that already exists");
+        second.Value!.Analysis.Id.Should().Be(first.Value!.Analysis.Id, "and the caller is handed the row that already exists");
         (await _analyses.GetPageByResumeIdAsync(resume.Id, PageRequests.Of())).Items
             .Should().ContainSingle("a history of button presses is not a history");
     }
@@ -344,7 +344,7 @@ public class ScoreResumeHandlerTests
         var second = await _handler.Handle(command);
 
         _analyses.WriteCount.Should().Be(2, "the score now describes a different CV");
-        second.Value!.Id.Should().NotBe(first.Value!.Id);
+        second.Value!.Analysis.Id.Should().NotBe(first.Value!.Analysis.Id);
     }
 
     // TERM 2 — the posting version. A recruiter adding a requirement changes the skills score of every
@@ -365,7 +365,7 @@ public class ScoreResumeHandlerTests
         var second = await _handler.Handle(command);
 
         _analyses.WriteCount.Should().Be(2, "the score now describes a different posting");
-        second.Value!.Id.Should().NotBe(first.Value!.Id);
+        second.Value!.Analysis.Id.Should().NotBe(first.Value!.Analysis.Id);
     }
 
     // TERM 4 — THE DATE, and it is the term that looks droppable and is not.
@@ -386,15 +386,15 @@ public class ScoreResumeHandlerTests
         var command = new ScoreResumeCommand(ownerId, resume.Id, jobPosting.Id);
 
         var first = await _handler.Handle(command);
-        var firstDay = DateOnly.FromDateTime(first.Value!.ScoredAt.UtcDateTime);
+        var firstDay = DateOnly.FromDateTime(first.Value!.Analysis.ScoredAt.UtcDateTime);
 
         _time.Advance(TimeSpan.FromDays(1));
         var second = await _handler.Handle(command);
 
-        DateOnly.FromDateTime(second.Value!.ScoredAt.UtcDateTime).Should().NotBe(firstDay,
+        DateOnly.FromDateTime(second.Value!.Analysis.ScoredAt.UtcDateTime).Should().NotBe(firstDay,
             "or the clock did not actually cross a day boundary and the rest asserts nothing");
         _analyses.WriteCount.Should().Be(2, "the same CV against the same posting scores differently today");
-        second.Value.Id.Should().NotBe(first.Value.Id);
+        second.Value.Analysis.Id.Should().NotBe(first.Value.Analysis.Id);
     }
 
     // TERM 3 — the scoring model. The stored row matches on every other term; only its SchemaVersion is
@@ -416,13 +416,21 @@ public class ScoreResumeHandlerTests
         var result = await _handler.Handle(new ScoreResumeCommand(ownerId, resume.Id, jobPosting.Id));
 
         _analyses.WriteCount.Should().Be(2, "a score explained by a retired model is not this score");
-        result.Value!.Id.Should().NotBe(stale.Id);
-        result.Value.Breakdown.Weights.SchemaVersion.Should().Be(ScoringWeightsSnapshot.CurrentSchemaVersion);
+        result.Value!.Analysis.Id.Should().NotBe(stale.Id);
+        result.Value.Analysis.Breakdown.Weights.SchemaVersion.Should().Be(ScoringWeightsSnapshot.CurrentSchemaVersion);
     }
 
     // THE HISTORICAL ROW. Both provenance columns are null — what every analysis written before those
     // columns existed reads back as — and null means UNKNOWN, never "unchanged". Reusing it would tell a
     // candidate a score taken against a CV nobody can identify is current.
+    //
+    // WHICH TERM REFUSES IT, stated because a control showed the obvious answer is not the only one:
+    // BOTH provenance terms do, independently, since neither null equals the timestamp beside it. Weaken
+    // the resume term alone and this test still passes on the posting term, so it is not the pin for
+    // "unknown resume provenance is stale" — GetAnalysisByIdHandlerTests
+    // .Handle_ForAnAnalysisWithNoRecordedProvenance_IsStale is, and it reds under exactly that mutation.
+    // What this one pins is the whole realistic row: no writer produces a half-recorded provenance, so a
+    // one-sided seed would be a state the system cannot reach.
     [Fact]
     public async Task Score_when_the_stored_analysis_has_unknown_provenance_writes_a_second_row()
     {
@@ -438,7 +446,7 @@ public class ScoreResumeHandlerTests
         var result = await _handler.Handle(new ScoreResumeCommand(ownerId, resume.Id, jobPosting.Id));
 
         _analyses.WriteCount.Should().Be(2, "unknown provenance is stale, not fresh");
-        result.Value!.Id.Should().NotBe(historical.Id);
+        result.Value!.Analysis.Id.Should().NotBe(historical.Id);
     }
 
     private async Task<(Resume Resume, JobPosting JobPosting)> ArrangeScorableAsync(AccountId ownerId)

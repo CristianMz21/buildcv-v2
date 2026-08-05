@@ -11,7 +11,7 @@ using BuildCv.Domain.Resumes;
 using BuildCv.Domain.Scoring;
 
 public sealed record ScoreResumeCommand(AccountId RequesterId, ResumeId ResumeId, JobPostingId JobPostingId)
-    : ICommand<Result<Analysis>>;
+    : ICommand<Result<AnalysisView>>;
 
 public sealed class ScoreResumeHandler(
     IResumeRepository resumeRepository,
@@ -19,22 +19,22 @@ public sealed class ScoreResumeHandler(
     IAnalysisRepository analysisRepository,
     IScoringEngine scoringEngine,
     TimeProvider timeProvider)
-    : ICommandHandler<ScoreResumeCommand, Result<Analysis>>
+    : ICommandHandler<ScoreResumeCommand, Result<AnalysisView>>
 {
-    public async Task<Result<Analysis>> Handle(ScoreResumeCommand command, CancellationToken cancellationToken = default)
+    public async Task<Result<AnalysisView>> Handle(ScoreResumeCommand command, CancellationToken cancellationToken = default)
     {
         try
         {
             var resume = await resumeRepository.GetByIdAsync(command.ResumeId, cancellationToken);
             if (resume is null)
-                return Result<Analysis>.Failure("Resume not found.");
+                return Result<AnalysisView>.Failure("Resume not found.");
 
             if (resume.OwnerId != command.RequesterId)
-                return Result<Analysis>.Failure("Forbidden.");
+                return Result<AnalysisView>.Failure("Forbidden.");
 
             var jobPosting = await jobPostingRepository.GetByIdAsync(command.JobPostingId, cancellationToken);
             if (jobPosting is null)
-                return Result<Analysis>.Failure("Job posting not found.");
+                return Result<AnalysisView>.Failure("Job posting not found.");
 
             // Scoring is published-or-owned. Without this any authenticated caller could score against
             // any JobPostingId, including a stranger's unpublished draft -- and a score is a readable
@@ -53,7 +53,7 @@ public sealed class ScoreResumeHandler(
             //    posting that does not exist is told so. Both handlers leak the same bit of existence
             //    information, and they leak it consistently.
             if (jobPosting.Status != JobPostingStatus.Published && jobPosting.OwnerId != command.RequesterId)
-                return Result<Analysis>.Failure("Forbidden.");
+                return Result<AnalysisView>.Failure("Forbidden.");
 
             // ONE clock read for the whole run, and both the date scored against and the date stamped on
             // the row are derived from it.
@@ -85,7 +85,7 @@ public sealed class ScoreResumeHandler(
                 resume.Id, jobPosting.Id, cancellationToken);
 
             if (existing is not null && ScoredUnderTheSameConditions(existing, resume, jobPosting, referenceDate))
-                return Result<Analysis>.Success(existing);
+                return Result<AnalysisView>.Success(AnalysisView.Of(existing, resume));
 
             var score = scoringEngine.Score(resume, jobPosting, referenceDate);
 
@@ -106,15 +106,20 @@ public sealed class ScoreResumeHandler(
                 jobPosting.UpdatedAt);
             await analysisRepository.AddAsync(analysis, cancellationToken);
 
-            return Result<Analysis>.Success(analysis);
+            // Both exits go through AnalysisView.Of rather than reporting a hard-coded "not stale". Both
+            // ARE not stale — this one because it was just built from `resume`, the de-duplicated one
+            // because the first term of the key says the resume has not moved — but that second claim is
+            // a property of the key rather than of this line, and computing it keeps the response
+            // truthful if the key ever changes instead of merely likely to be.
+            return Result<AnalysisView>.Success(AnalysisView.Of(analysis, resume));
         }
         catch (DomainException ex)
         {
-            return Result<Analysis>.Failure(ex.Message);
+            return Result<AnalysisView>.Failure(ex.Message);
         }
         catch (ArgumentException ex)
         {
-            return Result<Analysis>.Failure(ex.Message);
+            return Result<AnalysisView>.Failure(ex.Message);
         }
     }
 

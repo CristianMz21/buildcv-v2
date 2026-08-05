@@ -8,23 +8,23 @@ using BuildCv.Domain.Identity;
 using BuildCv.Domain.Scoring;
 
 public sealed record GetAnalysisByIdQuery(AccountId RequesterId, AnalysisId AnalysisId)
-    : IQuery<Result<Analysis>>;
+    : IQuery<Result<AnalysisView>>;
 
 // Reading back one score. Two reads, never one: an Analysis names a ResumeId and no owner, so the only
 // account that may read it is the one that owns the resume it was computed from.
 public sealed class GetAnalysisByIdHandler(
     IAnalysisRepository analysisRepository,
     IResumeRepository resumeRepository)
-    : IQueryHandler<GetAnalysisByIdQuery, Result<Analysis>>
+    : IQueryHandler<GetAnalysisByIdQuery, Result<AnalysisView>>
 {
-    public async Task<Result<Analysis>> Handle(
+    public async Task<Result<AnalysisView>> Handle(
         GetAnalysisByIdQuery query, CancellationToken cancellationToken = default)
     {
         try
         {
             var analysis = await analysisRepository.GetByIdAsync(query.AnalysisId, cancellationToken);
             if (analysis is null)
-                return Result<Analysis>.Failure("Analysis not found.");
+                return Result<AnalysisView>.Failure("Analysis not found.");
 
             var resume = await resumeRepository.GetByIdAsync(analysis.ResumeId, cancellationToken);
 
@@ -42,7 +42,7 @@ public sealed class GetAnalysisByIdHandler(
             // survive and arrives here — and answers the same 404 with the same message. Api tests run
             // on that store; without this line they would certify a message SQL Server never sends.
             if (resume is null)
-                return Result<Analysis>.Failure("Analysis not found.");
+                return Result<AnalysisView>.Failure("Analysis not found.");
 
             // Owner only, matching ScoreResumeHandler rather than GetResumeHandler, which also admits
             // Role.Admin. The divergence is deliberate and is the narrower of the two: a score quotes
@@ -50,17 +50,20 @@ public sealed class GetAnalysisByIdHandler(
             // by reflex — and admitting admins would mean reaching for IAccountRepository from a
             // handler that otherwise needs nothing beyond the two rows it already reads.
             if (resume.OwnerId != query.RequesterId)
-                return Result<Analysis>.Failure("Forbidden.");
+                return Result<AnalysisView>.Failure("Forbidden.");
 
-            return Result<Analysis>.Success(analysis);
+            // The resume was loaded to authorize; comparing its UpdatedAt against the one the analysis
+            // recorded is what tells the candidate whether this number still describes the CV they have.
+            // It costs nothing extra — the second read is the authorization, not the staleness.
+            return Result<AnalysisView>.Success(AnalysisView.Of(analysis, resume));
         }
         catch (DomainException ex)
         {
-            return Result<Analysis>.Failure(ex.Message);
+            return Result<AnalysisView>.Failure(ex.Message);
         }
         catch (ArgumentException ex)
         {
-            return Result<Analysis>.Failure(ex.Message);
+            return Result<AnalysisView>.Failure(ex.Message);
         }
     }
 }

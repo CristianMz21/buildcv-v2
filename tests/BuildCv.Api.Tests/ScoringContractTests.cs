@@ -32,7 +32,7 @@ public class ScoringContractTests
             Advice(SectionType.Certifications, RecommendationPriority.Important,
                 RecommendationKind.FewerCertificationsThanExpected, "Add a certification.", 0.033));
 
-        var response = AnalysisResponse.From(analysis);
+        var response = AnalysisResponse.From(analysis, isStale: false);
 
         response.Recommendations.Select(r => r.Kind).Should().Equal(
             nameof(RecommendationKind.NoEducationRecorded),
@@ -54,7 +54,7 @@ public class ScoringContractTests
             Advice(SectionType.Skills, RecommendationPriority.Critical,
                 RecommendationKind.MissingMustHaveSkill, "A skill.", 0.20));
 
-        var response = AnalysisResponse.From(analysis);
+        var response = AnalysisResponse.From(analysis, isStale: false);
 
         response.Recommendations.Select(r => r.Message).Should().Equal("A skill.", "B skill.", "B project.");
     }
@@ -69,7 +69,7 @@ public class ScoringContractTests
                 RecommendationKind.MissingMustHaveSkill, "Add SQL.", 0.15));
 
         using var json = JsonDocument.Parse(
-            JsonSerializer.Serialize(AnalysisResponse.From(analysis), WebOptions));
+            JsonSerializer.Serialize(AnalysisResponse.From(analysis, isStale: false), WebOptions));
 
         var recommendation = json.RootElement.GetProperty("recommendations")[0];
         recommendation.GetProperty("section").GetString().Should().Be("Skills");
@@ -92,7 +92,7 @@ public class ScoringContractTests
                 RecommendationKind.MissingMustHaveSkill, "Add SQL.", 0.15));
 
         using var json = JsonDocument.Parse(
-            JsonSerializer.Serialize(AnalysisResponse.From(analysis), WebOptions));
+            JsonSerializer.Serialize(AnalysisResponse.From(analysis, isStale: false), WebOptions));
         var root = json.RootElement;
 
         root.GetProperty("band").GetString().Should().Be(analysis.Band.ToString(),
@@ -116,7 +116,7 @@ public class ScoringContractTests
                 RecommendationKind.LanguageMissing, "Add English.", 0.10));
 
         using var json = JsonDocument.Parse(
-            JsonSerializer.Serialize(AnalysisResponse.From(analysis), WebOptions));
+            JsonSerializer.Serialize(AnalysisResponse.From(analysis, isStale: false), WebOptions));
 
         var sections = json.RootElement.GetProperty("breakdown").GetProperty("sections");
         sections.EnumerateArray().Select(s => s.GetProperty("section").GetString()).Should().Equal(
@@ -127,19 +127,24 @@ public class ScoringContractTests
     }
 
     // The full property list, in order, at both levels. A field silently disappearing is the failure a
-    // per-field assertion cannot see, and reproducing the old response verbatim is this PR's claim.
+    // per-field assertion cannot see; a field silently APPEARING is the other half, and this assertion is
+    // what made adding `isStale` a decision rather than an accident.
+    //
+    // `isStale` is last on purpose. It is not part of the stored analysis — it is a comparison against the
+    // resume as it stands right now — so appending it keeps the fields that describe the row together and
+    // leaves the pre-existing order untouched.
     [Fact]
-    public void Serialized_CarriesExactlyTheFieldsTheEndpointAlreadyShipped()
+    public void Serialized_CarriesExactlyTheDocumentedFields()
     {
         var analysis = BuildAnalysis();
 
         using var json = JsonDocument.Parse(
-            JsonSerializer.Serialize(AnalysisResponse.From(analysis), WebOptions));
+            JsonSerializer.Serialize(AnalysisResponse.From(analysis, isStale: false), WebOptions));
         var root = json.RootElement;
 
         NamesOf(root).Should().Equal(
             "id", "breakdown", "resumeId", "jobPostingId", "scoredAt", "recommendations",
-            "overallScore", "band");
+            "overallScore", "band", "isStale");
 
         NamesOf(root.GetProperty("breakdown")).Should().Equal(
             "skillsScore", "experienceScore", "educationScore", "certificationsScore", "projectsScore",
@@ -151,6 +156,20 @@ public class ScoringContractTests
 
         NamesOf(root.GetProperty("breakdown").GetProperty("sections")[0]).Should().Equal(
             "section", "score", "weight");
+    }
+
+    // The flag is passed straight through, both ways round. It is not derived here and must not be:
+    // deciding staleness needs the CURRENT resume, which this DTO never sees, so a mapper that computed
+    // anything of its own would be computing it from the wrong inputs.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Serialized_CarriesTheStalenessItWasGiven(bool isStale)
+    {
+        using var json = JsonDocument.Parse(
+            JsonSerializer.Serialize(AnalysisResponse.From(BuildAnalysis(), isStale), WebOptions));
+
+        json.RootElement.GetProperty("isStale").GetBoolean().Should().Be(isStale);
     }
 
     private static IEnumerable<string> NamesOf(JsonElement element) =>

@@ -292,7 +292,7 @@ public static class ResumeEndpoints
         group.MapGet("/{id:guid}/analyses", async (
             Guid id,
             HttpContext httpContext,
-            IQueryHandler<GetAnalysisHistoryQuery, Result<Page<Analysis>>> handler,
+            IQueryHandler<GetAnalysisHistoryQuery, Result<Page<AnalysisView>>> handler,
             CancellationToken cancellationToken,
             int? limit,
             string? cursor) =>
@@ -305,7 +305,7 @@ public static class ResumeEndpoints
             // recommendations included and in the same order — which is what makes "did my edit help"
             // a comparison a client can just do.
             return result.ToHttpResult(page => Results.Ok(new PagedResponse<AnalysisResponse>(
-                [.. page.Items.Select(AnalysisResponse.From)], page.NextCursor)));
+                [.. page.Items.Select(view => AnalysisResponse.From(view.Analysis, view.IsStale))], page.NextCursor)));
         })
         .WithSummary("Returns this resume's score history, OLDEST FIRST, keyset paginated.")
         .WithDescription(

@@ -281,6 +281,50 @@ public sealed class AnalysisReadTests
             .Items.Should().HaveCount(2);
     }
 
+    // STALENESS ON THE WIRE, over the whole loop the product is: score, read it back, edit the CV, read
+    // it back again.
+    //
+    // The same analysis id is read three times and the row never changes — only the resume beside it
+    // does — which is what makes this an assertion about a value computed at read time rather than one
+    // stored on the score. A persisted flag would answer `false` on the third read.
+    //
+    // The history is checked in the same request budget, because it is where the flag earns its keep: an
+    // older entry is stale and the run taken against the current CV is not, so a client can render the
+    // list without comparing anything itself.
+    [Fact]
+    public async Task GetAnalysis_AfterTheResumeIsEdited_ReportsTheStoredScoreAsStale()
+    {
+        using var factory = new ApiTestFactory();
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        var (candidateToken, _, resumeId, jobId) = await ArrangeScorableAsync(client);
+
+        var scored = await ScoringEndpointTests.ScoreAsync(client, candidateToken, resumeId, jobId);
+        scored.StatusCode.Should().Be(HttpStatusCode.OK);
+        var analysisId = IdOf(await scored.Content.ReadAsStringAsync());
+
+        (await IsStaleAsync(client, candidateToken, analysisId)).Should().BeFalse(
+            "nothing has changed since the score was taken");
+
+        await AddSkillAsync(client, candidateToken, resumeId, "Terraform");
+
+        (await IsStaleAsync(client, candidateToken, analysisId)).Should().BeTrue(
+            "the score now describes a CV the candidate no longer has");
+
+        var rescored = await ScoringEndpointTests.ScoreAsync(client, candidateToken, resumeId, jobId);
+        rescored.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"/v1/resumes/{resumeId}/analyses")
+            .WithBearer(candidateToken);
+        var history = await client.SendAsync(request);
+        history.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        using var json = JsonDocument.Parse(await history.Content.ReadAsStringAsync());
+        json.RootElement.GetProperty("items").EnumerateArray()
+            .Select(entry => entry.GetProperty("isStale").GetBoolean())
+            .Should().Equal(new[] { true, false },
+                "the history is oldest first, so the run that predates the edit is the stale one");
+    }
+
     // Each entry is the same shape /scoring/score answered with, which is what makes "did my edit help"
     // a comparison the client can just do rather than a mapping exercise.
     [Fact]
@@ -385,6 +429,15 @@ public sealed class AnalysisReadTests
 
         var response = await client.SendAsync(request);
         response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    private static async Task<bool> IsStaleAsync(HttpClient client, string token, Guid analysisId)
+    {
+        var response = await GetAnalysisAsync(client, token, analysisId);
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        return json.RootElement.GetProperty("isStale").GetBoolean();
     }
 
     private static async Task<string?> DetailOf(HttpResponseMessage response)

@@ -17,7 +17,7 @@ public sealed record GetAnalysisHistoryQuery(
     ResumeId ResumeId,
     int? Limit = null,
     string? Cursor = null)
-    : IQuery<Result<Page<Analysis>>>;
+    : IQuery<Result<Page<AnalysisView>>>;
 
 // Every score this resume has ever been given, OLDEST FIRST. That direction is the single exception to
 // this repo's newest-first convention and it is not a detail: a history is read forwards — the first run,
@@ -26,9 +26,9 @@ public sealed record GetAnalysisHistoryQuery(
 public sealed class GetAnalysisHistoryHandler(
     IResumeRepository resumeRepository,
     IAnalysisRepository analysisRepository)
-    : IQueryHandler<GetAnalysisHistoryQuery, Result<Page<Analysis>>>
+    : IQueryHandler<GetAnalysisHistoryQuery, Result<Page<AnalysisView>>>
 {
-    public async Task<Result<Page<Analysis>>> Handle(
+    public async Task<Result<Page<AnalysisView>>> Handle(
         GetAnalysisHistoryQuery query, CancellationToken cancellationToken = default)
     {
         try
@@ -40,26 +40,33 @@ public sealed class GetAnalysisHistoryHandler(
             // caller does not own.
             var resume = await resumeRepository.GetByIdAsync(query.ResumeId, cancellationToken);
             if (resume is null)
-                return Result<Page<Analysis>>.Failure("Resume not found.");
+                return Result<Page<AnalysisView>>.Failure("Resume not found.");
 
             if (resume.OwnerId != query.RequesterId)
-                return Result<Page<Analysis>>.Failure("Forbidden.");
+                return Result<Page<AnalysisView>>.Failure("Forbidden.");
 
             var page = PageRequest.Create(query.Limit, query.Cursor);
             if (!page.IsSuccess)
-                return Result<Page<Analysis>>.Failure(page.Error!);
+                return Result<Page<AnalysisView>>.Failure(page.Error!);
 
             var history = await analysisRepository.GetPageByResumeIdAsync(
                 query.ResumeId, page.Value!, cancellationToken);
-            return Result<Page<Analysis>>.Success(history);
+
+            // Every entry is compared against the SAME resume — the one just loaded — so a history page
+            // reads as a single sweep: the older entries are stale, and the run that matches the CV as it
+            // stands now is not. The page's own cursor is carried through untouched; nothing here may
+            // re-shape a page, because Page<T>.From is the only copy of that arithmetic.
+            return Result<Page<AnalysisView>>.Success(new Page<AnalysisView>(
+                [.. history.Items.Select(analysis => AnalysisView.Of(analysis, resume))],
+                history.NextCursor));
         }
         catch (DomainException ex)
         {
-            return Result<Page<Analysis>>.Failure(ex.Message);
+            return Result<Page<AnalysisView>>.Failure(ex.Message);
         }
         catch (ArgumentException ex)
         {
-            return Result<Page<Analysis>>.Failure(ex.Message);
+            return Result<Page<AnalysisView>>.Failure(ex.Message);
         }
     }
 }
