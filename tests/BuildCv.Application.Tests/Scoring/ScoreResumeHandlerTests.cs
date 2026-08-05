@@ -307,6 +307,173 @@ public class ScoreResumeHandlerTests
             "an analysis must be stamped with the day it was actually scored against");
     }
 
+    // DE-DUPLICATION. Four tests below, one per term of the key, because a test that only re-posts and
+    // checks the response cannot see the difference: a reused analysis and a freshly written duplicate
+    // answer with the same numbers. FakeAnalysisRepository.WriteCount is the assertion that can.
+    [Fact]
+    public async Task Score_twice_with_nothing_changed_writes_one_row_and_returns_the_stored_one()
+    {
+        var ownerId = AccountId.New();
+        var (resume, jobPosting) = await ArrangeScorableAsync(ownerId);
+        var command = new ScoreResumeCommand(ownerId, resume.Id, jobPosting.Id);
+
+        var first = await _handler.Handle(command);
+        var second = await _handler.Handle(command);
+
+        first.IsSuccess.Should().BeTrue();
+        second.IsSuccess.Should().BeTrue();
+        _analyses.WriteCount.Should().Be(1, "the second run is the same score, not a second scoring event");
+        second.Value!.Id.Should().Be(first.Value!.Id, "and the caller is handed the row that already exists");
+        (await _analyses.GetPageByResumeIdAsync(resume.Id, PageRequests.Of())).Items
+            .Should().ContainSingle("a history of button presses is not a history");
+    }
+
+    // TERM 1 — the resume version. Adding a skill calls Touch(), which moves Resume.UpdatedAt.
+    [Fact]
+    public async Task Score_after_the_resume_changed_writes_a_second_row()
+    {
+        var ownerId = AccountId.New();
+        var (resume, jobPosting) = await ArrangeScorableAsync(ownerId);
+        var command = new ScoreResumeCommand(ownerId, resume.Id, jobPosting.Id);
+
+        var first = await _handler.Handle(command);
+        var before = resume.UpdatedAt;
+        resume.AddSkill(Skill.Create(Technology.Create("SQL")));
+        resume.UpdatedAt.Should().NotBe(before, "or this test would prove nothing about the resume term");
+
+        var second = await _handler.Handle(command);
+
+        _analyses.WriteCount.Should().Be(2, "the score now describes a different CV");
+        second.Value!.Id.Should().NotBe(first.Value!.Id);
+    }
+
+    // TERM 2 — the posting version. A recruiter adding a requirement changes the skills score of every
+    // candidate already scored against it, so their stored score no longer describes this posting.
+    [Fact]
+    public async Task Score_after_the_job_posting_changed_writes_a_second_row()
+    {
+        var ownerId = AccountId.New();
+        var (resume, jobPosting) = await ArrangeScorableAsync(ownerId);
+        var command = new ScoreResumeCommand(ownerId, resume.Id, jobPosting.Id);
+
+        var first = await _handler.Handle(command);
+        var before = jobPosting.UpdatedAt;
+        jobPosting.AddRequirement(JobRequirement.Create(
+            Technology.Create("Kubernetes"), RequirementPriority.NiceToHave));
+        jobPosting.UpdatedAt.Should().NotBe(before, "or this test would prove nothing about the posting term");
+
+        var second = await _handler.Handle(command);
+
+        _analyses.WriteCount.Should().Be(2, "the score now describes a different posting");
+        second.Value!.Id.Should().NotBe(first.Value!.Id);
+    }
+
+    // TERM 4 — THE DATE, and it is the term that looks droppable and is not.
+    //
+    // Scoring is deterministic given (resume, posting, weights, REFERENCE DATE) and not given
+    // (resume, posting): referenceDate feeds ProfessionalDays, UnmarkedExperienceDays and
+    // ValidCertificateCount, so this candidate's professional experience is one day longer tomorrow and a
+    // certificate can expire overnight. A key without the date would pin a candidate's score to the first
+    // day they ever ran it and never move again.
+    //
+    // The clock is advanced by exactly one day rather than to a chosen hour, so the date changes whatever
+    // instant the fixture seeded — a fixed target time would only cross midnight for some seeds.
+    [Fact]
+    public async Task Score_on_the_next_day_writes_a_second_row()
+    {
+        var ownerId = AccountId.New();
+        var (resume, jobPosting) = await ArrangeScorableAsync(ownerId);
+        var command = new ScoreResumeCommand(ownerId, resume.Id, jobPosting.Id);
+
+        var first = await _handler.Handle(command);
+        var firstDay = DateOnly.FromDateTime(first.Value!.ScoredAt.UtcDateTime);
+
+        _time.Advance(TimeSpan.FromDays(1));
+        var second = await _handler.Handle(command);
+
+        DateOnly.FromDateTime(second.Value!.ScoredAt.UtcDateTime).Should().NotBe(firstDay,
+            "or the clock did not actually cross a day boundary and the rest asserts nothing");
+        _analyses.WriteCount.Should().Be(2, "the same CV against the same posting scores differently today");
+        second.Value.Id.Should().NotBe(first.Value.Id);
+    }
+
+    // TERM 3 — the scoring model. The stored row matches on every other term; only its SchemaVersion is
+    // behind, which is what a lexicon revision or a changed cap looks like from here. Nothing in the
+    // shipped API can produce such a row, so it is seeded directly — the alternative is bumping
+    // CurrentSchemaVersion in a test, which would restamp every other assertion in the suite.
+    [Fact]
+    public async Task Score_when_the_stored_analysis_predates_the_current_model_writes_a_second_row()
+    {
+        var ownerId = AccountId.New();
+        var (resume, jobPosting) = await ArrangeScorableAsync(ownerId);
+
+        var stale = StoredAnalysis(
+            resume, jobPosting, _time.GetUtcNow(),
+            resume.UpdatedAt, jobPosting.UpdatedAt,
+            ScoringWeightsSnapshot.CurrentSchemaVersion - 1);
+        await _analyses.AddAsync(stale);
+
+        var result = await _handler.Handle(new ScoreResumeCommand(ownerId, resume.Id, jobPosting.Id));
+
+        _analyses.WriteCount.Should().Be(2, "a score explained by a retired model is not this score");
+        result.Value!.Id.Should().NotBe(stale.Id);
+        result.Value.Breakdown.Weights.SchemaVersion.Should().Be(ScoringWeightsSnapshot.CurrentSchemaVersion);
+    }
+
+    // THE HISTORICAL ROW. Both provenance columns are null — what every analysis written before those
+    // columns existed reads back as — and null means UNKNOWN, never "unchanged". Reusing it would tell a
+    // candidate a score taken against a CV nobody can identify is current.
+    [Fact]
+    public async Task Score_when_the_stored_analysis_has_unknown_provenance_writes_a_second_row()
+    {
+        var ownerId = AccountId.New();
+        var (resume, jobPosting) = await ArrangeScorableAsync(ownerId);
+
+        var historical = StoredAnalysis(
+            resume, jobPosting, _time.GetUtcNow(),
+            resumeUpdatedAt: null, jobPostingUpdatedAt: null,
+            ScoringWeightsSnapshot.CurrentSchemaVersion);
+        await _analyses.AddAsync(historical);
+
+        var result = await _handler.Handle(new ScoreResumeCommand(ownerId, resume.Id, jobPosting.Id));
+
+        _analyses.WriteCount.Should().Be(2, "unknown provenance is stale, not fresh");
+        result.Value!.Id.Should().NotBe(historical.Id);
+    }
+
+    private async Task<(Resume Resume, JobPosting JobPosting)> ArrangeScorableAsync(AccountId ownerId)
+    {
+        var resume = BuildResume(ownerId, "C#");
+        AddProfessionalExperience(resume, DateOnly.FromDateTime(DateTime.UtcNow).AddYears(-6));
+        await _resumes.AddAsync(resume);
+
+        var jobPosting = BuildJobPosting(AccountId.New(), "C#");
+        await _jobPostings.AddAsync(jobPosting);
+
+        return (resume, jobPosting);
+    }
+
+    // A row already in the store, built to match the de-duplication key on every term except the one the
+    // caller varies. The breakdown's values are irrelevant — nothing compares them — so they are constant.
+    private static Analysis StoredAnalysis(
+        Resume resume,
+        JobPosting jobPosting,
+        DateTimeOffset scoredAt,
+        DateTimeOffset? resumeUpdatedAt,
+        DateTimeOffset? jobPostingUpdatedAt,
+        int schemaVersion) =>
+        Analysis.Create(
+            AnalysisId.New(),
+            ScoreBreakdown.Create(
+                0.5, 0.5, 0.5, 0.5, 0.5, 0.5,
+                ScoringWeightsSnapshot.Create(0.45, 0.20, 0.10, 0.10, 0.05, 0.10, schemaVersion)),
+            resume.Id,
+            jobPosting.Id,
+            scoredAt,
+            recommendations: null,
+            resumeUpdatedAt,
+            jobPostingUpdatedAt);
+
     // 404 before 403: a posting that does not exist is reported as missing rather than as forbidden,
     // matching GetJobPostingHandler so the two endpoints leak the same bit of existence information
     // rather than disagreeing about it.

@@ -224,6 +224,38 @@ public class InMemoryRepositoryTests
         found.Items.Should().ContainSingle().Which.Should().Be(matching);
     }
 
+    // The de-duplication lookup, on the store the whole Api suite runs against. It must answer the row
+    // ScoreResumeHandler would compare against — the NEWEST for that exact pair — so all three cases that
+    // could wrongly match are present: an older row for the same pair, a row for the same resume against
+    // a different posting, and a row for a different resume against the same posting.
+    //
+    // "Newest" is by insertion, matching AnalysisRepository's ordering on Seq, so every ScoredAt here is
+    // deliberately the SAME instant: ordering on ScoredAt would be free to return either row and this
+    // test would pass or fail by chance.
+    [Fact]
+    public async Task Analysis_get_latest_by_pair_returns_the_newest_row_for_that_pair_only()
+    {
+        var repository = new InMemoryAnalysisRepository();
+        var resumeId = ResumeId.New();
+        var jobPostingId = new JobPostingId(Guid.NewGuid());
+        var scoredAt = DateTimeOffset.UtcNow;
+        var breakdown = ScoreBreakdown.Create(0.5, 0.5, 0.5, 0.5, 0.5, 0.5, ScoringWeightsSnapshot.Default());
+
+        var older = Analysis.Create(AnalysisId.New(), breakdown, resumeId, jobPostingId, scoredAt);
+        var newer = Analysis.Create(AnalysisId.New(), breakdown, resumeId, jobPostingId, scoredAt);
+        var otherPosting = Analysis.Create(AnalysisId.New(), breakdown, resumeId, JobPostingId.New(), scoredAt);
+        var otherResume = Analysis.Create(AnalysisId.New(), breakdown, ResumeId.New(), jobPostingId, scoredAt);
+
+        await repository.AddAsync(older);
+        await repository.AddAsync(otherPosting);
+        await repository.AddAsync(otherResume);
+        await repository.AddAsync(newer);
+
+        (await repository.GetLatestByPairAsync(resumeId, jobPostingId)).Should().Be(newer);
+        (await repository.GetLatestByPairAsync(ResumeId.New(), jobPostingId)).Should().BeNull(
+            "a pair that was never scored has no latest row");
+    }
+
     // The parity that makes every Api test meaningful. Api tests run against this store, so if it
     // answers the list ports in dictionary order — or hands out a cursor that skips a row — those tests
     // certify page behavior SQL Server has never produced. Same walk as

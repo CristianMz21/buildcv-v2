@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using BuildCv.Application.Common.Pagination;
 using BuildCv.Application.Common.Repositories;
+using BuildCv.Domain.Jobs;
 using BuildCv.Domain.Resumes;
 using BuildCv.Domain.Scoring;
 
@@ -41,6 +42,21 @@ public sealed class InMemoryAnalysisRepository : IAnalysisRepository
         cancellationToken.ThrowIfCancellationRequested();
         _analyses.TryGetValue(id.Value, out var row);
         return Task.FromResult(row?.Item);
+    }
+
+    // Newest first by the insertion counter, matching AnalysisRepository's ordering on Seq. Ordering on
+    // ScoredAt instead would diverge from SQL Server exactly when two rows share an instant, and the Api
+    // suite runs on this store — a divergence here certifies behaviour production does not have.
+    public Task<Analysis?> GetLatestByPairAsync(
+        ResumeId resumeId, JobPostingId jobPostingId, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(_analyses.Values
+            .Where(row => row.Item.ResumeId.Value == resumeId.Value
+                && row.Item.JobPostingId.Value == jobPostingId.Value)
+            .OrderByDescending(row => row.Position)
+            .Select(row => row.Item)
+            .FirstOrDefault());
     }
 
     public Task<Page<Analysis>> GetPageByResumeIdAsync(

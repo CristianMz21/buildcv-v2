@@ -236,6 +236,81 @@ public sealed class AnalysisRepositoryTests
             .Breakdown.Should().Be(analysis.Breakdown, "the history is tombstoned for audit, not destroyed");
     }
 
+    // THE DE-DUPLICATION LOOKUP against a real database, which is the half the in-memory parity test
+    // cannot speak for: this is the one that proves `OrderByDescending(EF.Property<long>(…, Seq))`
+    // translates instead of silently pulling the pair's whole history into memory and sorting it there.
+    //
+    // Every row carries the SAME ScoredAt on purpose. "Newest" is defined by the insertion sequence, not
+    // by the caller-supplied instant, so an implementation that ordered on ScoredAt would be free to
+    // return either row — and would pass this test half the time if the instants differed.
+    //
+    // The two decoys are the pairs that share one half of the key: same resume against another posting,
+    // another resume against this posting.
+    [Fact]
+    public async Task GetLatestByPairAsync_ReturnsTheNewestRowForThatPairOnly()
+    {
+        var resumeId = ResumeId.New();
+        var jobPostingId = JobPostingId.New();
+        var scoredAt = DateTimeOffset.UtcNow;
+
+        var older = NewAnalysis(resumeId, 0.4, scoredAt, jobPostingId);
+        var newer = NewAnalysis(resumeId, 0.7, scoredAt, jobPostingId);
+
+        await using (var writer = _fixture.NewApplicationContext())
+        {
+            var repository = TestRepositories.Analyses(writer);
+            await repository.AddAsync(older);
+            await repository.AddAsync(NewAnalysis(resumeId, 0.1, scoredAt));
+            await repository.AddAsync(NewAnalysis(ResumeId.New(), 0.2, scoredAt, jobPostingId));
+            await repository.AddAsync(newer);
+        }
+
+        await using var reader = _fixture.NewApplicationContext();
+        var found = await TestRepositories.Analyses(reader).GetLatestByPairAsync(resumeId, jobPostingId);
+
+        found.Should().NotBeNull();
+        found!.Id.Should().Be(newer.Id);
+
+        // The recommendations come with it. ScoreResumeHandler hands this row straight back to the
+        // caller, so a lookup that loaded the principal without its owned collection would answer a
+        // re-score with advice the first run had and the second silently lost.
+        found.Recommendations.Should().HaveCount(newer.Recommendations.Count);
+    }
+
+    [Fact]
+    public async Task GetLatestByPairAsync_ForAPairThatWasNeverScored_ReturnsNull()
+    {
+        await using var reader = _fixture.NewApplicationContext();
+
+        (await TestRepositories.Analyses(reader).GetLatestByPairAsync(ResumeId.New(), JobPostingId.New()))
+            .Should().BeNull();
+    }
+
+    // The soft-delete filter is on this path too. Without it a re-score after "delete my resume" could be
+    // answered from a tombstoned row — a score the candidate was promised had disappeared.
+    [Fact]
+    public async Task GetLatestByPairAsync_AfterTheResumeItScoredWasDeleted_ReturnsNull()
+    {
+        var resume = Resume.Create(AccountId.New(), new ContactInformation(
+            PersonName.Create("Test Person"), Email.Create($"latest.{Guid.NewGuid():N}@example.com")));
+        var jobPostingId = JobPostingId.New();
+        var analysis = NewAnalysis(resume.Id, 0.6, DateTimeOffset.UtcNow, jobPostingId);
+
+        await using (var writer = _fixture.NewApplicationContext())
+        {
+            await TestRepositories.Resumes(writer).AddAsync(resume);
+            await TestRepositories.Analyses(writer).AddAsync(analysis);
+        }
+
+        await using (var deleter = _fixture.NewApplicationContext())
+            await TestRepositories.Resumes(deleter).DeleteAsync(resume.Id);
+
+        await using var reader = _fixture.NewApplicationContext();
+
+        (await TestRepositories.Analyses(reader).GetLatestByPairAsync(resume.Id, jobPostingId))
+            .Should().BeNull("a tombstoned score must not be handed back to a re-score");
+    }
+
     [Fact]
     public async Task GetPageByResumeIdAsync_ForAResumeThatWasNeverScored_IsAnEmptyFinalPage()
     {
@@ -247,12 +322,13 @@ public sealed class AnalysisRepositoryTests
         page.NextCursor.Should().BeNull();
     }
 
-    private static Analysis NewAnalysis(ResumeId resumeId, double skills, DateTimeOffset? scoredAt = null) =>
+    private static Analysis NewAnalysis(
+        ResumeId resumeId, double skills, DateTimeOffset? scoredAt = null, JobPostingId? jobPostingId = null) =>
         Analysis.Create(
             AnalysisId.New(),
             ScoreBreakdown.Create(skills, 0.8, 0.7, 0.6, 0.5, 0.4, ScoringWeightsSnapshot.Default()),
             resumeId,
-            JobPostingId.New(),
+            jobPostingId ?? JobPostingId.New(),
             scoredAt ?? DateTimeOffset.UtcNow,
             [
                 Recommendation.Create(
