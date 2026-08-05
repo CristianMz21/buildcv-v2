@@ -55,7 +55,21 @@ public sealed class ScoreResumeHandler(
             if (jobPosting.Status != JobPostingStatus.Published && jobPosting.OwnerId != command.RequesterId)
                 return Result<Analysis>.Failure("Forbidden.");
 
-            var referenceDate = DateOnly.FromDateTime(timeProvider.GetUtcNow().DateTime);
+            // ONE clock read for the whole run, and both the date scored against and the date stamped on
+            // the row are derived from it.
+            //
+            // Two reads is what this was, and it is a bug rather than a style point: referenceDate feeds
+            // ProfessionalDays, UnmarkedExperienceDays and ValidCertificateCount (see ScoringRules), so a
+            // request that straddles midnight scored against yesterday and stamped ScoredAt with today.
+            // The row then contradicts itself -- it says it was taken on a day it was not taken against --
+            // and every predicate that reads the two together inherits the inconsistency.
+            //
+            // UtcDateTime, not DateTime: TimeProvider.GetUtcNow() is contractually UTC, so the two agree
+            // for every provider that honours it, and UtcDateTime is the one that stays correct for a test
+            // double that does not.
+            var now = timeProvider.GetUtcNow();
+            var referenceDate = DateOnly.FromDateTime(now.UtcDateTime);
+
             var score = scoringEngine.Score(resume, jobPosting, referenceDate);
 
             // The recommendations are persisted alongside the breakdown they were derived from. They
@@ -67,7 +81,7 @@ public sealed class ScoreResumeHandler(
                 score.Breakdown,
                 resume.Id,
                 jobPosting.Id,
-                timeProvider.GetUtcNow(),
+                now,
                 score.Recommendations);
             await analysisRepository.AddAsync(analysis, cancellationToken);
 

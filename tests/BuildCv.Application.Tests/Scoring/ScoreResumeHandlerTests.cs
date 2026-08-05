@@ -267,6 +267,46 @@ public class ScoreResumeHandlerTests
         result.Error.Should().Be("Forbidden.");
     }
 
+    // ONE CLOCK SNAPSHOT PER RUN, and the two reads it replaced were a real bug rather than a style
+    // point. referenceDate feeds ProfessionalDays, UnmarkedExperienceDays and ValidCertificateCount, so a
+    // request straddling midnight scored against one day and stamped ScoredAt with the next: the row said
+    // it was taken on a day it was not taken against, and everything reading the two together inherited
+    // that.
+    //
+    // The clock starts 100ms before midnight and moves 200ms per read, so read one falls on 2026-08-04
+    // and read two on 2026-08-05. That is what makes a second GetUtcNow() observable as a DATE
+    // difference; two reads a millisecond apart mid-afternoon would agree by luck and prove nothing.
+    //
+    // The referenceDate is read off the ENGINE rather than re-derived from the clock. Re-deriving it here
+    // would repeat the handler's own arithmetic and agree with it whatever it did; the recorder reports
+    // the value the engine was really handed.
+    [Fact]
+    public async Task Score_across_midnight_stamps_the_analysis_with_the_day_it_scored_against()
+    {
+        var clock = new AdvancingTimeProvider(
+            new DateTimeOffset(2026, 8, 4, 23, 59, 59, 900, TimeSpan.Zero),
+            TimeSpan.FromMilliseconds(200));
+        var engine = new RecordingScoringEngine(new ScoringEngine());
+        var handler = new ScoreResumeHandler(_resumes, _jobPostings, _analyses, engine, clock);
+
+        var ownerId = AccountId.New();
+        var resume = BuildResume(ownerId, "C#");
+        AddProfessionalExperience(resume, new DateOnly(2020, 1, 1));
+        await _resumes.AddAsync(resume);
+        var jobPosting = BuildJobPosting(AccountId.New(), "C#");
+        await _jobPostings.AddAsync(jobPosting);
+
+        var result = await handler.Handle(new ScoreResumeCommand(ownerId, resume.Id, jobPosting.Id));
+
+        result.IsSuccess.Should().BeTrue();
+        clock.ReadCount.Should().Be(1, "one scoring run takes one snapshot of the clock");
+
+        var referenceDate = engine.ReferenceDates.Should().ContainSingle().Subject;
+        referenceDate.Should().Be(new DateOnly(2026, 8, 4), "the first read is still yesterday");
+        DateOnly.FromDateTime(result.Value!.ScoredAt.UtcDateTime).Should().Be(referenceDate,
+            "an analysis must be stamped with the day it was actually scored against");
+    }
+
     // 404 before 403: a posting that does not exist is reported as missing rather than as forbidden,
     // matching GetJobPostingHandler so the two endpoints leak the same bit of existence information
     // rather than disagreeing about it.
