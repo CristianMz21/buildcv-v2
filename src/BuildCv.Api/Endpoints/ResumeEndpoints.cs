@@ -315,7 +315,12 @@ public static class ResumeEndpoints
             + "that entry was scored against — it neither helped nor hurt, and the remaining weights are "
             + "renormalized to still total 1.0. Two entries can both report `schemaVersion` 2 and still "
             + "have been scored under different weightings, because each posting asks about a different "
-            + "set of sections; compare `weights` before comparing `overallScore`.");
+            + "set of sections; compare `weights` before comparing `overallScore`. "
+            + "Entries are scoring EVENTS, not requests: re-scoring an unchanged resume against an "
+            + "unchanged posting on the same day returns the existing run and adds nothing here. "
+            + "`isStale` is computed per request against the resume as it stands now, so on any page at "
+            + "most the newest entries are false — and every entry is stale once the candidate edits "
+            + "again.");
 
         group.MapPut("/{id:guid}/contact", async (
             Guid id,

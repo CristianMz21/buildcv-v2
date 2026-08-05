@@ -33,8 +33,16 @@ public static class ScoringEndpoints
             // contract instead, and the ordering the aggregate deliberately does not guarantee.
             return result.ToHttpResult(view => Results.Ok(AnalysisResponse.From(view.Analysis, view.IsStale)));
         })
-        .WithSummary("Scores a resume against a job posting and stores the result.")
-        .WithDescription(ZeroWeightContract);
+        .WithSummary("Scores a resume against a job posting, reusing an identical run rather than repeating it.")
+        .WithDescription(
+            "DE-DUPLICATED. If this resume was already scored against this posting, and neither has been "
+            + "edited since, and the scoring model has not changed, and it was scored TODAY, the stored "
+            + "run is returned instead of a new one — same `id`, same `scoredAt`, and no new entry in "
+            + "`GET /v1/resumes/{id}/analyses`. So a repeated request is not a no-op and not an error: it "
+            + "is the same scoring event. The date is part of that test because a score genuinely moves "
+            + "with time — experience accrues and certificates expire — so tomorrow's identical request "
+            + "does produce a new run. `isStale` on the response is therefore always false here. "
+            + ZeroWeightContract);
 
         // Reading one score back. Same DTO as /scoring/score, deliberately: a second shape for the same
         // aggregate is how two contracts for one thing start, and a candidate comparing what they were
@@ -61,10 +69,24 @@ public static class ScoringEndpoints
             "An analysis has no owner of its own: it belongs to a resume, and that resume's owner is the "
             + "only account that may read it. Deleting the resume hides every score derived from it, so a "
             + "previously readable id then answers 404. "
+            + StalenessContract
             + ZeroWeightContract);
 
         return group;
     }
+
+    // Stated on the two endpoints that can actually answer `true`. POST /scoring/score cannot — the run it
+    // returns was either just computed from the current resume or reused precisely because the resume had
+    // not moved — so its own description says that instead, and repeating this there would invite a client
+    // to branch on a value that is constant.
+    private const string StalenessContract =
+        "`isStale` IS COMPUTED PER REQUEST AND NEVER STORED. It is true when the resume has been edited "
+        + "since this score was taken — the number describes a CV the candidate no longer has — and ALSO "
+        + "true when the analysis predates the columns that record what it scored and simply cannot say. "
+        + "Unknown is reported as stale rather than as current, deliberately: the cost of that answer is a "
+        + "re-score, while the opposite misleads. Only the RESUME side raises it; editing the job posting "
+        + "does not, so a client comparing two scores across a posting change must still read the weights. "
+        + "Re-posting to /v1/scoring/score is what clears it. ";
 
     // Stated on every endpoint that returns an AnalysisResponse, because this is the one field pairing a
     // client developer will otherwise read as a bug report from the candidate.
