@@ -5,9 +5,17 @@ public sealed record ScoringWeightsSnapshot
     // THE SCORING MODEL VERSION: which WEIGHTS **AND WHICH FORMULAS** produced a set of numbers — not
     // which shape they serialize in.
     //
-    // It is 2 because Languages now carries weight and is now computed: a score explained by these
-    // weights is NOT the score the five-section model produced for the same resume, and a row that
-    // could not say which model explained it would make every historical comparison a lie.
+    // IT IS 3 BECAUSE THE MATCHING RULE MOVED AND NO WEIGHT DID. ScoringRules.IsSatisfiedBy now consults
+    // a skill lexicon after whole-string equality fails, so a resume listing "React.js" satisfies a
+    // requirement for "React" that it did not satisfy under v2. Default() is untouched: a v2 and a v3
+    // analysis of the same pair can carry byte-identical weights and different totals, which is precisely
+    // the case a version that only ever meant "the weighting" could not describe.
+    //
+    // WHICH DIRECTION IT MOVES, because "not comparable" reads as "could be worse" and here it cannot be.
+    // The lexicon is consulted only AFTER the exact comparison fails, so the v2 expression is the first
+    // operand of the v3 one, unchanged: a lexicon entry turns a miss into a match and never the reverse.
+    // NO RESUME SCORES LOWER UNDER v3 THAN IT DID UNDER v2. Additive by construction, and executed over a
+    // vocabulary of aliases and near-collisions by EmptyLexiconEquivalenceTests.
     //
     // "WEIGHTING" WAS THE ORIGINAL WORDING AND IT WAS TOO NARROW. The formulas live in ScoringRules, in
     // another project, and nothing couples them to this number: commit 3508f35 replaced an unasked
@@ -16,9 +24,20 @@ public sealed record ScoringWeightsSnapshot
     // sides of that change are stamped v2 and were not scored by the same model, which is exactly the
     // comparison this number exists to keep honest.
     //
-    // THAT INCONSISTENCY IS RECORDED HERE, NOT REPAIRED HERE. Bumping to 3 would restamp every future
-    // score and reclassify every existing row as "some other model", which is a behavioural change and
-    // belongs to the release that earns it — the next engine change — rather than to a re-documentation.
+    // THIS BUMP STOPS THAT DRIFT; IT DOES NOT REPAIR IT. Every row already written is stamped v2 and stays
+    // stamped v2, so the pre-3508f35 and post-3508f35 rows remain indistinguishable from each other
+    // forever — nothing can tell them apart after the fact. What changes is that v3 means one model, and
+    // that the next engine change has a worked example to follow rather than a precedent to repeat.
+    //
+    // WHAT A DEPLOYMENT SEES, and it should be expected rather than debugged. ScoreResume's de-duplication
+    // key compares the stored SchemaVersion against this constant, so on the release that lands this every
+    // stored analysis stops being reusable and the next score of each pair writes a new row. One extra
+    // history entry per pair per candidate, once. Their scores go up or stay level; none goes down.
+    //
+    // AND A v2 ROW WILL REPORT isStale FALSE WHILE STILL BEING RE-SCORED, which looks contradictory and is
+    // not: Analysis.IsStaleFor answers "does this still describe the candidate's CV", and it reads the
+    // provenance timestamps alone. This constant answers a different question — "was this produced by the
+    // model running now". A row can honestly be current about the resume and stale about the model.
     //
     // THE BUMP RULE, stated for whoever changes the engine next: bump this when anything changes what a
     // given (resume, posting) would score. That is the weights in Default(); every constant and predicate
@@ -36,7 +55,9 @@ public sealed record ScoringWeightsSnapshot
     // means "same model or not" needs no matrix.
     //
     // THE ONE-WAY DOOR, stated precisely, because this sentence ends up in a deployment plan and both
-    // of its obvious phrasings are wrong.
+    // of its obvious phrasings are wrong. NOTE THAT v3 DOES NOT MOVE IT: this bump changes a number and
+    // no member, so a v3 payload has the shape a v2 payload has and every reader that could load one can
+    // load the other. The door below is about the Languages MEMBER, and it is where it always was.
     //
     // WHICH READER BREAKS: one built before the Languages MEMBER existed — i.e. before PR 1, not merely
     // before v2. A PR 2 build already has the six-member type, deserializes a v2 payload without
@@ -72,7 +93,7 @@ public sealed record ScoringWeightsSnapshot
     // scoring.Recommendations table and Analyses.LanguagesScore, which is irrecoverable data loss on
     // every row rather than a parse failure a reader can be rebuilt around. That migration is
     // forward-only in practice; the reasoning is stated on its Down().
-    public const int CurrentSchemaVersion = 2;
+    public const int CurrentSchemaVersion = 3;
 
     public double Skills { get; }
     public double Experience { get; }

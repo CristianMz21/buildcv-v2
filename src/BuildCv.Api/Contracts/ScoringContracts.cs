@@ -79,6 +79,14 @@ public sealed record ScoreResumeRequest(Guid ResumeId, Guid JobPostingId);
 /// <see cref="OverallScore"/> values across postings, and treat a different version as "not
 /// comparable at all" rather than as a difference to explain.
 /// </para>
+/// <para>
+/// <b>The current version is 3.</b> A <c>2</c> in an existing history entry was scored before skill
+/// matching recognised alternative spellings of one skill — <c>"React.js"</c> did not satisfy a
+/// requirement for <c>"React"</c> — so its <c>skillsScore</c> may be lower than the same CV and the same
+/// posting would produce today, and its recommendations may name a skill the candidate had all along. Do
+/// not chart a v2 entry against a v3 one. Re-scoring the pair produces a v3 entry; nothing rewrites the
+/// old one, because a history that edits itself cannot answer "did my change help".
+/// </para>
 /// </remarks>
 public sealed record AnalysisResponse(
     Guid Id,

@@ -8,6 +8,7 @@
 #
 # CHANGING THIS FILE IS A SCORING MODEL CHANGE. Bump ScoringWeightsSnapshot.CurrentSchemaVersion in the
 # same commit, so two analyses reporting one version cannot have been scored under two lexicons.
+# SkillLexiconModelVersionTests fails until both are done and names which half is missing.
 #
 # ---------------------------------------------------------------------------------------------------
 # FORMAT
