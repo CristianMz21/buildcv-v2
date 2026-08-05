@@ -126,6 +126,34 @@ public sealed record ImportResumeRequest(
         ProjectedList.OrNull(Publications, item => item?.ToDraft()),
         ProjectedList.OrNull(Interests, item => item?.ToDraft()),
         ProjectedList.OrNull(References, item => item?.ToDraft()));
+
+    // The OTHER direction: a parsed draft mapped INTO this wire shape so the propose response hands the
+    // review screen exactly what it will post back to POST /resumes/import after the candidate corrects
+    // it. Confidence is NOT here — it travels in a separate structure and never crosses back.
+    public static ImportResumeRequest FromDraft(ResumeDraft draft) => new(
+        draft.Contact is null ? null : ImportContactRequest.FromDraft(draft.Contact),
+        DraftMapping.Map(draft.Experiences, ImportExperienceRequest.FromDraft),
+        DraftMapping.Map(draft.Educations, ImportEducationRequest.FromDraft),
+        DraftMapping.Map(draft.Skills, ImportSkillRequest.FromDraft),
+        DraftMapping.Map(draft.Projects, ImportProjectRequest.FromDraft),
+        DraftMapping.Map(draft.Certificates, ImportCertificateRequest.FromDraft),
+        DraftMapping.Map(draft.Languages, ImportLanguageRequest.FromDraft),
+        DraftMapping.Map(draft.Awards, ImportAwardRequest.FromDraft),
+        DraftMapping.Map(draft.Publications, ImportPublicationRequest.FromDraft),
+        DraftMapping.Map(draft.Interests, ImportInterestRequest.FromDraft),
+        DraftMapping.Map(draft.References, ImportReferenceRequest.FromDraft));
+}
+
+// Maps a draft collection into its wire-contract collection, preserving null elements (a hostile null
+// element survives the round trip and is reported at its index by ResumeDraftValidator on submit, exactly
+// as it is on the request path).
+internal static class DraftMapping
+{
+    public static IReadOnlyList<TRequest?>? Map<TDraft, TRequest>(
+        IReadOnlyList<TDraft?>? items, Func<TDraft, TRequest> map)
+        where TDraft : class
+        where TRequest : class =>
+        items?.Select(item => item is null ? null : map(item)).ToList();
 }
 
 // Website and Profiles are reachable for the first time here. Both are mapped and encrypted by
@@ -143,6 +171,10 @@ public sealed record ImportContactRequest(
     public ContactDraft ToDraft() => new(
         FullName, Email, PhoneNumber, Location, Website, Summary,
         ProjectedList.OrNull(Profiles, item => item?.ToDraft()));
+
+    public static ImportContactRequest FromDraft(ContactDraft draft) => new(
+        draft.FullName, draft.Email, draft.PhoneNumber, draft.Location, draft.Website, draft.Summary,
+        DraftMapping.Map(draft.Profiles, ImportProfileRequest.FromDraft));
 }
 
 public sealed record ImportProfileRequest(
@@ -151,6 +183,9 @@ public sealed record ImportProfileRequest(
     string? Url = null)
 {
     public ProfileDraft ToDraft() => new(Network, Username, Url);
+
+    public static ImportProfileRequest FromDraft(ProfileDraft draft) =>
+        new(draft.Network, draft.Username, draft.Url);
 }
 
 public sealed record ImportExperienceRequest(
@@ -163,6 +198,9 @@ public sealed record ImportExperienceRequest(
     IReadOnlyList<string?>? Highlights = null)
 {
     public ExperienceDraft ToDraft() => new(Type, Organization, Position, Start, End, Summary, Highlights);
+
+    public static ImportExperienceRequest FromDraft(ExperienceDraft draft) => new(
+        draft.Type, draft.Organization, draft.Position, draft.Start, draft.End, draft.Summary, draft.Highlights);
 }
 
 public sealed record ImportEducationRequest(
@@ -175,6 +213,9 @@ public sealed record ImportEducationRequest(
     string? Level = null)
 {
     public EducationDraft ToDraft() => new(Institution, Degree, FieldOfStudy, Start, End, Grade, Level);
+
+    public static ImportEducationRequest FromDraft(EducationDraft draft) => new(
+        draft.Institution, draft.Degree, draft.FieldOfStudy, draft.Start, draft.End, draft.Grade, draft.Level);
 }
 
 public sealed record ImportSkillRequest(
@@ -183,6 +224,9 @@ public sealed record ImportSkillRequest(
     string? YearsOfExperience = null)
 {
     public SkillDraft ToDraft() => new(Name, Level, YearsOfExperience);
+
+    public static ImportSkillRequest FromDraft(SkillDraft draft) =>
+        new(draft.Name, draft.Level, draft.YearsOfExperience);
 }
 
 public sealed record ImportProjectRequest(
@@ -197,6 +241,10 @@ public sealed record ImportProjectRequest(
 {
     public ProjectDraft ToDraft() =>
         new(Name, Start, End, Description, RepositoryUrl, LiveDemoUrl, Technologies, Highlights);
+
+    public static ImportProjectRequest FromDraft(ProjectDraft draft) => new(
+        draft.Name, draft.Start, draft.End, draft.Description, draft.RepositoryUrl, draft.LiveDemoUrl,
+        draft.Technologies, draft.Highlights);
 }
 
 public sealed record ImportCertificateRequest(
@@ -208,6 +256,9 @@ public sealed record ImportCertificateRequest(
     string? ValidityEnd = null)
 {
     public CertificateDraft ToDraft() => new(Name, Issuer, CredentialId, CredentialUrl, ValidityStart, ValidityEnd);
+
+    public static ImportCertificateRequest FromDraft(CertificateDraft draft) => new(
+        draft.Name, draft.Issuer, draft.CredentialId, draft.CredentialUrl, draft.ValidityStart, draft.ValidityEnd);
 }
 
 public sealed record ImportLanguageRequest(
@@ -216,6 +267,9 @@ public sealed record ImportLanguageRequest(
     string? Level = null)
 {
     public LanguageDraft ToDraft() => new(Name, Fluency, Level);
+
+    public static ImportLanguageRequest FromDraft(LanguageDraft draft) =>
+        new(draft.Name, draft.Fluency, draft.Level);
 }
 
 public sealed record ImportAwardRequest(
@@ -225,6 +279,9 @@ public sealed record ImportAwardRequest(
     string? Summary = null)
 {
     public AwardDraft ToDraft() => new(Title, Awarder, Date, Summary);
+
+    public static ImportAwardRequest FromDraft(AwardDraft draft) =>
+        new(draft.Title, draft.Awarder, draft.Date, draft.Summary);
 }
 
 public sealed record ImportPublicationRequest(
@@ -235,6 +292,9 @@ public sealed record ImportPublicationRequest(
     string? Summary = null)
 {
     public PublicationDraft ToDraft() => new(Title, Publisher, Url, ReleaseDate, Summary);
+
+    public static ImportPublicationRequest FromDraft(PublicationDraft draft) =>
+        new(draft.Title, draft.Publisher, draft.Url, draft.ReleaseDate, draft.Summary);
 }
 
 public sealed record ImportInterestRequest(
@@ -242,6 +302,8 @@ public sealed record ImportInterestRequest(
     IReadOnlyList<string?>? Keywords = null)
 {
     public InterestDraft ToDraft() => new(Name, Keywords);
+
+    public static ImportInterestRequest FromDraft(InterestDraft draft) => new(draft.Name, draft.Keywords);
 }
 
 public sealed record ImportReferenceRequest(
@@ -253,6 +315,9 @@ public sealed record ImportReferenceRequest(
     string? ReferenceText = null)
 {
     public ReferenceDraft ToDraft() => new(Name, Position, Company, Email, PhoneNumber, ReferenceText);
+
+    public static ImportReferenceRequest FromDraft(ReferenceDraft draft) => new(
+        draft.Name, draft.Position, draft.Company, draft.Email, draft.PhoneNumber, draft.ReferenceText);
 }
 
 // The extraction wire shape, mapped from the Application's DocumentExtraction rather than reusing it —
@@ -262,3 +327,38 @@ public sealed record ExtractDocumentTextResponse(
     string Text,
     int? PageCount,
     IReadOnlyList<string> Warnings);
+
+// The response of POST /resumes/import/propose: a best-effort draft AND the confidence beside it. The
+// draft is an ImportResumeRequest — the exact shape the review screen posts back to POST /resumes/import
+// after the candidate corrects it. Confidence is a SEPARATE structure and is deliberately not part of the
+// draft, so a client posting the corrected draft back cannot (and need not) send confidence with it.
+public sealed record ProposeResumeDraftResponse(
+    ImportResumeRequest Draft,
+    DraftConfidenceResponse Confidence)
+{
+    public static ProposeResumeDraftResponse FromProposal(ResumeDraftProposal proposal) => new(
+        ImportResumeRequest.FromDraft(proposal.Draft),
+        DraftConfidenceResponse.FromConfidence(proposal.Confidence));
+}
+
+// Overall and each field's confidence are strings on the wire (the enum names), so the API contract does
+// not leak the CLR enum and a client reads "NotExtracted" / "Low" / "Medium" / "High" directly.
+public sealed record DraftConfidenceResponse(
+    string Overall,
+    IReadOnlyList<FieldConfidenceResponse> Fields,
+    IReadOnlyList<string> Warnings)
+{
+    public static DraftConfidenceResponse FromConfidence(DraftConfidence confidence) => new(
+        confidence.Overall.ToString(),
+        confidence.Fields.Select(FieldConfidenceResponse.FromProvenance).ToList(),
+        confidence.Warnings);
+}
+
+public sealed record FieldConfidenceResponse(
+    string Path,
+    string Confidence,
+    string? SourceText)
+{
+    public static FieldConfidenceResponse FromProvenance(FieldProvenance provenance) =>
+        new(provenance.Path, provenance.Confidence.ToString(), provenance.SourceText);
+}
