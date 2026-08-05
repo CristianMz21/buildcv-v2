@@ -82,7 +82,11 @@ public sealed class ScoreResumeHandler(
                 resume.Id,
                 jobPosting.Id,
                 now,
-                score.Recommendations);
+                score.Recommendations,
+                // Read off the two aggregates this handler already loaded, so recording what was scored
+                // costs no extra query.
+                resume.UpdatedAt,
+                jobPosting.UpdatedAt);
             await analysisRepository.AddAsync(analysis, cancellationToken);
 
             return Result<Analysis>.Success(analysis);

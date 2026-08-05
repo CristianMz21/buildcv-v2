@@ -229,6 +229,38 @@ public sealed class ModelConfigurationTests
         }
     }
 
+    // The provenance columns, pinned separately rather than folded into HighValueAnalyticalColumns —
+    // because that list's stated contract is "a column something really QUERIES", and these two are not
+    // queried. They are loaded with the row and compared in memory, so the claim would be false and this
+    // repo's signature defect is a comment asserting a property the code does not have.
+    //
+    // What has to hold for them is different, and all three parts fail silently:
+    //
+    //   - MAPPED. Ignore either one and provenance stops persisting: every analysis then reads back with
+    //     null provenance, which is defined as stale, so the score is permanently "out of date" and the
+    //     de-duplication in ScoreResumeHandler can never hit. No test of a score's VALUE would notice.
+    //   - NULLABLE. A required column would make the additive migration impossible to apply to a table
+    //     that already has rows, and would force a fabricated default — a lie about what those rows
+    //     scored, in the one direction (looking fresh) that misleads a candidate.
+    //   - PLAINTEXT. The other direction is already caught by EncryptedColumns_AreExactlyTheClassifiedSet,
+    //     which is exact set equality; this asserts it locally so the requirement is legible here too.
+    [Theory]
+    [InlineData(nameof(Analysis.ResumeUpdatedAt))]
+    [InlineData(nameof(Analysis.JobPostingUpdatedAt))]
+    public void ProvenanceColumns_AreMappedNullableAndPlaintext(string propertyName)
+    {
+        using var context = PersistenceTestContext.ModelOnly();
+
+        var property = context.Model.FindEntityType(typeof(Analysis))!.FindProperty(propertyName);
+
+        property.Should().NotBeNull(
+            "an unmapped {0} makes every analysis read as stale and never de-duplicate", propertyName);
+        property!.IsNullable.Should().BeTrue(
+            "a row written before this column existed cannot know what it scored");
+        property.FindAnnotation(PersistenceAnnotations.Encrypted)?.Value.Should().NotBe(true,
+            "these are timestamps about rows, not about a person");
+    }
+
     // Catches the mistake the annotation exists for: a copy-pasted configuration block that keeps the
     // context string of the column it was copied from. The context is the AAD, so a wrong one does not
     // fail at write time — it fails on the first READ, in production, as an authentication-tag
