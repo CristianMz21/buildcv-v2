@@ -1,5 +1,6 @@
 namespace BuildCv.Application.Scoring;
 
+using BuildCv.Application.Common.Services;
 using BuildCv.Domain.Jobs;
 using BuildCv.Domain.Resumes;
 using BuildCv.Domain.Scoring;
@@ -78,25 +79,58 @@ internal static class ScoringRules
     internal static double SkillsScore(double matchedWeight, double totalWeight) =>
         totalWeight <= 0.0 ? NotApplicableScore : Math.Clamp(matchedWeight / totalWeight, 0.0, 1.0);
 
-    internal static (double Matched, double Total) SkillWeights(Resume resume, JobPosting jobPosting)
+    internal static (double Matched, double Total) SkillWeights(
+        Resume resume, JobPosting jobPosting, ISkillLexicon skillLexicon)
     {
         double matched = 0;
         double total = 0;
 
         foreach (var requirement in jobPosting.Requirements)
         {
+            // TOTAL IS COMPUTED WITHOUT THE LEXICON, which is what makes the weights identical under any
+            // lexicon: ApplicableSections is asked about this total, so the six renormalized weights --
+            // and therefore every other section's contribution to the score -- cannot move because a
+            // skill started matching.
             total += requirement.Weight;
-            if (IsSatisfiedBy(requirement, resume))
+            if (IsSatisfiedBy(requirement, resume, skillLexicon))
                 matched += requirement.Weight;
         }
 
         return (matched, total);
     }
 
-    internal static bool IsSatisfiedBy(JobRequirement requirement, Resume resume) =>
-        resume.Skills.Any(s => s.Name.Name.Equals(requirement.Skill.Name, StringComparison.OrdinalIgnoreCase))
-        || resume.Skills.Any(s => s.Keywords.Any(k => k.Equals(requirement.Skill.Name, StringComparison.OrdinalIgnoreCase)))
-        || resume.Projects.Any(p => p.Technologies.Any(t => t.Name.Equals(requirement.Skill.Name, StringComparison.OrdinalIgnoreCase)));
+    // THE THREE PLACES A REQUIREMENT IS COMPARED AGAINST A RESUME: the skill's name, the keywords beside
+    // it, and the technologies on a project. Each is a whole-string test first and a lexicon lookup only
+    // if that fails.
+    //
+    // ADDITIVE BY CONSTRUCTION, and it is the ordering that makes it so rather than anything in the data.
+    // NamesTheSameSkill answers true whenever the old expression did, because the old expression IS its
+    // first operand, unchanged. So a lexicon entry can turn a miss into a match and can never turn a
+    // match into a miss -- no candidate's score can go down, whatever the file says. With an empty
+    // lexicon Canonicalize is the identity, so the second operand becomes a re-run of the first and the
+    // whole rule collapses to what it was. Both halves are executed by EmptyLexiconEquivalenceTests.
+    //
+    // WHY THIS IS WORTH DOING AT ALL: whole-string equality told a candidate who had listed "React.js" to
+    // ADD "React", at Critical priority and with an exact Impact beside it. Authoritative-looking, and
+    // wrong in the direction that costs the candidate -- the same failure shape Language.Fluency was
+    // sealed to prevent, where an unrecognised value would have read as "unmet".
+    //
+    // THE COST, stated because it is real: canonicalization MERGES, so a careless entry in the lexicon
+    // makes this report a requirement satisfied that is not. That risk lives entirely in the data, which
+    // is why the data is a reviewed file with a collision suite rather than a table anyone can edit.
+    internal static bool IsSatisfiedBy(JobRequirement requirement, Resume resume, ISkillLexicon skillLexicon) =>
+        resume.Skills.Any(s => NamesTheSameSkill(s.Name.Name, requirement.Skill.Name, skillLexicon))
+        || resume.Skills.Any(s => s.Keywords.Any(k => NamesTheSameSkill(k, requirement.Skill.Name, skillLexicon)))
+        || resume.Projects.Any(p => p.Technologies.Any(t => NamesTheSameSkill(t.Name, requirement.Skill.Name, skillLexicon)));
+
+    // OrdinalIgnoreCase on BOTH comparisons, deliberately the same comparer. The canonical tokens are
+    // curated, so nothing is folded here that the file did not fold -- and using a STRICTER comparer for
+    // the second test would let a lexicon entry be narrower than the exact match it is meant to widen,
+    // which is a way for the additive property to become a claim about the data instead of about the code.
+    private static bool NamesTheSameSkill(string candidate, string required, ISkillLexicon skillLexicon) =>
+        candidate.Equals(required, StringComparison.OrdinalIgnoreCase)
+        || skillLexicon.Canonicalize(candidate).Equals(
+            skillLexicon.Canonicalize(required), StringComparison.OrdinalIgnoreCase);
 
     internal static double ExperienceScore(double days) => Math.Clamp(days / ExperienceDaysCap, 0.0, 1.0);
 

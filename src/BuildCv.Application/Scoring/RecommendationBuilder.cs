@@ -1,5 +1,6 @@
 namespace BuildCv.Application.Scoring;
 
+using BuildCv.Application.Common.Services;
 using BuildCv.Domain.Jobs;
 using BuildCv.Domain.Resumes;
 using BuildCv.Domain.Scoring;
@@ -37,11 +38,15 @@ internal static class RecommendationBuilder
     // Concatenated in SectionType order, then sorted. The concatenation order is not the output order
     // and never has to be, but a fixed one keeps the diff of "what does this emit" readable.
     internal static IReadOnlyList<Recommendation> Build(
-        Resume resume, JobPosting jobPosting, ScoreBreakdown breakdown, DateOnly referenceDate)
+        Resume resume,
+        JobPosting jobPosting,
+        ScoreBreakdown breakdown,
+        DateOnly referenceDate,
+        ISkillLexicon skillLexicon)
     {
         List<Recommendation> found =
         [
-            .. ForSkills(resume, jobPosting, breakdown),
+            .. ForSkills(resume, jobPosting, breakdown, skillLexicon),
             .. ForExperience(resume, breakdown, referenceDate),
             .. ForEducation(resume, breakdown),
             .. ForCertifications(resume, breakdown, referenceDate),
@@ -69,15 +74,20 @@ internal static class RecommendationBuilder
     // impact thresholds, but a zero-impact MUST-HAVE stays Critical, because the gate is about what the
     // posting screens on and not about what the score pays. Pinned by
     // RecommendationBuilderTests.ZeroWeightedRequirements_stillProduceAdviceWithAnHonestZeroImpact.
+    //
+    // IT READS THE SAME LEXICON THE ENGINE SCORED WITH, passed down rather than resolved here, for the
+    // reason the whole file exists: this method evaluates ScoringRules a second time, and a second
+    // lexicon would let the advice tell a candidate to add a skill the score already counted -- the exact
+    // bug this milestone fixes, reintroduced one layer up.
     private static IEnumerable<Recommendation> ForSkills(
-        Resume resume, JobPosting jobPosting, ScoreBreakdown breakdown)
+        Resume resume, JobPosting jobPosting, ScoreBreakdown breakdown, ISkillLexicon skillLexicon)
     {
-        var (matched, total) = ScoringRules.SkillWeights(resume, jobPosting);
+        var (matched, total) = ScoringRules.SkillWeights(resume, jobPosting, skillLexicon);
         var current = breakdown.SkillsScore;
 
         foreach (var requirement in jobPosting.Requirements)
         {
-            if (ScoringRules.IsSatisfiedBy(requirement, resume))
+            if (ScoringRules.IsSatisfiedBy(requirement, resume, skillLexicon))
                 continue;
 
             var impact = breakdown.Weights.Skills

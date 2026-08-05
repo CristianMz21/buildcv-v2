@@ -42,6 +42,54 @@ public sealed class JobOfferImportTests
             "an unmet must-have of full weight lands above the Critical impact threshold");
     }
 
+    // THE SAME LOOP, WITH THE BUG THE SKILL LEXICON FIXES, end to end over HTTP and therefore against the
+    // lexicon the composition root really registers — SkillLexiconMatchingTests states its own aliases,
+    // so only this can say the shipped file is the one wired in.
+    //
+    // Before the lexicon, a candidate whose CV said "React.js" was told to ADD "React", at Critical
+    // priority with an exact Impact beside it. Both requirements are asserted in one request on purpose:
+    // the Kafka advice is what proves the React advice disappeared because it was satisfied, and not
+    // because the endpoint stopped producing skill advice.
+    [Fact]
+    public async Task TheWholeLoop_ForASkillTheCandidateSpelledDifferently_StopsAskingThemToAddIt()
+    {
+        using var factory = new ApiTestFactory();
+        using var client = BearerClient(factory);
+        var (_, token) = await client.RegisterAndLoginAsync(TestHelpers.CandidateEmail);
+
+        var jobId = await ImportOfferAsync(client, token, new
+        {
+            title = "Frontend Engineer",
+            companyName = "Contoso",
+            requirements = new[]
+            {
+                new { skill = "React", priority = "MustHave" },
+                new { skill = "Kafka", priority = "MustHave" }
+            }
+        });
+
+        var resumeId = await CreateResumeAsync(client, token);
+        await AnalysisReadTests.AddSkillAsync(client, token, resumeId, "React.js");
+
+        var score = await ScoreAsync(client, token, resumeId, jobId);
+        score.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        using var json = JsonDocument.Parse(await score.Content.ReadAsStringAsync());
+
+        json.RootElement.GetProperty("breakdown").GetProperty("skillsScore").GetDouble()
+            .Should().Be(0.5, "one of the two must-haves is met, by a spelling of it");
+
+        var skillAdvice = json.RootElement.GetProperty("recommendations").EnumerateArray()
+            .Where(r => r.GetProperty("kind").GetString() == "MissingMustHaveSkill")
+            .Select(r => r.GetProperty("message").GetString()!)
+            .ToList();
+
+        skillAdvice.Should().ContainSingle().Which.Should().Contain("'Kafka'",
+            "the candidate really is missing Kafka");
+        skillAdvice.Should().NotContain(message => message.Contains("'React'", StringComparison.Ordinal),
+            "'React.js' is on their CV, and telling them to add 'React' is the bug");
+    }
+
     // ---- the security hole this PR closes ---------------------------------------------------------
 
     // A candidate owns their imported Draft offer, and the publish route has no role policy -- so the
