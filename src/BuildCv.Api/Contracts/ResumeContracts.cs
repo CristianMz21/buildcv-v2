@@ -254,3 +254,11 @@ public sealed record ImportReferenceRequest(
 {
     public ReferenceDraft ToDraft() => new(Name, Position, Company, Email, PhoneNumber, ReferenceText);
 }
+
+// The extraction wire shape, mapped from the Application's DocumentExtraction rather than reusing it —
+// wire contracts are this layer's own types, per the repo rule. PageCount is null for every format
+// except PDF, the only one that states its page count (see DocumentExtraction.PageCount).
+public sealed record ExtractDocumentTextResponse(
+    string Text,
+    int? PageCount,
+    IReadOnlyList<string> Warnings);

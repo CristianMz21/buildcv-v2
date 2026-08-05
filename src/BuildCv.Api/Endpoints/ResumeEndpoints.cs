@@ -3,6 +3,7 @@ using BuildCv.Api.Contracts;
 using BuildCv.Api.Security;
 using BuildCv.Application.Common.Abstractions;
 using BuildCv.Application.Common.Pagination;
+using BuildCv.Application.Common.Services;
 using BuildCv.Application.Resumes;
 using BuildCv.Application.Scoring;
 using BuildCv.Domain.Common.ValueObjects;
@@ -118,6 +119,77 @@ public static class ResumeEndpoints
             + "is reported at its own index. Levels accept the enum name or its number. Duplicate skills, "
             + "certificates, languages and interests are reported against the LATER occurrence — that is "
             + "the line to delete — including when that item has another bad field as well.");
+
+        // The upload half of the import flow: a PDF, DOCX or plain-text file in, its raw text back.
+        // Raw text ONLY — no section detection and no draft: the candidate pastes or corrects the text
+        // into the review screen, and POST /resumes/import is what creates anything. That split is
+        // deliberate: extraction is mechanical and provable, section detection is heuristic, and this
+        // endpoint stays the permanent fallback for every CV the heuristics cannot read.
+        group.MapPost("/import/extract", async Task<IResult> (
+            IFormFile file,
+            ICommandHandler<ExtractDocumentTextCommand, Result<DocumentExtraction>> handler,
+            DocumentExtractionRateLimiter rateLimiter,
+            ILogger<Program> logger,
+            HttpContext httpContext,
+            CancellationToken cancellationToken) =>
+        {
+            var accountId = httpContext.User.GetAccountId();
+
+            // This throttles PARSING, not INGEST, and the distinction is deliberate. IFormFile binding
+            // has already run by the time this lambda executes — the body is read and (past 64 KB)
+            // spilled to a temp file before this line — so acquiring the lease here cannot refuse a
+            // request before its bytes arrive. It does not need to: ingest is bounded per-upload by the
+            // 5 MiB request-size ceiling below and per-source by the global 100/min limiter, and neither
+            // depends on the principal. What this limiter bounds is the expensive half — synchronous
+            // parsing, the most CPU- and memory-heavy work in the API — keyed to the account, which is
+            // the right unit because the caller is always authenticated. See DocumentExtractionRateLimiter.
+            using var lease = await rateLimiter.AcquireAsync(accountId, cancellationToken);
+            if (!lease.IsAcquired)
+            {
+                RateLimitResponse.SetRetryAfter(httpContext.Response, lease);
+                AuditLog.Log(logger, "resume_extract_throttled", accountId, httpContext);
+                return Results.Problem(
+                    detail: "Too many document extractions.",
+                    statusCode: StatusCodes.Status429TooManyRequests);
+            }
+
+            await using var content = file.OpenReadStream();
+            var result = await handler.Handle(
+                new ExtractDocumentTextCommand(content, file.ContentType),
+                cancellationToken);
+
+            return result.ToHttpResult(extraction => Results.Ok(new ExtractDocumentTextResponse(
+                extraction.Text, extraction.PageCount, extraction.Warnings)));
+        })
+        // The extraction ceiling, enforced by Kestrel exactly like the 2 MiB one above — see that
+        // endpoint's comment for why the framework enforces this metadata on its own and why the 413 is
+        // not ProblemDetails-shaped. The number is the port's own constant so the HTTP ceiling and the
+        // extractor's bound cannot drift; why 5 MiB is argued on IDocumentTextExtractor. Multipart
+        // framing counts against it, so the file itself must fit with a few hundred bytes to spare.
+        // FormOptions.MultipartBodyLengthLimit also applies to a form body, but at its 128 MiB default
+        // it sits far above this ceiling and never fires first — ResumeExtractSizeLimitTests measures
+        // both limits against real Kestrel rather than asserting this from documentation.
+        .WithMetadata(new RequestSizeLimitAttribute(IDocumentTextExtractor.MaxDocumentBytes))
+        // NOT an opt-out of CSRF protection — an opt-out of the FRAMEWORK's second, unusable copy of
+        // it. Binding IFormFile makes minimal APIs stamp the endpoint with required-antiforgery
+        // metadata, and that requires app.UseAntiforgery() in the pipeline: measured without this
+        // line, every request here — bearer ones included — answered a 500 InvalidOperationException
+        // naming the missing middleware. This pipeline deliberately has no UseAntiforgery; its CSRF
+        // control is CsrfGuardMiddleware, which covers this route like every other cookie-
+        // authenticated unsafe method (both directions pinned in ResumeExtractTests) and which knows
+        // this API's contract — bearer requests carry no ambient credential and are exempt by design,
+        // something the framework validator would refuse. Do not add this route to
+        // CsrfGuardMiddleware.ExemptPaths.
+        .DisableAntiforgery()
+        .WithSummary("Extracts the raw text of an uploaded CV document.")
+        .WithDescription(
+            "Multipart upload with one `file` part: PDF, DOCX or plain text, at most 5 MiB for the "
+            + "whole request. Answers the extracted raw text, the page count when the format states "
+            + "one (only PDF does), and warnings — a PDF with no text layer (a scan) is reported as "
+            + "exactly that rather than as an empty document; OCR is not supported. The declared "
+            + "content type selects the parser and the file's leading bytes must agree with it. "
+            + "Nothing is stored: review and correct the text, then send the draft to POST "
+            + "/resumes/import.");
 
         // Keyset paged, and there is no way to ask for the whole list: limit is clamped to a ceiling
         // and cursor is the only way forward. `limit` and `cursor` bind from the query string because
