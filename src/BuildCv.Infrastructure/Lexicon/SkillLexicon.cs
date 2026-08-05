@@ -42,6 +42,7 @@ public sealed class SkillLexicon : ISkillLexicon
     {
         _canonicalByKey = canonicalByKey;
         Version = ComputeVersion(canonicalByKey);
+        CanonicalTokens = [.. canonicalByKey.Values.Distinct(StringComparer.Ordinal)];
     }
 
     /// <inheritdoc />
@@ -53,7 +54,7 @@ public sealed class SkillLexicon : ISkillLexicon
     /// extractor's vocabulary, and that no two entries collide. A scoring path has no use for it:
     /// matching asks about two terms it already holds, never about what else exists.
     /// </remarks>
-    public IReadOnlyCollection<string> CanonicalTokens => _canonicalByKey.Values.Distinct(StringComparer.Ordinal).ToList();
+    public IReadOnlyList<string> CanonicalTokens { get; }
 
     /// <summary>Reads and parses the embedded lexicon. Throws if the data is malformed.</summary>
     public static SkillLexicon Load() => FromData(ReadEmbeddedData());
