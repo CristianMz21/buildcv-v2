@@ -101,6 +101,10 @@ public static class DependencyInjection
         services.AddSingleton<PlainTextExtractor>();
         services.AddSingleton<IDocumentTextExtractor, DocumentTextExtractor>();
 
+        // PDF-only column-layout detection, a separate best-effort signal that feeds ResumeTextParser's
+        // two-column warning. Not part of the text extractor: only a PDF carries the word geometry.
+        services.AddSingleton<IPdfColumnDetector, PdfColumnDetector>();
+
         // Identity
         services.AddScoped<ICommandHandler<RegisterAccountCommand, Result<AccountDto>>, RegisterAccountHandler>();
         services.AddScoped<ICommandHandler<LoginCommand, Result<AuthResult>>, LoginHandler>();
@@ -114,6 +118,7 @@ public static class DependencyInjection
         services.AddScoped<ICommandHandler<CreateResumeCommand, Result<Resume>>, CreateResumeHandler>();
         services.AddScoped<ICommandHandler<CreateResumeFromDraftCommand, ResumeImportResult>, CreateResumeFromDraftHandler>();
         services.AddScoped<ICommandHandler<ExtractDocumentTextCommand, Result<DocumentExtraction>>, ExtractDocumentTextHandler>();
+        services.AddScoped<ICommandHandler<ProposeResumeDraftFromDocumentCommand, Result<ResumeDraftProposal>>, ProposeResumeDraftFromDocumentHandler>();
         services.AddScoped<IQueryHandler<GetResumeQuery, Result<Resume>>, GetResumeHandler>();
         services.AddScoped<IQueryHandler<GetResumesByOwnerQuery, Result<Page<Resume>>>, GetResumesByOwnerHandler>();
         services.AddScoped<ICommandHandler<DeleteResumeCommand, Result<ResumeId>>, DeleteResumeHandler>();
