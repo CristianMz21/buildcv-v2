@@ -270,10 +270,18 @@ public static class DependencyInjection
 
         services.AddSingleton<IAccountRepository, InMemoryAccountRepository>();
         services.AddSingleton<IRefreshTokenRepository, InMemoryRefreshTokenRepository>();
-        services.AddSingleton<IResumeRepository, InMemoryResumeRepository>();
         services.AddSingleton<IJobPostingRepository, InMemoryJobPostingRepository>();
         services.AddSingleton<IOrganizationRepository, InMemoryOrganizationRepository>();
-        services.AddSingleton<IAnalysisRepository, InMemoryAnalysisRepository>();
+
+        // CONCRETE FIRST, THEN FORWARDED — and here the forwarding is load-bearing rather than a test
+        // convenience. InMemoryResumeRepository.DeleteAsync has to reach the analyses derived from the
+        // resume it is deleting, mirroring ResumeRepository.CascadeToAnalysesAsync, and the method that
+        // does it is deliberately not on IAnalysisRepository. Registered as the interface alone, the two
+        // singletons would be different objects and the cascade would empty a store nothing reads.
+        services.AddSingleton<InMemoryAnalysisRepository>();
+        services.AddSingleton<IAnalysisRepository>(
+            provider => provider.GetRequiredService<InMemoryAnalysisRepository>());
+        services.AddSingleton<IResumeRepository, InMemoryResumeRepository>();
 
         // Registered as the CONCRETE type first and then forwarded, so a test host can resolve
         // InMemoryReadabilityReportRepository and read its Count. The port has no read method, so

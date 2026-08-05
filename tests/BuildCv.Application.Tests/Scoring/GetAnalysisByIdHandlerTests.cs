@@ -59,13 +59,17 @@ public sealed class GetAnalysisByIdHandlerTests
         result.Value.Should().BeNull();
     }
 
-    // The orphan, and it is what keeps the two persistence providers telling the same story.
+    // The orphan. NO SHIPPED STORE PRODUCES ONE ANY MORE, and the branch stays anyway.
     //
-    // Under EF this state cannot arise: ResumeRepository.DeleteAsync tombstones the analyses in the same
-    // unit of work, so the miss happens on the first read. The in-memory store — the one every Api test
-    // runs on — has no cascade, so the analysis outlives its resume and arrives at the second read. Both
-    // must answer the same thing, and it must be "Analysis not found.": the caller named an analysis,
-    // and telling it about a resume it does not own would answer a question it did not ask.
+    // Under EF it never could: ResumeRepository.DeleteAsync tombstones the analyses in the same unit of
+    // work, so the miss happens on the first read. The in-memory store — the one every Api test runs on
+    // — did produce one until issue #18, and now cascades too. What is left is a state only this fake
+    // can reach, because FakeResumeRepository.DeleteAsync removes the resume and nothing else.
+    //
+    // That is the point rather than an accident. The branch is the one thing that would keep the two
+    // providers agreeing if either cascade were ever removed or a third store were added, and it is
+    // free: it must answer "Analysis not found." because the caller named an analysis, and telling it
+    // about a resume it does not own would answer a question it did not ask.
     [Fact]
     public async Task Handle_WhenTheResumeBehindItIsGone_IsNotFoundRatherThanForbiddenOrLeaked()
     {

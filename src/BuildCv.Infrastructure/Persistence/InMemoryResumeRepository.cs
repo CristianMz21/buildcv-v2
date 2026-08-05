@@ -15,7 +15,7 @@ namespace BuildCv.Infrastructure.Persistence;
 // Assigned on ADD only. An UPDATE does not move a row in the clustered index, so it must not move one
 // here either: otherwise editing an old resume would teleport it to the top of the list, past a cursor
 // a client was already walking.
-public sealed class InMemoryResumeRepository : IResumeRepository
+public sealed class InMemoryResumeRepository(InMemoryAnalysisRepository analyses) : IResumeRepository
 {
     private readonly ConcurrentDictionary<Guid, KeysetRow<Resume>> _resumes = new();
     private long _sequence;
@@ -53,10 +53,25 @@ public sealed class InMemoryResumeRepository : IResumeRepository
         return Task.CompletedTask;
     }
 
+    // MIRRORS ResumeRepository.CascadeToAnalysesAsync, and the decision it copies is written there:
+    // deleting a resume takes the analyses derived from it out of every read, in the same operation,
+    // because Analysis holds a ResumeId and no foreign key, so nothing else reaches them.
+    //
+    // Dropping them rather than tombstoning them is the only shape available in this store — Analysis
+    // has no Status and IAnalysisRepository has no delete, so there is no state a filter could read (see
+    // InMemoryAnalysisRepository). After the query filter has run, the two providers answer the same.
+    //
+    // WITHOUT THIS the divergence was not merely a paging detail (issue #18). The whole Api suite runs
+    // on this store, so a handler that read an analysis WITHOUT loading its resume first would have been
+    // certified green here against behaviour SQL Server does not have — and it would have been certified
+    // green on a privacy promise, since "delete my resume" is documented to take everything derived from
+    // it. Both endpoints that read an analysis happen to load the resume first today, which is the only
+    // reason nothing observed it.
     public Task DeleteAsync(ResumeId id, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         _resumes.TryRemove(id.Value, out _);
+        analyses.RemoveAllDerivedFrom(id);
         return Task.CompletedTask;
     }
 
