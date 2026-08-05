@@ -81,11 +81,15 @@ public sealed class GetAnalysisHistoryHandlerTests
     // stays GREEN when the ceiling is changed from 100 to 50 — measured, not supposed — because both
     // sides of the comparison move together.
     //
-    // PageRequestTests does bound the constant, but only from the outside: [InlineData(20, 20)] goes red
-    // if the ceiling drops below 20, and [InlineData(100, PageRequest.MaxLimit)] goes red if it rises
-    // above 100, while its remaining rows compare MaxLimit against itself. So the uncovered hole is
-    // precisely a ceiling LOWERED INTO [20, 100] — which is the mutation above. The literal here closes
-    // that band.
+    // THE CEILING IS NOT PINNED HERE ANY MORE, and this test should not be read as where it lives.
+    // PageRequestTests used to bound the constant only from the outside — its rows compared MaxLimit
+    // against itself, so a ceiling lowered into [20, 100] landed green there and this literal was the
+    // only thing closing that band. It was a pagination constant pinned by a scoring test, which is the
+    // wrong owner; issue #19 moved it. PageRequestTests now states the clamp in literals and asserts
+    // the three constants by name.
+    //
+    // The literal below stays regardless, and not out of habit: what it covers is the HANDLER, which
+    // could stop routing the caller's limit through PageRequest.Create at all and answer 100,000 rows.
     [Fact]
     public async Task Handle_WithALimitBeyondTheCeiling_ClampsItToOneHundred()
     {
