@@ -14,12 +14,12 @@ namespace BuildCv.Infrastructure.Persistence.EfCore;
 /// </para>
 /// <para>
 /// The catch is a backstop, not the mechanism. <c>CanConnectAsync</c> answers false rather than
-/// throwing for an unreachable server — measured against SQL Server, both for a refused connection and
-/// for a host that does not resolve (<c>EfCorePersistenceProbeTests</c>). What it does not promise is
-/// that EVERY failure arrives that way, and a readiness endpoint that 500s instead of reporting
-/// not-ready is a probe an orchestrator cannot read. Nothing about the exception travels on: a
-/// connection failure's message quotes the server, the database name and sometimes the login, and this
-/// value reaches both a log and an HTTP response.
+/// throwing for a REFUSED connection — measured against SQL Server in
+/// <c>EfCorePersistenceProbeUnreachableTests</c>. What it does not promise is that every OTHER failure
+/// arrives the same way, and a readiness endpoint that 500s instead of reporting not-ready is a probe
+/// an orchestrator cannot read. Nothing about the exception travels on: a connection failure's message
+/// quotes the server, the database name and sometimes the login, and a health check's message reaches
+/// the log (measured — see <c>HealthEndpointTests.AFailedReadinessProbe_LogsItsFixedDescription</c>).
 /// </para>
 /// </remarks>
 public sealed class EfCorePersistenceProbe(BuildCvDbContext dbContext) : IPersistenceProbe

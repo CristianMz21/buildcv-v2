@@ -75,8 +75,8 @@ builder.Services.AddRateLimiter(options =>
         RateLimitResponse.SetRetryAfter(context.HttpContext.Response, context.Lease);
 
         // Counted from the ENDPOINT's policy metadata, because that is the only attribution this
-        // callback can make: RateLimitingMiddleware knows internally whether the global limiter or the
-        // endpoint policy refused, and OnRejectedContext exposes neither the flag nor a policy name.
+        // callback can make: OnRejectedContext carries exactly two things, HttpContext and the failed
+        // Lease, and neither names the limiter that refused.
         // So the tag is exact for every route without a policy (there is only the global limiter to
         // refuse it) and, on the four routes that have one, reports that policy even in the rare case
         // where the global 100/min ceiling was hit first — reachable only by spending the global budget

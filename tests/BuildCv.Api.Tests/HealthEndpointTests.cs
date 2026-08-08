@@ -64,6 +64,33 @@ public sealed class HealthEndpointTests
         (await live.Content.ReadAsStringAsync()).Should().Be("Healthy");
     }
 
+    // WHY DatabaseHealthCheck's DESCRIPTIONS ARE FIXED STRINGS, executed rather than assumed. Measured:
+    // DefaultHealthCheckService writes the description into its own log line —
+    //
+    //   [Error] ... Health check persistence with status Unhealthy completed after 3.8ms
+    //           with message 'The store did not answer.'
+    //
+    // — so a description built from the store's own words would put a SQL Server connection failure,
+    // which names the host, the database and sometimes the login, into the log on every failed probe.
+    // The response body is only the status (pinned above), so the log is the channel that matters here.
+    [Fact]
+    public async Task AFailedReadinessProbe_LogsItsFixedDescription()
+    {
+        var logs = new RecordingLoggerProvider();
+        using var factory = new ApiTestFactory(configureServices: services =>
+        {
+            RecordingLogging.Capturing(logs)(services);
+            services.AddSingleton<IPersistenceProbe>(new UnreachableProbe());
+        });
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+
+        (await client.GetAsync(HealthEndpoints.ReadyPath))
+            .StatusCode.Should().Be(HttpStatusCode.ServiceUnavailable);
+
+        logs.AllText.Should().Contain(text => text.Contains("The store did not answer.", StringComparison.Ordinal),
+            "the description reaches the log, which is why it must never quote the store");
+    }
+
     // The status codes above are a small closed set, so they are weak evidence on their own: /health/live
     // would answer 200 whether it skipped the probe or called a probe that happened to succeed. This
     // COUNTS the calls instead. Zero is what "no dependencies touched" actually means, and it is a claim
@@ -111,10 +138,9 @@ public sealed class HealthEndpointTests
 
     // MapHealthChecks maps EVERY method by default. Constraining both probes to GET is what keeps them
     // out of CsrfGuardMiddleware's reach entirely: that middleware validates POST/PUT/DELETE/PATCH, so
-    // a route with no unsafe method has nothing to exempt. Requested WITH a bearer credential, because
-    // the 405 endpoint carries no authorization metadata and the fallback policy would challenge an
-    // anonymous caller first — a 401 here would be evidence of authentication, not of the method
-    // constraint.
+    // a route with no unsafe method has nothing to exempt. Requested WITH a bearer credential, the same
+    // way VersioningTests requests its unversioned paths: a refusal from an anonymous caller could be
+    // authentication rather than the method constraint, and this test is about the constraint.
     [Theory]
     [InlineData(HealthEndpoints.LivePath)]
     [InlineData(HealthEndpoints.ReadyPath)]

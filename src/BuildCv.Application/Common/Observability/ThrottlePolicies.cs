@@ -7,9 +7,10 @@ namespace BuildCv.Application.Common.Observability;
 /// <remarks>
 /// <para>
 /// The names mirror the limiters rather than the routes, because a limiter is what a 429 is evidence
-/// about. Three are named ASP.NET Core policies and three are the per-account limiters acquired inside
-/// their endpoints (<c>UseRateLimiter</c> runs before <c>UseAuthentication</c>, so a policy
-/// partitioner has no principal to key on — see <c>PasswordChangeRateLimiter</c>).
+/// about. Two are named ASP.NET Core policies, one is the global limiter that has no policy name at
+/// all, and three are the per-account limiters acquired inside their endpoints (<c>UseRateLimiter</c>
+/// runs before <c>UseAuthentication</c>, so a policy partitioner has no principal to key on — see
+/// <c>PasswordChangeRateLimiter</c>).
 /// </para>
 /// <para>
 /// DELIBERATELY NOT A DIMENSION HERE: the partition key. That is the client address for the per-IP

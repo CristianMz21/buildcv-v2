@@ -61,13 +61,14 @@ public sealed class ObservabilityLeakTests
     private const string UploadedFileName = "Zzqfilename";
     private const string CorruptDocument = "Zzqcorruptdocument";
     private const string RejectedFieldValue = "Zzqrejectedvalue";
+    private const string OfferText = "Zzqoffertext";
     private const string Email = "zzqemail@example.com";
 
     private static readonly string[] Sentinels =
     [
         FullName, Location, Summary, Organization, Position, Highlight, Skill, Institution,
         Certificate, Interest, Fluency, JobTitle, JobDescription, UploadedText, UploadedFileName,
-        CorruptDocument, RejectedFieldValue, "zzqemail"
+        CorruptDocument, RejectedFieldValue, OfferText, "zzqemail"
     ];
 
     [Fact]
@@ -89,6 +90,7 @@ public sealed class ObservabilityLeakTests
         await DriveRejectedImportAsync(client, candidate);
         await DriveScoreAsync(client, candidate, recruiter, resumeId);
         await DriveReadabilityAsync(client, candidate);
+        await DriveJobOfferAsync(client, candidate);
 
         // One scope over all three, so a run that leaks into two channels reports both. Without it the
         // first failure throws and the second channel is never looked at — which is how a fix aimed at
@@ -270,6 +272,38 @@ public sealed class ObservabilityLeakTests
         report.StatusCode.Should().Be(HttpStatusCode.OK);
         (await report.Content.ReadAsStringAsync()).Should().Contain("recommendations",
             "advice has to have been produced, or this path measured an empty report");
+    }
+
+    // The other half of the material this API now holds. A pasted job offer is somebody's employer's
+    // text, and the candidate-owned draft built from it is theirs — neither belongs in a log any more
+    // than a CV does.
+    private static async Task DriveJobOfferAsync(HttpClient client, string token)
+    {
+        using var extract = new HttpRequestMessage(HttpMethod.Post, "/v1/job-offers/extract")
+        {
+            Content = JsonContent.Create(new { text = $"{OfferText}. Our stack is C# and Docker." })
+        }.WithBearer(token);
+
+        var extracted = await client.SendAsync(extract);
+        extracted.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await extracted.Content.ReadAsStringAsync()).Should().Contain("Docker",
+            "the offer text has to have been parsed, or this path drove nothing");
+
+        using var import = new HttpRequestMessage(HttpMethod.Post, "/v1/job-offers/import")
+        {
+            Content = JsonContent.Create(new
+            {
+                title = JobTitle,
+                companyName = "Contoso",
+                description = JobDescription,
+                requirements = new[] { new { skill = "C#", priority = "MustHave" } }
+            })
+        }.WithBearer(token);
+
+        var imported = await client.SendAsync(import);
+        var body = await imported.Content.ReadAsStringAsync();
+        imported.StatusCode.Should().Be(HttpStatusCode.Created, body);
+        body.Should().Contain(JobTitle);
     }
 
     private static async Task<HttpResponseMessage> UploadAsync(

@@ -48,9 +48,10 @@ public sealed class CorrelationIdMiddleware(RequestDelegate next, ILogger<Correl
     {
         ArgumentNullException.ThrowIfNull(context);
 
-        // StringValues.ToString() joins a repeated header with commas, and a comma is not in the safe
-        // set — so a request that sends the header twice is treated as sending an unusable one and gets
-        // a generated id, rather than one of the two silently winning.
+        // StringValues.ToString() joins a repeated header into ONE string, separator included, and no
+        // separator is in the safe set — so a request that sends the header twice is treated as sending
+        // an unusable one and gets a generated id, rather than one of the two silently winning.
+        // Measured through the boundary in CorrelationIdTests rather than reasoned from the separator.
         var inbound = context.Request.Headers[HeaderName].ToString();
         var correlationId = IsSafeToLog(inbound) ? inbound : Generate();
 
