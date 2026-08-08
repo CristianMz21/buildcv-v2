@@ -133,6 +133,15 @@ Auth is JWT in HttpOnly cookies (with `Authorization: Bearer` fallback — `OnMe
 
 Middleware order in `Program.cs` matters (ForwardedHeaders → SecurityHeaders → ExceptionHandler → HSTS/HTTPS → CORS → RateLimiter → AuthN → CsrfGuard → AuthZ); insert new middleware deliberately.
 
+### Observability — health probes
+
+`GET /health/live` and `GET /health/ready` (`Api/Health/`), both **outside `/v1`**: a probe URL lives in a deployment manifest, not a client library, so it must not move when the product contract versions.
+
+- **Liveness touches nothing outside the process** (`Predicate = _ => false`, no checks selected). A failed liveness probe *restarts* the process, so a liveness check that opened a database connection would roll-restart the fleet the moment the database hiccuped — at the moment it can least afford a reconnection stampede. `HealthEndpointTests.Live_ConsultsNoProbeAtAll_WhileReadyConsultsItEveryTime` **counts probe calls** rather than reading a status code, because 200 is a small closed value that a skipped check and a succeeding check produce identically.
+- **Readiness is tag-filtered** on `DatabaseHealthCheck.ReadinessTag`, so a newly registered check does not silently join it. Its one check goes through `IPersistenceProbe` (`Application/Common/Services/`) — registered on **both** persistence branches (`EfCorePersistenceProbe` / `InMemoryPersistenceProbe`), because a missing registration must not be able to answer "ready".
+- Both are `AllowAnonymous`, `DisableRateLimiting` (the **global** 100/min limiter is the one that would fire; a 429 is not a health status, so a throttled probe reads as a failed one) and constrained to **GET** — `MapHealthChecks` maps every method by default, and an unsafe method on an anonymous path would put `CsrfGuardMiddleware` in front of a route that changes nothing.
+- The default plaintext writer emits the **status only**, so health-check descriptions never reach the wire — but `HealthCheckService` logs every description, which is why `DatabaseHealthCheck`'s are fixed strings and never quote the store (a SQL Server connection failure names host, database and sometimes login).
+
 ### Deployment requirement — forwarded headers
 
 Rate limiting partitions on `Connection.RemoteIpAddress`. **Behind any reverse proxy, ingress, or CDN you must configure `Network:ForwardedHeaders`**, otherwise every client collapses into the proxy's single partition and the 5/min auth window becomes a global 5/min cap for the whole deployment — a self-inflicted denial of service that also throttles no individual attacker.

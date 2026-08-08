@@ -2,6 +2,7 @@ using System.Text;
 using System.Threading.RateLimiting;
 using BuildCv.Api.Common;
 using BuildCv.Api.Endpoints;
+using BuildCv.Api.Health;
 using BuildCv.Api.Security;
 using BuildCv.Application.Common.Services;
 using BuildCv.Infrastructure;
@@ -11,6 +12,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 
@@ -136,6 +138,15 @@ builder.Services.AddExceptionHandler<MalformedRequestExceptionHandler>();
 builder.Services.AddExceptionHandler<PersistenceExceptionHandler>();
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 
+// The store probe is the only readiness check, and it is TAGGED rather than merely registered:
+// /health/live selects no checks at all and /health/ready selects this tag, so neither endpoint means
+// "whatever happens to be registered". See HealthEndpoints for why the two probes must differ.
+builder.Services.AddHealthChecks()
+    .AddCheck<DatabaseHealthCheck>(
+        DatabaseHealthCheck.Name,
+        failureStatus: HealthStatus.Unhealthy,
+        tags: [DatabaseHealthCheck.ReadinessTag]);
+
 builder.Services.AddOpenApi();
 
 var app = builder.Build();
@@ -181,6 +192,10 @@ app.UseAuthorization();
 
 if (app.Environment.IsDevelopment())
     app.MapOpenApi().AllowAnonymous();
+
+// Mapped before the /v1 group and deliberately not inside it: probe URLs live in deployment manifests,
+// not in client libraries, so they must not move when the product contract versions.
+app.MapHealthEndpoints();
 
 // Every public route lives under one URL version segment, so the analysis contract can change in a
 // /v2 without breaking whatever clients exist by then. A hand-rolled group rather than the

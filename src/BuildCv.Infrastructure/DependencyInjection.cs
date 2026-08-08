@@ -239,6 +239,11 @@ public static class DependencyInjection
             // COMPOSED provider.
             .EnableSensitiveDataLogging(false));
 
+        // Scoped, because it holds the scoped DbContext. The readiness health check resolves it inside
+        // the scope HealthCheckService creates per check, so a probe never shares a context with a
+        // request.
+        services.AddScoped<IPersistenceProbe, EfCorePersistenceProbe>();
+
         services.AddScoped<IAccountRepository, AccountRepository>();
         services.AddScoped<IRefreshTokenRepository, RefreshTokenRepository>();
         services.AddScoped<IResumeRepository, ResumeRepository>();
@@ -267,6 +272,11 @@ public static class DependencyInjection
                     : $" If this really is a test host, set "
                         + $"{PersistenceConfiguration.AllowInMemoryOutsideDevelopmentKey}=true."));
         }
+
+        // Registered on BOTH branches, so the readiness endpoint always has a probe to ask. A null
+        // check in the health check instead would report ready whenever the registration was missed,
+        // which is the failure direction a readiness probe must never take.
+        services.AddSingleton<IPersistenceProbe, InMemoryPersistenceProbe>();
 
         services.AddSingleton<IAccountRepository, InMemoryAccountRepository>();
         services.AddSingleton<IRefreshTokenRepository, InMemoryRefreshTokenRepository>();
