@@ -6,6 +6,28 @@ using Microsoft.AspNetCore.WebUtilities;
 
 namespace BuildCv.Api.Common;
 
+/// <summary>
+/// The media type every error writer in this file must use, passed as the <c>contentType</c> argument
+/// to <c>WriteAsJsonAsync</c> and never assigned to <c>Response.ContentType</c> beforehand.
+/// </summary>
+/// <remarks>
+/// The overload WITHOUT a content type sets <c>application/json</c> itself, overwriting whatever was
+/// assigned on the line above — so the familiar "assign, then write" shape silently loses the
+/// assignment and the response is ProblemDetails-shaped without being ProblemDetails-typed. That is
+/// invisible to any test that reads bodies, which is why four call sites in this file — across
+/// <see cref="DomainExceptionHandler"/>, <see cref="PersistenceExceptionHandler"/> and
+/// <see cref="GlobalExceptionHandler"/> — plus the JWT challenge carried the wrong media type until
+/// <c>ErrorContentTypeTests</c> asserted the header instead.
+/// <para>
+/// <c>Results.Problem(...)</c> sets this on its own and needs nothing; this constant is for the writers
+/// that talk to <c>HttpResponse</c> directly.
+/// </para>
+/// </remarks>
+public static class ProblemDetailsContentType
+{
+    public const string Value = "application/problem+json";
+}
+
 public sealed class DomainExceptionHandler : IExceptionHandler
 {
     public async ValueTask<bool> TryHandleAsync(
@@ -15,20 +37,28 @@ public sealed class DomainExceptionHandler : IExceptionHandler
         {
             case DomainException domainException:
                 httpContext.Response.StatusCode = StatusCodes.Status400BadRequest;
-                await httpContext.Response.WriteAsJsonAsync(new ProblemDetails
-                {
-                    Title = "Bad Request",
-                    Detail = domainException.Message,
-                    Status = StatusCodes.Status400BadRequest
-                }, cancellationToken);
+                await httpContext.Response.WriteAsJsonAsync(
+                    new ProblemDetails
+                    {
+                        Title = "Bad Request",
+                        Detail = domainException.Message,
+                        Status = StatusCodes.Status400BadRequest
+                    },
+                    options: null,
+                    contentType: ProblemDetailsContentType.Value,
+                    cancellationToken);
                 return true;
             case UnauthorizedAccessException:
                 httpContext.Response.StatusCode = StatusCodes.Status401Unauthorized;
-                await httpContext.Response.WriteAsJsonAsync(new ProblemDetails
-                {
-                    Title = "Unauthorized",
-                    Status = StatusCodes.Status401Unauthorized
-                }, cancellationToken);
+                await httpContext.Response.WriteAsJsonAsync(
+                    new ProblemDetails
+                    {
+                        Title = "Unauthorized",
+                        Status = StatusCodes.Status401Unauthorized
+                    },
+                    options: null,
+                    contentType: ProblemDetailsContentType.Value,
+                    cancellationToken);
                 return true;
             default:
                 return false;
@@ -95,7 +125,7 @@ public sealed class MalformedRequestExceptionHandler : IExceptionHandler
                 Status = badRequest.StatusCode
             },
             options: null,
-            contentType: "application/problem+json",
+            contentType: ProblemDetailsContentType.Value,
             cancellationToken);
         return true;
     }
@@ -137,12 +167,16 @@ public sealed class PersistenceExceptionHandler(ILogger<PersistenceExceptionHand
             : StatusCodes.Status409Conflict;
 
         httpContext.Response.StatusCode = status;
-        await httpContext.Response.WriteAsJsonAsync(new ProblemDetails
-        {
-            Title = ReasonPhrases.GetReasonPhrase(status),
-            Detail = detail,
-            Status = status
-        }, cancellationToken);
+        await httpContext.Response.WriteAsJsonAsync(
+            new ProblemDetails
+            {
+                Title = ReasonPhrases.GetReasonPhrase(status),
+                Detail = detail,
+                Status = status
+            },
+            options: null,
+            contentType: ProblemDetailsContentType.Value,
+            cancellationToken);
         return true;
     }
 }
@@ -156,12 +190,16 @@ public sealed class GlobalExceptionHandler(ILogger<GlobalExceptionHandler> logge
             httpContext.Request.Method, httpContext.Request.Path);
 
         httpContext.Response.StatusCode = StatusCodes.Status500InternalServerError;
-        await httpContext.Response.WriteAsJsonAsync(new ProblemDetails
-        {
-            Title = "Internal Server Error",
-            Detail = environment.IsDevelopment() ? exception.Message : "An unexpected error occurred.",
-            Status = StatusCodes.Status500InternalServerError
-        }, cancellationToken);
+        await httpContext.Response.WriteAsJsonAsync(
+            new ProblemDetails
+            {
+                Title = "Internal Server Error",
+                Detail = environment.IsDevelopment() ? exception.Message : "An unexpected error occurred.",
+                Status = StatusCodes.Status500InternalServerError
+            },
+            options: null,
+            contentType: ProblemDetailsContentType.Value,
+            cancellationToken);
         return true;
     }
 }

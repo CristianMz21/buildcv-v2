@@ -48,7 +48,7 @@ Follow this strictly; don't mix tiers:
 
 1. **Domain** throws typed `DomainException` subclasses for invariant violations.
 2. **Application** handlers catch `DomainException`/`ArgumentException` and return `Result<T>` (`Domain/Common/ValueObjects/Result.cs`, with `Map`/`Bind`/`Match`).
-3. **Api** converts `Result<T>` to HTTP via `Common/ResultExtensions.ToHttpResult()` (403 for "Forbidden.", 404 for errors ending in "not found.", else 400); anything that leaks is turned into RFC 7807 ProblemDetails by the `IExceptionHandler`s in `Common/ApiExceptionHandlers.cs`. All error responses are ProblemDetails-shaped.
+3. **Api** converts `Result<T>` to HTTP via `Common/ResultExtensions.ToHttpResult()` (403 for "Forbidden.", 404 for errors ending in "not found.", else 400); anything that leaks is turned into RFC 7807 ProblemDetails by the `IExceptionHandler`s in `Common/ApiExceptionHandlers.cs`. All error responses are ProblemDetails-shaped **and `application/problem+json`-typed** — both halves, which is the correction issue #29 made: the bodies were always right and four call sites in `ApiExceptionHandlers` plus the JWT challenge answered `application/json`, because `WriteAsJsonAsync(value)` **overwrites** `Response.ContentType` when no `contentType` argument is passed. Every direct `HttpResponse` writer now passes `Common/ProblemDetailsContentType.Value`; never assign `Response.ContentType` and then call the one-argument overload. `Results.Problem(...)` sets it on its own. `ErrorContentTypeTests` asserts the header per writer, which is the assertion that was missing — every other error test reads bodies, and the body was never the broken half.
 
 Two deliberate qualifications to "all error responses are ProblemDetails-shaped":
 

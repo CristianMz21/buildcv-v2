@@ -38,10 +38,11 @@ public sealed class SecurityHeadersTests
     // come from GlobalExceptionHandler would be a different response produced by a different path, and
     // could carry a different header set for reasons this test is not about.
     //
-    // It is asserted on the ProblemDetails `title` rather than on the content type, because the content
-    // type here is application/json and not application/problem+json — measured. Three of the four
-    // handlers call WriteAsJsonAsync(ProblemDetails) with no explicit content type; only
-    // MalformedRequestExceptionHandler passes one. The BODY is ProblemDetails-shaped in all four.
+    // It is asserted on the ProblemDetails `title` rather than on the content type because the title is
+    // what identifies GlobalExceptionHandler as the writer; the content type would be satisfied by any
+    // of the four handlers. That the media type is application/problem+json at all is issue #29's fix —
+    // until then only MalformedRequestExceptionHandler passed an explicit content type and the other
+    // three answered application/json — and it is pinned per handler by ErrorContentTypeTests.
     [Fact]
     public async Task AnExceptionHandledResponse_StillCarriesEverySecurityHeader()
     {

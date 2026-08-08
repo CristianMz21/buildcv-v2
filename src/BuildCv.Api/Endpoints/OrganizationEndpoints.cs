@@ -58,7 +58,24 @@ public static class OrganizationEndpoints
             ICommandHandler<AddMemberCommand, Result<Organization>> handler,
             CancellationToken cancellationToken) =>
         {
-            if (!Enum.TryParse(request.Role, ignoreCase: true, out MembershipRole role))
+            // IsDefined for the reason the four resume routes state: TryParse accepts ANY numeric
+            // string, and Membership.Role is mapped to tinyint with an unchecked conversion
+            // (OrganizationConfiguration), so "99" stores as 99, "300" truncates to 44 and "-1" wraps to
+            // 255 — the same arithmetic #21 measured against SQL Server on the resume columns, which is
+            // the same column type. Nothing downstream stopped it — AddMember takes the role as given —
+            // so this route really did persist memberships whose role is a member of neither the enum
+            // nor the column's intent, and RemoveMember's "cannot remove the only owner" rule reads
+            // Role == Owner, which a 255 satisfies as "not an owner". BEHAVIOUR CHANGE: a numeric role
+            // outside 0..2 answered 200 before this line and answers 400 after it.
+            //
+            // It closes undefined values only. TryParse still OR-combines comma-separated members on a
+            // non-flags enum ("Owner,Member" is 0|2 = Member) and still accepts a leading sign ("+1" is
+            // Admin); both yield a real member, which is what the column and every reader assume, and
+            // both are pinned by EnumGuardTests rather than narrowed here — narrowing one of the six
+            // parse sites in this API and not the other five is how two contracts for one input shape
+            // get shipped.
+            if (!Enum.TryParse(request.Role, ignoreCase: true, out MembershipRole role)
+                || !Enum.IsDefined(role))
                 return Results.Problem(detail: "Invalid membership role.", statusCode: StatusCodes.Status400BadRequest);
 
             var result = await handler.Handle(new AddMemberCommand(

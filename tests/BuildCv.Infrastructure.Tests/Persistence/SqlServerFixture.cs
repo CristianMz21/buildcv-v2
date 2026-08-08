@@ -2,6 +2,7 @@ using BuildCv.Application.Common.Services;
 using BuildCv.Infrastructure.Persistence;
 using BuildCv.Infrastructure.Security.Encryption;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Testcontainers.MsSql;
 
 namespace BuildCv.Infrastructure.Tests.Persistence;
@@ -49,6 +50,19 @@ public sealed class SqlServerFixture : IAsyncLifetime
         ICurrentUser? currentUser = null, IBlindIndex? blindIndex = null) =>
         PersistenceTestContext.Create(
             ConnectionString, TimeProvider.System, currentUser, blindIndex, QueryTrackingBehavior.NoTracking);
+
+    // Same context the repositories get, with EF Core's own log wired to a recorder. Only
+    // EfCoreObservabilityLeakTests uses it: the EF Core logging surface — command text, parameter list,
+    // query compilation, and the exception chain behind a failed SaveChanges — exists on this provider
+    // and nowhere else, which is why the Api-tier leak test cannot observe it.
+    public BuildCvDbContext NewRecordedContext(ILoggerFactory loggerFactory) =>
+        PersistenceTestContext.Create(
+            ConnectionString,
+            TimeProvider.System,
+            currentUser: null,
+            blindIndex: null,
+            QueryTrackingBehavior.NoTracking,
+            loggerFactory);
 }
 
 [CollectionDefinition(Name)]

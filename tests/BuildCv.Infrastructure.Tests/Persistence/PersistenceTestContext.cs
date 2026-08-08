@@ -7,6 +7,7 @@ using BuildCv.Infrastructure.Tests.Security.Encryption;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.Extensions.Logging;
 
 namespace BuildCv.Infrastructure.Tests.Persistence;
 
@@ -41,16 +42,22 @@ internal static class PersistenceTestContext
     // round-trip tests were written against. The repository tests pass NoTracking, because that is what
     // AddInfrastructure configures and the repositories' explicit AsTracking() calls are only meaningful
     // against it.
+    //
+    // loggerFactory is null everywhere except EfCoreObservabilityLeakTests, which hands in a recorder so
+    // that EVERYTHING EF Core writes while talking to a real SQL Server — command text, parameter list,
+    // query compilation and the exception chain behind a failed SaveChanges — can be searched for
+    // candidate content. That surface exists only on this provider, so it is only reachable from here.
     public static BuildCvDbContext Create(
         string connectionString,
         TimeProvider timeProvider,
         ICurrentUser? currentUser = null,
         IBlindIndex? blindIndex = null,
-        QueryTrackingBehavior trackingBehavior = QueryTrackingBehavior.TrackAll)
+        QueryTrackingBehavior trackingBehavior = QueryTrackingBehavior.TrackAll,
+        ILoggerFactory? loggerFactory = null)
     {
         var index = blindIndex ?? BlindIndex();
 
-        var options = new DbContextOptionsBuilder<BuildCvDbContext>()
+        var builder = new DbContextOptionsBuilder<BuildCvDbContext>()
             .UseSqlServer(connectionString)
             .UseQueryTrackingBehavior(trackingBehavior)
             // Same order AddInfrastructure pins, for the same reason: the blind-index pass must not
@@ -62,9 +69,29 @@ internal static class PersistenceTestContext
             // Stated rather than merely omitted. Sensitive-data logging writes parameter values into
             // the log, and the parameters here include blind-index digests and freshly built
             // envelopes. It must be off in every environment, including this one.
-            .EnableSensitiveDataLogging(false)
-            .Options;
+            //
+            // It is also the negative control for EfCoreObservabilityLeakTests: flipping this one
+            // argument to true is what proves that test can fail, and
+            // TheTestHostNeverEnablesSensitiveDataLogging reads it back so the flip cannot be left
+            // behind.
+            .EnableSensitiveDataLogging(false);
 
-        return new BuildCvDbContext(options, Encryptor());
+        if (loggerFactory is not null)
+        {
+            builder.UseLoggerFactory(loggerFactory);
+
+            // Not a performance knob — it is what makes the query-compilation log OBSERVABLE.
+            //
+            // EF caches its internal service provider, and the compiled-query cache lives inside it.
+            // Measured: run EfCoreObservabilityLeakTests alone and every query compiles, so
+            // Microsoft.EntityFrameworkCore.Query is captured; run it after the other integration
+            // tests in the same collection and the same queries are already compiled, so that category
+            // never appears and the surface goes unwatched depending on test order. A private internal
+            // provider gives this context an empty query cache every time, which is the only way an
+            // absence assertion over the compiled query EXPRESSION means the same thing on every run.
+            builder.EnableServiceProviderCaching(false);
+        }
+
+        return new BuildCvDbContext(builder.Options, Encryptor());
     }
 }
