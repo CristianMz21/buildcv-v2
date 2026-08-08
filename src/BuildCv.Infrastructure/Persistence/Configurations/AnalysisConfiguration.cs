@@ -47,6 +47,16 @@ internal sealed class AnalysisConfiguration : IEntityTypeConfiguration<Analysis>
         builder.Property(analysis => analysis.JobPostingId).IsRequired();
         builder.Property(analysis => analysis.ScoredAt).IsRequired();
 
+        // Provenance: which VERSION of each aggregate this row scored. Plaintext like everything else in
+        // this table — two timestamps about rows, naming nobody — and NULLABLE, because a row written
+        // before these columns existed cannot say what it scored. Null is read as "unknown, therefore
+        // stale" everywhere; see the remark on Analysis.ResumeUpdatedAt.
+        //
+        // Deliberately NOT indexed. Nothing filters or orders on them: GetLatestByPairAsync finds the row
+        // through the (ResumeId, Seq) index and compares these in memory, on that one row.
+        builder.Property(analysis => analysis.ResumeUpdatedAt);
+        builder.Property(analysis => analysis.JobPostingUpdatedAt);
+
         // "Score history for this resume", keyset paginated.
         builder.HasIndex(nameof(Analysis.ResumeId), ShadowColumns.Seq);
 

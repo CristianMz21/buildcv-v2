@@ -1,7 +1,9 @@
 using System.Net;
+using System.Net.Http.Json;
 using System.Text.Json;
 using BuildCv.Application.Common.Pagination;
 using BuildCv.Application.Common.Repositories;
+using BuildCv.Domain.Jobs;
 using BuildCv.Domain.Resumes;
 using BuildCv.Domain.Scoring;
 using FluentAssertions;
@@ -197,6 +199,13 @@ public sealed class AnalysisReadTests
     // OLDEST FIRST over HTTP, walked the way a client walks it: three scores of one resume, one page at
     // a time, and the cursor moves FORWARD IN TIME. Every other paged list in this API runs the other
     // way, which is exactly why this one is asserted end to end rather than only at the handler.
+    //
+    // THE RESUME IS EDITED BETWEEN SCORES, and it has to be. Three identical requests no longer produce
+    // three rows — ScoreResumeHandler returns the stored analysis when the resume, the posting, the model
+    // version and the day all match — so a loop that only re-posted would leave one history entry and
+    // this test would be walking a page it wrote by accident. Adding a skill bumps Resume.UpdatedAt,
+    // which is what makes each run a distinct scoring EVENT rather than a button press. The distinct ids
+    // asserted below are the proof that it worked.
     [Fact]
     public async Task GetAnalyses_WalkedByCursor_ReplaysTheHistoryOldestFirst()
     {
@@ -207,10 +216,15 @@ public sealed class AnalysisReadTests
         var scored = new List<Guid>();
         for (var index = 0; index < 3; index++)
         {
+            if (index > 0)
+                await AddSkillAsync(client, candidateToken, resumeId, $"Skill{index}");
+
             var response = await ScoringEndpointTests.ScoreAsync(client, candidateToken, resumeId, jobId);
             response.StatusCode.Should().Be(HttpStatusCode.OK);
             scored.Add(IdOf(await response.Content.ReadAsStringAsync()));
         }
+
+        scored.Should().OnlyHaveUniqueItems("each edit makes the next score a new event, not a repeat");
 
         var visited = new List<Guid>();
         var pageSizes = new List<int>();
@@ -227,6 +241,88 @@ public sealed class AnalysisReadTests
 
         pageSizes.Should().Equal(2, 1);
         visited.Should().Equal(scored, "a score history is read forwards, from the first run");
+    }
+
+    // DE-DUPLICATION over HTTP, and the assertion is the HISTORY rather than the response.
+    //
+    // Both requests answer 200 with the same numbers whether the second one reused the stored analysis or
+    // wrote a second identical row, so comparing the two bodies proves nothing on its own. What separates
+    // the two worlds is how many entries the candidate's score history then has — one scoring event, not
+    // two button presses — and the shared id says which row they were both handed.
+    //
+    // Through the composed in-memory store the whole Api suite runs on, so this also pins that
+    // InMemoryAnalysisRepository.GetLatestByPairAsync agrees with the EF one; the SQL Server half is
+    // AnalysisRepositoryTests.GetLatestByPairAsync_ReturnsTheNewestRowForThatPairOnly.
+    [Fact]
+    public async Task Score_TwiceWithNothingChanged_ReturnsTheSameAnalysisAndLeavesOneHistoryEntry()
+    {
+        using var factory = new ApiTestFactory();
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        var (candidateToken, _, resumeId, jobId) = await ArrangeScorableAsync(client);
+
+        var first = await ScoringEndpointTests.ScoreAsync(client, candidateToken, resumeId, jobId);
+        first.StatusCode.Should().Be(HttpStatusCode.OK);
+        var second = await ScoringEndpointTests.ScoreAsync(client, candidateToken, resumeId, jobId);
+        second.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        IdOf(await second.Content.ReadAsStringAsync())
+            .Should().Be(IdOf(await first.Content.ReadAsStringAsync()));
+
+        var history = await GetHistoryPageAsync(client, candidateToken, resumeId, limit: 10, cursor: null);
+        history.Items.Should().ContainSingle("a re-score with nothing changed is not a second scoring event");
+
+        // And an edit still starts a new one, so this is de-duplication rather than a resume being
+        // scoreable only once.
+        await AddSkillAsync(client, candidateToken, resumeId, "Kubernetes");
+        var third = await ScoringEndpointTests.ScoreAsync(client, candidateToken, resumeId, jobId);
+        third.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        (await GetHistoryPageAsync(client, candidateToken, resumeId, limit: 10, cursor: null))
+            .Items.Should().HaveCount(2);
+    }
+
+    // STALENESS ON THE WIRE, over the whole loop the product is: score, read it back, edit the CV, read
+    // it back again.
+    //
+    // The same analysis id is read three times and the row never changes — only the resume beside it
+    // does — which is what makes this an assertion about a value computed at read time rather than one
+    // stored on the score. A persisted flag would answer `false` on the third read.
+    //
+    // The history is checked in the same request budget, because it is where the flag earns its keep: an
+    // older entry is stale and the run taken against the current CV is not, so a client can render the
+    // list without comparing anything itself.
+    [Fact]
+    public async Task GetAnalysis_AfterTheResumeIsEdited_ReportsTheStoredScoreAsStale()
+    {
+        using var factory = new ApiTestFactory();
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        var (candidateToken, _, resumeId, jobId) = await ArrangeScorableAsync(client);
+
+        var scored = await ScoringEndpointTests.ScoreAsync(client, candidateToken, resumeId, jobId);
+        scored.StatusCode.Should().Be(HttpStatusCode.OK);
+        var analysisId = IdOf(await scored.Content.ReadAsStringAsync());
+
+        (await IsStaleAsync(client, candidateToken, analysisId)).Should().BeFalse(
+            "nothing has changed since the score was taken");
+
+        await AddSkillAsync(client, candidateToken, resumeId, "Terraform");
+
+        (await IsStaleAsync(client, candidateToken, analysisId)).Should().BeTrue(
+            "the score now describes a CV the candidate no longer has");
+
+        var rescored = await ScoringEndpointTests.ScoreAsync(client, candidateToken, resumeId, jobId);
+        rescored.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"/v1/resumes/{resumeId}/analyses")
+            .WithBearer(candidateToken);
+        var history = await client.SendAsync(request);
+        history.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        using var json = JsonDocument.Parse(await history.Content.ReadAsStringAsync());
+        json.RootElement.GetProperty("items").EnumerateArray()
+            .Select(entry => entry.GetProperty("isStale").GetBoolean())
+            .Should().Equal(new[] { true, false },
+                "the history is oldest first, so the run that predates the edit is the stale one");
     }
 
     // Each entry is the same shape /scoring/score answered with, which is what makes "did my edit help"
@@ -322,6 +418,28 @@ public sealed class AnalysisReadTests
         return (candidateToken, recruiterToken, resumeId, jobId);
     }
 
+    // The cheapest real edit to a resume over HTTP. It matters only that it goes through a Domain mutator,
+    // because every one of them calls Touch() and that is what moves UpdatedAt.
+    internal static async Task AddSkillAsync(HttpClient client, string token, Guid resumeId, string skillName)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"/v1/resumes/{resumeId}/skills")
+        {
+            Content = JsonContent.Create(new { skillName, level = (string?)null, yearsOfExperience = (int?)null })
+        }.WithBearer(token);
+
+        var response = await client.SendAsync(request);
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    private static async Task<bool> IsStaleAsync(HttpClient client, string token, Guid analysisId)
+    {
+        var response = await GetAnalysisAsync(client, token, analysisId);
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        return json.RootElement.GetProperty("isStale").GetBoolean();
+    }
+
     private static async Task<string?> DetailOf(HttpResponseMessage response)
     {
         using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
@@ -373,6 +491,10 @@ public sealed class AnalysisReadTests
         public async Task<Analysis?> GetByIdAsync(AnalysisId id, CancellationToken cancellationToken = default) =>
             Reversed(await inner.GetByIdAsync(id, cancellationToken));
 
+        public async Task<Analysis?> GetLatestByPairAsync(
+            ResumeId resumeId, JobPostingId jobPostingId, CancellationToken cancellationToken = default) =>
+            Reversed(await inner.GetLatestByPairAsync(resumeId, jobPostingId, cancellationToken));
+
         public async Task<Page<Analysis>> GetPageByResumeIdAsync(
             ResumeId resumeId, PageRequest page, CancellationToken cancellationToken = default)
         {
@@ -380,6 +502,11 @@ public sealed class AnalysisReadTests
             return new Page<Analysis>([.. found.Items.Select(analysis => Reversed(analysis)!)], found.NextCursor);
         }
 
+        // The provenance is CARRIED THROUGH, and forgetting to would be invisible in the assertion this
+        // decorator exists for. Rebuilding the aggregate without it leaves both timestamps null, which
+        // reads as "unknown, therefore stale" — so every response through this store would report a stale
+        // score and no re-score would ever de-duplicate, while the recommendation ORDER this class is
+        // about stayed perfectly correct.
         private static Analysis? Reversed(Analysis? analysis) =>
             analysis is null
                 ? null
@@ -389,6 +516,8 @@ public sealed class AnalysisReadTests
                     analysis.ResumeId,
                     analysis.JobPostingId,
                     analysis.ScoredAt,
-                    [.. RecommendationOrder.Sort(analysis.Recommendations).Reverse()]);
+                    [.. RecommendationOrder.Sort(analysis.Recommendations).Reverse()],
+                    analysis.ResumeUpdatedAt,
+                    analysis.JobPostingUpdatedAt);
     }
 }

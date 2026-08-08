@@ -2,6 +2,7 @@ namespace BuildCv.Application.Tests.Fakes;
 
 using BuildCv.Application.Common.Pagination;
 using BuildCv.Application.Common.Repositories;
+using BuildCv.Domain.Jobs;
 using BuildCv.Domain.Resumes;
 using BuildCv.Domain.Scoring;
 
@@ -19,8 +20,16 @@ public sealed class FakeAnalysisRepository : IAnalysisRepository
     // stay untouched when a cursor is rejected is this one, so the counter has to live here too.
     public int ReadCount { get; private set; }
 
+    // Counts the INSERTS, which is the only thing that can tell de-duplication from a duplicate write.
+    //
+    // The response is identical either way: a re-score that reused the stored analysis and one that wrote
+    // a second identical row both answer 200 with the same numbers, so every assertion about the response
+    // shape passes in both worlds. This counter is the assertion that does not.
+    public int WriteCount { get; private set; }
+
     public Task AddAsync(Analysis analysis, CancellationToken cancellationToken = default)
     {
+        WriteCount++;
         _analyses.Add(new KeysetRow<Analysis>(analysis, ++_sequence));
         return Task.CompletedTask;
     }
@@ -29,6 +38,18 @@ public sealed class FakeAnalysisRepository : IAnalysisRepository
     {
         ReadCount++;
         return Task.FromResult(_analyses.FirstOrDefault(row => row.Item.Id == id)?.Item);
+    }
+
+    // Newest first by the insertion counter, matching both real implementations.
+    public Task<Analysis?> GetLatestByPairAsync(
+        ResumeId resumeId, JobPostingId jobPostingId, CancellationToken cancellationToken = default)
+    {
+        ReadCount++;
+        return Task.FromResult(_analyses
+            .Where(row => row.Item.ResumeId == resumeId && row.Item.JobPostingId == jobPostingId)
+            .OrderByDescending(row => row.Position)
+            .Select(row => row.Item)
+            .FirstOrDefault());
     }
 
     public Task<Page<Analysis>> GetPageByResumeIdAsync(

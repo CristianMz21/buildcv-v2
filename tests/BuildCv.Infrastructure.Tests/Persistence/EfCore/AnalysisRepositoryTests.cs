@@ -121,6 +121,81 @@ public sealed class AnalysisRepositoryTests
         reloaded.Recommendations.Should().BeEquivalentTo(analysis.Recommendations);
     }
 
+    // PROVENANCE ROUND-TRIPS AT FULL PRECISION, which is the property the de-duplication rests on rather
+    // than a mapping detail. That rule compares this column for EQUALITY against Resume.UpdatedAt loaded
+    // from a different table, so the two only ever agree if neither side loses precision: both are
+    // `datetimeoffset`, whose default scale is 7 — one .NET tick. A column mapped a scale short would
+    // truncate here, every comparison would miss, and the only symptom would be a de-duplication that
+    // never fires and a score permanently reported as stale. Nothing about a score's VALUE would change,
+    // so no other test in this suite could see it.
+    //
+    // The sub-millisecond ticks are what make that assertion able to fail; a whole-second seed would
+    // survive any scale down to 0.
+    //
+    // The three timestamps are DISTINCT from each other on purpose. Three columns of one type in one row
+    // is exactly the shape where a crossed mapping costs nothing at write time, and reusing one value
+    // would hide it.
+    [Fact]
+    public async Task AddAsync_ThenGetByIdAsync_RoundTripsTheProvenanceItScoredAtFullPrecision()
+    {
+        var resumeUpdatedAt = new DateTimeOffset(2026, 7, 1, 9, 15, 30, TimeSpan.Zero).AddTicks(1234567);
+        var jobPostingUpdatedAt = new DateTimeOffset(2026, 7, 2, 18, 45, 0, TimeSpan.Zero).AddTicks(7654321);
+        var scoredAt = new DateTimeOffset(2026, 7, 3, 6, 0, 0, TimeSpan.Zero).AddTicks(9999999);
+
+        var analysis = Analysis.Create(
+            AnalysisId.New(),
+            ScoreBreakdown.Create(0.9, 0.8, 0.7, 0.6, 0.5, 0.4, ScoringWeightsSnapshot.Default()),
+            ResumeId.New(),
+            JobPostingId.New(),
+            scoredAt,
+            recommendations: null,
+            resumeUpdatedAt: resumeUpdatedAt,
+            jobPostingUpdatedAt: jobPostingUpdatedAt);
+
+        await using (var writer = _fixture.NewApplicationContext())
+            await TestRepositories.Analyses(writer).AddAsync(analysis);
+
+        await using var reader = _fixture.NewApplicationContext();
+        var reloaded = await TestRepositories.Analyses(reader).GetByIdAsync(analysis.Id);
+
+        reloaded.Should().NotBeNull();
+        reloaded!.ResumeUpdatedAt.Should().Be(resumeUpdatedAt);
+        reloaded.JobPostingUpdatedAt.Should().Be(jobPostingUpdatedAt);
+        reloaded.ScoredAt.Should().Be(scoredAt);
+
+        // The comparison the product actually performs, executed rather than reasoned about: an instant
+        // that made the round trip must still be EQUAL to the in-memory one it came from.
+        reloaded.IsStaleFor(resumeUpdatedAt).Should().BeFalse(
+            "a resume untouched since the score was taken is not stale");
+    }
+
+    // WHAT A HISTORICAL ROW LOOKS LIKE. The migration adds both columns as nullable, so every analysis
+    // written before it reads back with neither, and this is that row: Analysis.Create defaults both to
+    // null exactly so a writer that cannot know what it scored says so.
+    //
+    // Null must read as STALE, never as fresh. It is the unsafe direction that is cheap to get wrong —
+    // `ResumeUpdatedAt == null || ResumeUpdatedAt != current` and `ResumeUpdatedAt != current` behave
+    // identically here, but a nullable comparison written the other way round ("no provenance recorded,
+    // so nothing has changed") would tell a candidate a score taken against a CV nobody can identify is
+    // current.
+    [Fact]
+    public async Task AddAsync_WithoutProvenance_ReadsBackAsUnknownAndThereforeStale()
+    {
+        var analysis = NewAnalysis(ResumeId.New(), 0.5);
+
+        await using (var writer = _fixture.NewApplicationContext())
+            await TestRepositories.Analyses(writer).AddAsync(analysis);
+
+        await using var reader = _fixture.NewApplicationContext();
+        var reloaded = await TestRepositories.Analyses(reader).GetByIdAsync(analysis.Id);
+
+        reloaded.Should().NotBeNull();
+        reloaded!.ResumeUpdatedAt.Should().BeNull();
+        reloaded.JobPostingUpdatedAt.Should().BeNull();
+        reloaded.IsStaleFor(DateTimeOffset.UtcNow).Should().BeTrue(
+            "a score that cannot say which version of the resume it scored is not known to be current");
+    }
+
     [Fact]
     public async Task GetByIdAsync_ForAnIdThatWasNeverStored_ReturnsNull()
     {
@@ -161,6 +236,81 @@ public sealed class AnalysisRepositoryTests
             .Breakdown.Should().Be(analysis.Breakdown, "the history is tombstoned for audit, not destroyed");
     }
 
+    // THE DE-DUPLICATION LOOKUP against a real database, which is the half the in-memory parity test
+    // cannot speak for: this is the one that proves `OrderByDescending(EF.Property<long>(…, Seq))`
+    // translates instead of silently pulling the pair's whole history into memory and sorting it there.
+    //
+    // Every row carries the SAME ScoredAt on purpose. "Newest" is defined by the insertion sequence, not
+    // by the caller-supplied instant, so an implementation that ordered on ScoredAt would be free to
+    // return either row — and would pass this test half the time if the instants differed.
+    //
+    // The two decoys are the pairs that share one half of the key: same resume against another posting,
+    // another resume against this posting.
+    [Fact]
+    public async Task GetLatestByPairAsync_ReturnsTheNewestRowForThatPairOnly()
+    {
+        var resumeId = ResumeId.New();
+        var jobPostingId = JobPostingId.New();
+        var scoredAt = DateTimeOffset.UtcNow;
+
+        var older = NewAnalysis(resumeId, 0.4, scoredAt, jobPostingId);
+        var newer = NewAnalysis(resumeId, 0.7, scoredAt, jobPostingId);
+
+        await using (var writer = _fixture.NewApplicationContext())
+        {
+            var repository = TestRepositories.Analyses(writer);
+            await repository.AddAsync(older);
+            await repository.AddAsync(NewAnalysis(resumeId, 0.1, scoredAt));
+            await repository.AddAsync(NewAnalysis(ResumeId.New(), 0.2, scoredAt, jobPostingId));
+            await repository.AddAsync(newer);
+        }
+
+        await using var reader = _fixture.NewApplicationContext();
+        var found = await TestRepositories.Analyses(reader).GetLatestByPairAsync(resumeId, jobPostingId);
+
+        found.Should().NotBeNull();
+        found!.Id.Should().Be(newer.Id);
+
+        // The recommendations come with it. ScoreResumeHandler hands this row straight back to the
+        // caller, so a lookup that loaded the principal without its owned collection would answer a
+        // re-score with advice the first run had and the second silently lost.
+        found.Recommendations.Should().HaveCount(newer.Recommendations.Count);
+    }
+
+    [Fact]
+    public async Task GetLatestByPairAsync_ForAPairThatWasNeverScored_ReturnsNull()
+    {
+        await using var reader = _fixture.NewApplicationContext();
+
+        (await TestRepositories.Analyses(reader).GetLatestByPairAsync(ResumeId.New(), JobPostingId.New()))
+            .Should().BeNull();
+    }
+
+    // The soft-delete filter is on this path too. Without it a re-score after "delete my resume" could be
+    // answered from a tombstoned row — a score the candidate was promised had disappeared.
+    [Fact]
+    public async Task GetLatestByPairAsync_AfterTheResumeItScoredWasDeleted_ReturnsNull()
+    {
+        var resume = Resume.Create(AccountId.New(), new ContactInformation(
+            PersonName.Create("Test Person"), Email.Create($"latest.{Guid.NewGuid():N}@example.com")));
+        var jobPostingId = JobPostingId.New();
+        var analysis = NewAnalysis(resume.Id, 0.6, DateTimeOffset.UtcNow, jobPostingId);
+
+        await using (var writer = _fixture.NewApplicationContext())
+        {
+            await TestRepositories.Resumes(writer).AddAsync(resume);
+            await TestRepositories.Analyses(writer).AddAsync(analysis);
+        }
+
+        await using (var deleter = _fixture.NewApplicationContext())
+            await TestRepositories.Resumes(deleter).DeleteAsync(resume.Id);
+
+        await using var reader = _fixture.NewApplicationContext();
+
+        (await TestRepositories.Analyses(reader).GetLatestByPairAsync(resume.Id, jobPostingId))
+            .Should().BeNull("a tombstoned score must not be handed back to a re-score");
+    }
+
     [Fact]
     public async Task GetPageByResumeIdAsync_ForAResumeThatWasNeverScored_IsAnEmptyFinalPage()
     {
@@ -172,12 +322,13 @@ public sealed class AnalysisRepositoryTests
         page.NextCursor.Should().BeNull();
     }
 
-    private static Analysis NewAnalysis(ResumeId resumeId, double skills, DateTimeOffset? scoredAt = null) =>
+    private static Analysis NewAnalysis(
+        ResumeId resumeId, double skills, DateTimeOffset? scoredAt = null, JobPostingId? jobPostingId = null) =>
         Analysis.Create(
             AnalysisId.New(),
             ScoreBreakdown.Create(skills, 0.8, 0.7, 0.6, 0.5, 0.4, ScoringWeightsSnapshot.Default()),
             resumeId,
-            JobPostingId.New(),
+            jobPostingId ?? JobPostingId.New(),
             scoredAt ?? DateTimeOffset.UtcNow,
             [
                 Recommendation.Create(

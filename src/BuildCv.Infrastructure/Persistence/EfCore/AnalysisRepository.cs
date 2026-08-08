@@ -1,7 +1,9 @@
 using BuildCv.Application.Common.Pagination;
 using BuildCv.Application.Common.Repositories;
+using BuildCv.Domain.Jobs;
 using BuildCv.Domain.Resumes;
 using BuildCv.Domain.Scoring;
+using BuildCv.Infrastructure.Persistence.Conventions;
 using Microsoft.EntityFrameworkCore;
 
 namespace BuildCv.Infrastructure.Persistence.EfCore;
@@ -46,6 +48,32 @@ internal sealed class AnalysisRepository : IAnalysisRepository
     {
         ArgumentNullException.ThrowIfNull(id);
         return _context.Analyses.FirstOrDefaultAsync(analysis => analysis.Id == id, cancellationToken);
+    }
+
+    // The newest score for one pair, which is the row ScoreResumeHandler compares against before writing
+    // a duplicate.
+    //
+    // Ordered on the Seq shadow column rather than on ScoredAt — the same axis the history walks, and for
+    // the same reason: ScoredAt is caller-supplied and two rows can share it, so it cannot break a tie.
+    //
+    // Served by the (ResumeId, Seq) index: SQL Server seeks the resume, walks Seq backwards and applies
+    // JobPostingId as a residual predicate, so the first matching row ends the scan. A dedicated
+    // (ResumeId, JobPostingId, Seq) index would turn that into a pure seek and is deliberately NOT added
+    // — one resume's score history is a handful of rows, so the index would cost a write on every insert
+    // to save a few page reads. Revisit if a resume is ever scored against hundreds of postings.
+    //
+    // NO AsSplitQuery, for the reason spelled out on GetByIdAsync: Analysis owns one collection, so there
+    // is no cartesian product for a split to prevent.
+    public Task<Analysis?> GetLatestByPairAsync(
+        ResumeId resumeId, JobPostingId jobPostingId, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(resumeId);
+        ArgumentNullException.ThrowIfNull(jobPostingId);
+
+        return _context.Analyses
+            .Where(analysis => analysis.ResumeId == resumeId && analysis.JobPostingId == jobPostingId)
+            .OrderByDescending(analysis => EF.Property<long>(analysis, ShadowColumns.Seq))
+            .FirstOrDefaultAsync(cancellationToken);
     }
 
     // Score history for one resume, oldest first, walking the (ResumeId, Seq) index in its own order.

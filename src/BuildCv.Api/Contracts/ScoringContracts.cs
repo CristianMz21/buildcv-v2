@@ -63,10 +63,21 @@ public sealed record ScoreResumeRequest(Guid ResumeId, Guid JobPostingId);
 /// the ones that were not are absent from both the total and the advice.
 /// </para>
 /// <para>
+/// <b><c>isStale</c> is computed per request and never stored.</b> It is true when the resume has been
+/// edited since this score was taken, and ALSO true when the analysis predates the provenance columns
+/// and cannot say which version it scored — unknown is reported as stale, never as current, because the
+/// cost of the wrong answer is a candidate trusting a number that no longer describes their CV.
+/// <c>POST /v1/scoring/score</c> therefore always answers <c>false</c>: the run it returns was either
+/// just computed from the current resume or reused precisely because the resume had not moved. Only the
+/// resume side is reported; a posting edit does not raise this flag.
+/// </para>
+/// <para>
 /// Two analyses can therefore report the same <c>Weights.SchemaVersion</c> and still have been scored
 /// under different weightings, because each posting asks about a different set of sections. The
-/// version names the weighting RULE; the snapshot names the RESULT. Compare the weights before
-/// comparing two <see cref="OverallScore"/> values across postings.
+/// version names the scoring MODEL — the weights and the formulas together; the snapshot names the
+/// RESULT of applying that model to one posting. Compare the weights before comparing two
+/// <see cref="OverallScore"/> values across postings, and treat a different version as "not
+/// comparable at all" rather than as a difference to explain.
 /// </para>
 /// </remarks>
 public sealed record AnalysisResponse(
@@ -77,9 +88,17 @@ public sealed record AnalysisResponse(
     DateTimeOffset ScoredAt,
     IReadOnlyList<RecommendationResponse> Recommendations,
     int OverallScore,
-    string Band)
+    string Band,
+    bool IsStale)
 {
-    public static AnalysisResponse From(Analysis analysis)
+    /// <param name="analysis">The stored scoring run.</param>
+    /// <param name="isStale">
+    /// Whether the resume has changed since this score was taken — decided by
+    /// <c>Application.Scoring.AnalysisView</c> and passed in, never derived here. It is a comparison
+    /// against the CURRENT resume, which a DTO holding one analysis cannot see, and it is deliberately
+    /// not persisted: a stored copy would still read "current" the moment the candidate edited anything.
+    /// </param>
+    public static AnalysisResponse From(Analysis analysis, bool isStale)
     {
         ArgumentNullException.ThrowIfNull(analysis);
 
@@ -95,7 +114,8 @@ public sealed record AnalysisResponse(
             // which ten survive the cap; this sorts again, to decide what the candidate reads first.
             [.. RecommendationOrder.Sort(analysis.Recommendations).Select(RecommendationResponse.From)],
             analysis.OverallScore,
-            analysis.Band.ToString());
+            analysis.Band.ToString(),
+            isStale);
     }
 }
 
@@ -126,6 +146,11 @@ public sealed record ScoreBreakdownResponse(
 // Which weighting explained this score. SchemaVersion travels with it deliberately: a client comparing
 // two analyses from either side of a redistribution needs to know the two are not measured in the same
 // units.
+//
+// SchemaVersion names the SCORING MODEL — weights or formulas. The engine's formulas are not visible
+// anywhere else in this response, so this integer is the only thing that can tell a client two scores
+// were produced by different rules; the six weights beside it cannot, because a formula change moves a
+// score without moving a weight.
 public sealed record ScoringWeightsResponse(
     double Skills,
     double Experience,

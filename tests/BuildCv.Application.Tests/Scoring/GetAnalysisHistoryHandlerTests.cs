@@ -33,7 +33,7 @@ public sealed class GetAnalysisHistoryHandlerTests
 
         var page = await Page(owner, resume.Id);
 
-        page.Items.Select(analysis => analysis.Id).Should().Equal(first.Id, second.Id, third.Id);
+        page.Items.Select(entry => entry.Analysis.Id).Should().Equal(first.Id, second.Id, third.Id);
         page.NextCursor.Should().BeNull();
     }
 
@@ -59,7 +59,7 @@ public sealed class GetAnalysisHistoryHandlerTests
         {
             var page = await Page(owner, resume.Id, limit: 2, cursor);
             pageSizes.Add(page.Items.Count);
-            visited.AddRange(page.Items.Select(analysis => analysis.Id));
+            visited.AddRange(page.Items.Select(entry => entry.Analysis.Id));
             pageSizes.Count.Should().BeLessThan(20, "a cursor walk that never terminates is a bug, not a hang");
             cursor = page.NextCursor;
         }
@@ -209,7 +209,7 @@ public sealed class GetAnalysisHistoryHandlerTests
         _analyses.ReadCount.Should().Be(2);
     }
 
-    private async Task<Page<Analysis>> Page(
+    private async Task<Page<AnalysisView>> Page(
         AccountId requester, ResumeId resumeId, int? limit = null, string? cursor = null)
     {
         var result = await _handler.Handle(
