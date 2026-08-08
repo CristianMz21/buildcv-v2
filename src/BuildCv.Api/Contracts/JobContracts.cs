@@ -9,41 +9,37 @@ public sealed record CreateJobRequest(
     string? Description);
 
 // The wire shape of a job posting. It exists for the same reason AnalysisResponse does, one endpoint
-// over: /jobs returned the JobPosting AGGREGATE, which CLAUDE.md forbids, and this chain put TWO NEW
-// ENUMS on that aggregate — JobPosting.EducationLevel and LanguageRequirement.MinimumLevel. With no
-// global JsonStringEnumConverter registered anywhere (ScoringContractTests measures that, which is
-// why every name in this file comes from ToString() rather than a converter), both were shipping as
-// raw integers, and their numbers are documented in Domain as an append-only PERSISTENCE detail. The
+// over: /jobs returned the JobPosting AGGREGATE, which CLAUDE.md forbids, and its enums were shipping
+// as raw integers whose numbers are documented in Domain as an append-only PERSISTENCE detail. The
 // moment a client binds to them they are a public API contract too and renumbering breaks it.
 //
-// FREE NOW, BREAKING LATER, and that is the whole argument for doing it in this chain rather than the
-// next: no endpoint can set either field yet — CreateJobRequest carries Title, CompanyName, CompanyId
-// and Description, there is no update endpoint, and JobPosting.SetEducationLevel and
-// AddLanguageRequirement have no caller in src/ — so `educationLevel` is null and
-// `languageRequirements` is [] on every posting the API can produce. Nobody has read either number
-// yet. Once the authoring endpoints land, changing it is a client-visible break.
+// EVERY ENUM CARRIES ITS NAME AND EVERY ID IS A BARE GUID — the v1 settlement, applied here to the
+// shapes this file used to defer. It holds across every v1 route rather than only this one, and it is
+// EXECUTED rather than claimed: V1ContractShapeTests walks each route's real response body and fails
+// on a single-value wrapper anywhere in the tree or an enum-named property that is a number.
 //
-// THE PRE-CHAIN RESPONSE IS OTHERWISE REPRODUCED KEY FOR KEY, field order included, captured off the
-// live endpoint before this type existed:
+//   - `status` and `requirements[].priority` shipped as integers and are names now: "Draft", never 0,
+//     from ToString(), so a JsonStringEnumConverter registered later cannot change the wire and a
+//     Domain renumbering stays a migration instead of a client break.
+//   - Ids lost their {"value": guid} envelope, `companyName` its {"value": string}, and
+//     `requirements[].skill` its {"name": string}. All three were what a strongly-typed Domain record
+//     happened to serialize into, not decisions. Unwrapping `skill` also makes it round-trip: the
+//     /v1/job-offers/extract proposal, the /v1/job-offers/import request and this response all say
+//     `"skill": "React"`, where the wrapper made the read side disagree with both write sides.
+//   - `educationLevel` and `languageRequirements[].minimumLevel` carried names from the day the DTO
+//     landed and are unchanged.
 //
-//   - `status` stays an INTEGER, and so does `requirements[].priority`. Both predate this chain and
-//     have clients. The inconsistency with the two named enums below is deliberate and is the same
-//     trade AnalysisResponse made with `band`: flipping a pre-existing encoding is its own repo-wide
-//     change, and a consistent bad convention beats a half-flipped one.
-//   - Ids keep their {"value": guid} envelope, `companyName` its {"value": string} and
-//     `requirements[].skill` its {"name": string}, because that is what a strongly-typed Domain record
-//     already serialized into. Declared here rather than left to the Domain types so a refactor there
-//     cannot change the wire by accident.
-//   - `educationLevel` and `languageRequirements[].minimumLevel` carry NAMES: "Bachelor", not 2. They
-//     belong to this chain, are unmerged, and have no clients, so naming them is still free.
+// All of it was free because no client existed when /v1 shipped; the moment one binds, any of these
+// is a /v2. The mapping stays declared here, field by field, so a Domain refactor cannot change the
+// wire by accident.
 public sealed record JobPostingResponse(
-    IdEnvelope Id,
-    IdEnvelope OwnerId,
+    Guid Id,
+    Guid OwnerId,
     string Title,
     string? Description,
-    IdEnvelope? CompanyId,
-    CompanyNameEnvelope? CompanyName,
-    int Status,
+    Guid? CompanyId,
+    string? CompanyName,
+    string Status,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
     DateTimeOffset? PublishedAt,
@@ -58,13 +54,13 @@ public sealed record JobPostingResponse(
         ArgumentNullException.ThrowIfNull(posting);
 
         return new JobPostingResponse(
-            new IdEnvelope(posting.Id.Value),
-            new IdEnvelope(posting.OwnerId.Value),
+            posting.Id.Value,
+            posting.OwnerId.Value,
             posting.Title,
             posting.Description,
-            posting.CompanyId is { } companyId ? new IdEnvelope(companyId.Value) : null,
-            posting.CompanyName is { } companyName ? new CompanyNameEnvelope(companyName.Value) : null,
-            (int)posting.Status,
+            posting.CompanyId?.Value,
+            posting.CompanyName?.Value,
+            posting.Status.ToString(),
             posting.CreatedAt,
             posting.UpdatedAt,
             posting.PublishedAt,
@@ -78,19 +74,14 @@ public sealed record JobPostingResponse(
     }
 }
 
-// The {"value": string} wrapper OrganizationName already serialized into, kept because it predates
-// this chain. Separate from IdEnvelope rather than generic: the two carry different types and one of
-// them is a Guid, so a shared shape would only look like reuse.
-public sealed record CompanyNameEnvelope(string Value);
-
-public sealed record JobRequirementResponse(TechnologyEnvelope Skill, int Priority, double Weight)
+// `skill` is the technology name as a bare string — "C#", not {"name": "C#"} — matching what
+// /v1/job-offers/extract proposes and what /v1/job-offers/import accepts, so a requirement
+// round-trips without a shape change. `priority` is the RequirementPriority name.
+public sealed record JobRequirementResponse(string Skill, string Priority, double Weight)
 {
-    // `priority` stays an integer: RequirementPriority predates this chain and ships that way today.
     public static JobRequirementResponse From(JobRequirement requirement) =>
-        new(new TechnologyEnvelope(requirement.Skill.Name), (int)requirement.Priority, requirement.Weight);
+        new(requirement.Skill.Name, requirement.Priority.ToString(), requirement.Weight);
 }
-
-public sealed record TechnologyEnvelope(string Name);
 
 public sealed record ResponsibilityResponse(string Description)
 {

@@ -38,7 +38,7 @@ public static class AuthEndpoints
             if (result.IsSuccess)
                 AuditLog.Log(logger, "register_success", new AccountId(result.Value!.Id), httpContext, request.Email);
 
-            return result.ToHttpResult(dto => Results.Created($"/auth/accounts/{dto.Id}", dto));
+            return result.ToHttpResult(dto => Results.Created($"/v1/auth/accounts/{dto.Id}", dto));
         })
         .AllowAnonymous()
         .RequireRateLimiting(RateLimitPolicies.Auth);
@@ -211,8 +211,8 @@ public static class AuthEndpoints
         // longer authenticates. CsrfGuardMiddleware gates on cookie PRESENCE, so the next unsafe
         // request enters antiforgery validation as anonymous holding an authenticated-bound token
         // and gets 403 — not the 401 a "retry on 401" loop is waiting for. Refresh proactively off
-        // the `expiresIn` field returned by /auth/login and /auth/refresh, and re-fetch this token
-        // afterwards.
+        // the `expiresIn` field returned by /v1/auth/login and /v1/auth/refresh, and re-fetch this
+        // token afterwards.
         group.MapGet("/antiforgery", (IAntiforgery antiforgery, HttpContext httpContext) =>
         {
             var tokens = antiforgery.GetAndStoreTokens(httpContext);

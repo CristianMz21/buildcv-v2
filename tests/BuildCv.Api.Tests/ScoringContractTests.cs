@@ -78,19 +78,14 @@ public class ScoringContractTests
         recommendation.GetProperty("impact").GetDouble().Should().Be(0.15);
     }
 
-    // Four pre-chain fields keep their old encoding, and a fifth deliberately does NOT — asserted in the
-    // same test so the exception cannot be read off as an omission. `band`, `id`, `resumeId` and
-    // `jobPostingId` are deliberate inconsistencies with the named enums above, each cheaper than
-    // breaking a client. `recommendations` is the opposite trade and the point of the release: pre-chain
-    // Analysis.Recommendations was IReadOnlyList<string>, so the field shipped as string[], and it is an
-    // array of OBJECTS now. Every other assertion in this file is about a field this chain added; without
-    // the last one, the file would document a response as unchanged while changing a client's type.
-    //
-    // Measured, not assumed: shipping recommendations as strings again (a JsonConverter writing
-    // v.Message) fails SIX tests, this one among them. So the last line is not the encoding's only
-    // guard — it is what makes this test's own stated scope true, which is the defect it closes.
+    // The two v1 contract settlements, pinned at the mapper: `band` carries the ScoreBand NAME like
+    // every other enum in the response, and the three ids are bare guids rather than {"value": guid}
+    // envelopes. Bare means bare: GetGuid() on the property itself would throw if an envelope object
+    // ever came back, so the assertion cannot pass on a wrapped id. `recommendations` stays an array
+    // of objects — it was string[] before the scoring chain and a typed client breaks on the first
+    // non-empty array, which is why the shape is worth restating beside the fields that changed here.
     [Fact]
-    public void Serialized_PreChainFieldsKeepTheirOldEncodingExceptRecommendations()
+    public void Serialized_BandCarriesItsNameAndIdsAreBareGuids()
     {
         var analysis = BuildAnalysis(
             Advice(SectionType.Skills, RecommendationPriority.Critical,
@@ -100,15 +95,13 @@ public class ScoringContractTests
             JsonSerializer.Serialize(AnalysisResponse.From(analysis), WebOptions));
         var root = json.RootElement;
 
-        root.GetProperty("band").ValueKind.Should().Be(JsonValueKind.Number,
-            "flipping ScoreBand to a string is a repo-wide change, not a scoring one");
-        root.GetProperty("id").GetProperty("value").ValueKind.Should().Be(JsonValueKind.String);
-        root.GetProperty("resumeId").GetProperty("value").ValueKind.Should().Be(JsonValueKind.String);
-        root.GetProperty("jobPostingId").GetProperty("value").ValueKind.Should().Be(JsonValueKind.String);
+        root.GetProperty("band").GetString().Should().Be(analysis.Band.ToString(),
+            "every enum on the v1 wire carries its name — band was the one integer left");
+        root.GetProperty("id").GetGuid().Should().Be(analysis.Id.Value);
+        root.GetProperty("resumeId").GetGuid().Should().Be(analysis.ResumeId.Value);
+        root.GetProperty("jobPostingId").GetGuid().Should().Be(analysis.JobPostingId.Value);
 
-        root.GetProperty("recommendations")[0].ValueKind.Should().Be(JsonValueKind.Object,
-            "the one pre-chain field whose wire type this chain changes — it was string[] and a typed "
-            + "client breaks on the first non-empty array");
+        root.GetProperty("recommendations")[0].ValueKind.Should().Be(JsonValueKind.Object);
     }
 
     // Both arrays that carry a SectionType name it. `sections[]` looks pre-existing and is not — it was

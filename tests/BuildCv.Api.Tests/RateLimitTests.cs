@@ -10,7 +10,7 @@ public sealed class RateLimitTests
     private const string NewPassword = "An0ther!Password#2026";
 
     private static HttpRequestMessage ChangePasswordRequest(string accessToken, string currentPassword) =>
-        new HttpRequestMessage(HttpMethod.Post, "/auth/change-password")
+        new HttpRequestMessage(HttpMethod.Post, "/v1/auth/change-password")
         {
             Content = JsonContent.Create(new { currentPassword, newPassword = NewPassword })
         }.WithBearer(accessToken);
@@ -27,7 +27,7 @@ public sealed class RateLimitTests
         var responses = new List<HttpResponseMessage>();
         for (var i = 0; i < 6; i++)
         {
-            responses.Add(await client.PostAsJsonAsync("/auth/login",
+            responses.Add(await client.PostAsJsonAsync("/v1/auth/login",
                 new { email = TestHelpers.CandidateEmail, password = "wrong-password" }));
         }
 
@@ -51,7 +51,7 @@ public sealed class RateLimitTests
         var responses = new List<HttpResponseMessage>();
         for (var i = 0; i < 6; i++)
         {
-            using var request = new HttpRequestMessage(HttpMethod.Post, "/auth/login")
+            using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/auth/login")
             {
                 Content = JsonContent.Create(new { email = "nobody@example.com", password = "wrong-password" })
             };
@@ -95,7 +95,7 @@ public sealed class RateLimitTests
 
         var responses = new List<HttpResponseMessage>();
         for (var i = 0; i < 21; i++)
-            responses.Add(await client.PostAsync("/auth/logout", content: null));
+            responses.Add(await client.PostAsync("/v1/auth/logout", content: null));
 
         responses.Take(20).Should().OnlyContain(r => r.StatusCode == HttpStatusCode.NoContent);
         responses[20].StatusCode.Should().Be(HttpStatusCode.TooManyRequests);
@@ -111,7 +111,7 @@ public sealed class RateLimitTests
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
 
         for (var i = 0; i < 10; i++)
-            (await client.PostAsync("/auth/logout", content: null)).Dispose();
+            (await client.PostAsync("/v1/auth/logout", content: null)).Dispose();
 
         var register = await client.RegisterAsync(TestHelpers.CandidateEmail);
 

@@ -182,12 +182,24 @@ app.UseAuthorization();
 if (app.Environment.IsDevelopment())
     app.MapOpenApi().AllowAnonymous();
 
-app.MapAuthEndpoints();
-app.MapResumeEndpoints();
-app.MapJobEndpoints();
-app.MapJobOfferEndpoints();
-app.MapOrganizationEndpoints();
-app.MapScoringEndpoints();
+// Every public route lives under one URL version segment, so the analysis contract can change in a
+// /v2 without breaking whatever clients exist by then. A hand-rolled group rather than the
+// Asp.Versioning package, which is not in the dependency graph: with exactly one version and no
+// header or media-type negotiation, the package would buy a version-set model this API does not use
+// at the price of a dependency and a second routing concept. One group is the whole mechanism.
+//
+// The version prefix is route surface, not just decoration — three path-matched pieces move with it
+// and break silently if they drift: CsrfGuardMiddleware.ExemptPaths matches on path,
+// AuthCookies.RefreshCookiePath scopes the refresh cookie to its endpoint, and the Location headers
+// built in the endpoint lambdas name absolute paths.
+var v1 = app.MapGroup("/v1");
+
+v1.MapAuthEndpoints();
+v1.MapResumeEndpoints();
+v1.MapJobEndpoints();
+v1.MapJobOfferEndpoints();
+v1.MapOrganizationEndpoints();
+v1.MapScoringEndpoints();
 
 app.Run();
 

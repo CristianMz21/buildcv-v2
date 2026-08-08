@@ -167,7 +167,7 @@ public sealed class ResumeExtractTests
         content.Headers.ContentType = new MediaTypeHeaderValue("multipart/form-data");
         content.Headers.ContentType.Parameters.Add(new NameValueHeaderValue("boundary", boundary));
 
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/resumes/import/extract")
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/resumes/import/extract")
         {
             Content = content,
         }.WithBearer(token);
@@ -184,7 +184,7 @@ public sealed class ResumeExtractTests
         using var factory = new ApiTestFactory();
         using var client = factory.CreateClient();
 
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/resumes/import/extract")
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/resumes/import/extract")
         {
             Content = Upload(Encoding.UTF8.GetBytes("text"), "text/plain", "cv.txt"),
         };
@@ -202,7 +202,7 @@ public sealed class ResumeExtractTests
         using var client = factory.CreateCookieClient();
         await client.RegisterAndLoginAsync(TestHelpers.CandidateEmail);
 
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/resumes/import/extract")
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/resumes/import/extract")
         {
             Content = Upload(Encoding.UTF8.GetBytes("text"), "text/plain", "cv.txt"),
         };
@@ -218,7 +218,7 @@ public sealed class ResumeExtractTests
         await client.RegisterAndLoginAsync(TestHelpers.CandidateEmail);
         var csrfToken = await client.GetAntiforgeryTokenAsync();
 
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/resumes/import/extract")
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/resumes/import/extract")
         {
             Content = Upload(Encoding.UTF8.GetBytes("text"), "text/plain", "cv.txt"),
         };
@@ -271,7 +271,7 @@ public sealed class ResumeExtractTests
     private static async Task<HttpResponseMessage> PostExtractAsync(
         HttpClient client, string token, HttpContent content)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/resumes/import/extract")
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/resumes/import/extract")
         {
             Content = content,
         }.WithBearer(token);

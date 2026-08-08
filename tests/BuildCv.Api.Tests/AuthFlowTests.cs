@@ -27,7 +27,7 @@ public sealed class AuthFlowTests
 
         var refreshCookie = TestHelpers.GetSetCookie(login, "refresh_token");
         refreshCookie.Should().ContainEquivalentOf("HttpOnly").And.ContainEquivalentOf("SameSite=Strict")
-            .And.ContainEquivalentOf("Path=/auth/refresh");
+            .And.ContainEquivalentOf("Path=/v1/auth/refresh");
     }
 
     // Anonymous callers must not be able to name a privileged role at registration. Each case gets
@@ -105,7 +105,7 @@ public sealed class AuthFlowTests
 
         (await client.RegisterAsync(TestHelpers.CandidateEmail)).EnsureSuccessStatusCode();
 
-        var login = await client.PostAsJsonAsync("/auth/login",
+        var login = await client.PostAsJsonAsync("/v1/auth/login",
             new { email = TestHelpers.CandidateEmail, password = "wrong-password" });
 
         ((int)login.StatusCode).Should().BeOneOf(400, 401);
@@ -122,11 +122,11 @@ public sealed class AuthFlowTests
 
         await client.RegisterAndLoginAsync(TestHelpers.CandidateEmail);
 
-        var me = await client.GetAsync("/auth/me");
+        var me = await client.GetAsync("/v1/auth/me");
         me.StatusCode.Should().Be(HttpStatusCode.OK);
 
         using var anonymous = factory.CreateClient();
-        var unauthorized = await anonymous.GetAsync("/auth/me");
+        var unauthorized = await anonymous.GetAsync("/v1/auth/me");
         unauthorized.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
     }
 
@@ -138,7 +138,7 @@ public sealed class AuthFlowTests
 
         var (_, token) = await client.RegisterAndLoginAsync(TestHelpers.CandidateEmail);
 
-        using var request = new HttpRequestMessage(HttpMethod.Get, "/auth/me").WithBearer(token);
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/v1/auth/me").WithBearer(token);
         var me = await client.SendAsync(request);
 
         me.StatusCode.Should().Be(HttpStatusCode.OK);

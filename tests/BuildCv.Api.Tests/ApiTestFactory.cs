@@ -79,10 +79,10 @@ internal static class TestHelpers
 
     public static async Task<HttpResponseMessage> RegisterAsync(
         this HttpClient client, string email, string? role = null) =>
-        await client.PostAsJsonAsync("/auth/register", new { email, password = Password, role });
+        await client.PostAsJsonAsync("/v1/auth/register", new { email, password = Password, role });
 
     public static async Task<HttpResponseMessage> LoginAsync(this HttpClient client, string email) =>
-        await client.PostAsJsonAsync("/auth/login", new { email, password = Password });
+        await client.PostAsJsonAsync("/v1/auth/login", new { email, password = Password });
 
     public static async Task<string> LoginAndGetAccessTokenAsync(this HttpClient client, string email)
     {
@@ -117,7 +117,7 @@ internal static class TestHelpers
     public static async Task<(string RequestToken, string Cookie)> GetAntiforgeryTokenAndCookieAsync(
         this HttpClient client, string? authCookie = null)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Get, "/auth/antiforgery");
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/v1/auth/antiforgery");
         if (authCookie is not null)
             request.Headers.Add("Cookie", authCookie);
 

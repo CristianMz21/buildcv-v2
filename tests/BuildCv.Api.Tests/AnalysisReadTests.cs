@@ -150,7 +150,7 @@ public sealed class AnalysisReadTests
         (await GetAnalysisAsync(client, candidateToken, analysisId)).StatusCode.Should().Be(HttpStatusCode.OK,
             "the score has to be readable first, or the 404 below proves nothing");
 
-        using var delete = new HttpRequestMessage(HttpMethod.Delete, $"/resumes/{resumeId}")
+        using var delete = new HttpRequestMessage(HttpMethod.Delete, $"/v1/resumes/{resumeId}")
             .WithBearer(candidateToken);
         (await client.SendAsync(delete)).StatusCode.Should().Be(HttpStatusCode.NoContent);
 
@@ -159,7 +159,7 @@ public sealed class AnalysisReadTests
         (await DetailOf(readScore)).Should().Be("Analysis not found.",
             "the caller named an analysis, so it is told about an analysis");
 
-        using var readHistory = new HttpRequestMessage(HttpMethod.Get, $"/resumes/{resumeId}/analyses")
+        using var readHistory = new HttpRequestMessage(HttpMethod.Get, $"/v1/resumes/{resumeId}/analyses")
             .WithBearer(candidateToken);
         var history = await client.SendAsync(readHistory);
         history.StatusCode.Should().Be(HttpStatusCode.NotFound);
@@ -189,7 +189,7 @@ public sealed class AnalysisReadTests
         using var factory = new ApiTestFactory();
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
 
-        var response = await client.GetAsync($"/scoring/{Guid.NewGuid()}");
+        var response = await client.GetAsync($"/v1/scoring/{Guid.NewGuid()}");
 
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
     }
@@ -241,7 +241,7 @@ public sealed class AnalysisReadTests
         var scored = await ScoringEndpointTests.ScoreAsync(client, candidateToken, resumeId, jobId);
         using var scoredJson = JsonDocument.Parse(await scored.Content.ReadAsStringAsync());
 
-        using var request = new HttpRequestMessage(HttpMethod.Get, $"/resumes/{resumeId}/analyses")
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"/v1/resumes/{resumeId}/analyses")
             .WithBearer(candidateToken);
         var response = await client.SendAsync(request);
         response.StatusCode.Should().Be(HttpStatusCode.OK);
@@ -279,7 +279,7 @@ public sealed class AnalysisReadTests
         var (candidateToken, recruiterToken, resumeId, jobId) = await ArrangeScorableAsync(client);
         await ScoringEndpointTests.ScoreAsync(client, candidateToken, resumeId, jobId);
 
-        using var request = new HttpRequestMessage(HttpMethod.Get, $"/resumes/{resumeId}/analyses")
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"/v1/resumes/{resumeId}/analyses")
             .WithBearer(recruiterToken);
         var response = await client.SendAsync(request);
 
@@ -298,7 +298,7 @@ public sealed class AnalysisReadTests
         await ScoringEndpointTests.ScoreAsync(client, candidateToken, resumeId, jobId);
 
         using var request = new HttpRequestMessage(
-            HttpMethod.Get, $"/resumes/{resumeId}/analyses?limit=2&cursor=nonsense").WithBearer(candidateToken);
+            HttpMethod.Get, $"/v1/resumes/{resumeId}/analyses?limit=2&cursor=nonsense").WithBearer(candidateToken);
         var response = await client.SendAsync(request);
 
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
@@ -331,7 +331,7 @@ public sealed class AnalysisReadTests
     private static async Task<HttpResponseMessage> GetAnalysisAsync(
         HttpClient client, string token, Guid analysisId)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Get, $"/scoring/{analysisId}").WithBearer(token);
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"/v1/scoring/{analysisId}").WithBearer(token);
         return await client.SendAsync(request);
     }
 
@@ -339,8 +339,8 @@ public sealed class AnalysisReadTests
         HttpClient client, string token, Guid resumeId, int limit, string? cursor)
     {
         var url = cursor is null
-            ? $"/resumes/{resumeId}/analyses?limit={limit}"
-            : $"/resumes/{resumeId}/analyses?limit={limit}&cursor={Uri.EscapeDataString(cursor)}";
+            ? $"/v1/resumes/{resumeId}/analyses?limit={limit}"
+            : $"/v1/resumes/{resumeId}/analyses?limit={limit}&cursor={Uri.EscapeDataString(cursor)}";
 
         using var request = new HttpRequestMessage(HttpMethod.Get, url).WithBearer(token);
         var response = await client.SendAsync(request);
@@ -349,7 +349,7 @@ public sealed class AnalysisReadTests
         using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         var items = json.RootElement.GetProperty("items")
             .EnumerateArray()
-            .Select(item => item.GetProperty("id").GetProperty("value").GetGuid())
+            .Select(item => item.GetProperty("id").GetGuid())
             .ToList();
 
         var nextCursor = json.RootElement.GetProperty("nextCursor");
@@ -359,7 +359,7 @@ public sealed class AnalysisReadTests
     private static Guid IdOf(string analysisJson)
     {
         using var json = JsonDocument.Parse(analysisJson);
-        return json.RootElement.GetProperty("id").GetProperty("value").GetGuid();
+        return json.RootElement.GetProperty("id").GetGuid();
     }
 
     // Stands in for the one thing the in-memory store cannot reproduce: a database handing back an owned

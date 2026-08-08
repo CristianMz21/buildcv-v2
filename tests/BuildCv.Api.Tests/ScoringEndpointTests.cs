@@ -130,11 +130,12 @@ public sealed class ScoringEndpointTests
             .Sum(name => weights.GetProperty(name).GetDouble())
             .Should().BeApproximately(1.0, 1e-9);
 
-        // The wire contract for the one field that predates this chain, asserted against the APP's
-        // serializer rather than a test-local one. `band` is an int on the DTO, so this is a statement
-        // about what clients receive and NOT evidence about converter registration — nothing in this
-        // response is an enum type any more, which is exactly what makes it converter-proof.
-        json.RootElement.GetProperty("band").ValueKind.Should().Be(JsonValueKind.Number);
+        // The v1 wire contract for `band`, asserted against the APP's serializer rather than a
+        // test-local one: the ScoreBand NAME, consistent with every other enum in the response. It is
+        // a string on the DTO, so this is a statement about what clients receive and NOT evidence
+        // about converter registration — nothing in this response is an enum type, which is exactly
+        // what makes it converter-proof. An overallScore of 0 sits in the lowest band.
+        json.RootElement.GetProperty("band").GetString().Should().Be("Low");
         json.RootElement.GetProperty("breakdown").GetProperty("sections")[0]
             .GetProperty("section").GetString().Should().Be("Skills",
                 "every SectionType on the wire is a name, in both arrays that carry one");
@@ -161,7 +162,7 @@ public sealed class ScoringEndpointTests
 
         var resumeId = await CreateResumeAsync(client, candidateToken);
 
-        using var addExperience = new HttpRequestMessage(HttpMethod.Post, $"/resumes/{resumeId}/experiences")
+        using var addExperience = new HttpRequestMessage(HttpMethod.Post, $"/v1/resumes/{resumeId}/experiences")
         {
             Content = JsonContent.Create(new
             {
@@ -194,7 +195,7 @@ public sealed class ScoringEndpointTests
 
     internal static async Task<Guid> CreateResumeAsync(HttpClient client, string token)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/resumes")
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/resumes")
         {
             Content = JsonContent.Create(new
             {
@@ -209,12 +210,12 @@ public sealed class ScoringEndpointTests
         var response = await client.SendAsync(request);
         response.StatusCode.Should().Be(HttpStatusCode.Created);
         using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-        return json.RootElement.GetProperty("id").GetProperty("value").GetGuid();
+        return json.RootElement.GetProperty("id").GetGuid();
     }
 
     internal static async Task<Guid> CreateJobAsync(HttpClient client, string token)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/jobs")
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/jobs")
         {
             Content = JsonContent.Create(new
             {
@@ -228,19 +229,19 @@ public sealed class ScoringEndpointTests
         var response = await client.SendAsync(request);
         response.StatusCode.Should().Be(HttpStatusCode.Created);
         using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-        return json.RootElement.GetProperty("id").GetProperty("value").GetGuid();
+        return json.RootElement.GetProperty("id").GetGuid();
     }
 
     internal static async Task PublishAsync(HttpClient client, string token, Guid jobId)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Post, $"/jobs/{jobId}/publish").WithBearer(token);
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"/v1/jobs/{jobId}/publish").WithBearer(token);
         (await client.SendAsync(request)).StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
     internal static async Task<HttpResponseMessage> ScoreAsync(
         HttpClient client, string token, Guid resumeId, Guid jobId)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/scoring/score")
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/scoring/score")
         {
             Content = JsonContent.Create(new { resumeId, jobPostingId = jobId })
         }.WithBearer(token);

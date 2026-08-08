@@ -28,7 +28,7 @@ public sealed class CsrfTests
         var login = await client.LoginAsync(TestHelpers.CandidateEmail);
         var accessCookie = TestHelpers.GetCookieValue(login, "access_token");
 
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/resumes")
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/resumes")
         {
             Content = JsonContent.Create(ResumeBody)
         };
@@ -46,7 +46,7 @@ public sealed class CsrfTests
 
         var (_, token) = await client.RegisterAndLoginAsync(TestHelpers.CandidateEmail);
 
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/resumes")
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/resumes")
         {
             Content = JsonContent.Create(ResumeBody)
         }.WithBearer(token);
@@ -73,7 +73,7 @@ public sealed class CsrfTests
         var login = await client.LoginAsync(TestHelpers.CandidateEmail);
         var accessCookie = TestHelpers.GetCookieValue(login, "access_token");
 
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/resumes")
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/resumes")
         {
             Content = JsonContent.Create(ResumeBody)
         };
@@ -96,7 +96,7 @@ public sealed class CsrfTests
 
         var csrfToken = await client.GetAntiforgeryTokenAsync();
 
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/resumes")
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/resumes")
         {
             Content = JsonContent.Create(ResumeBody)
         };
@@ -117,7 +117,7 @@ public sealed class CsrfTests
         var preLoginToken = await client.GetAntiforgeryTokenAsync();
         await client.RegisterAndLoginAsync(TestHelpers.CandidateEmail);
 
-        using var request = new HttpRequestMessage(HttpMethod.Post, "/resumes")
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/resumes")
         {
             Content = JsonContent.Create(ResumeBody)
         };

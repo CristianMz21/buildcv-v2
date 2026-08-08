@@ -5,39 +5,39 @@ using BuildCv.Domain.Scoring;
 public sealed record ScoreResumeRequest(Guid ResumeId, Guid JobPostingId);
 
 // The wire shape of a scoring run. It exists because /scoring/score used to return the Analysis
-// AGGREGATE, which CLAUDE.md forbids and which this release makes expensive: System.Text.Json
-// serializes RecommendationKind and RecommendationPriority off the aggregate as RAW INTEGERS, and
-// those numbers are documented in three files as an append-only PERSISTENCE detail. The moment a
-// client binds to them they are a public API contract too, and renumbering becomes a breaking change.
-// So the DTO lands in the same release that first emits a recommendation, not after it.
+// AGGREGATE, which CLAUDE.md forbids: System.Text.Json serialized RecommendationKind and
+// RecommendationPriority off the aggregate as RAW INTEGERS, and those numbers are documented in three
+// files as an append-only PERSISTENCE detail. The moment a client binds to them they are a public API
+// contract too, and renumbering becomes a breaking change. A DTO is where every wire encoding is a
+// decision rather than a serialization accident.
 //
-// THE PRE-CHAIN RESPONSE IS REPRODUCED KEY FOR KEY, AND ONE PRE-CHAIN FIELD CHANGED ITS ENCODING.
-// Everything this chain added carries enum NAMES; the fields that predate it keep their old encoding,
-// with exactly one exception, named first because it is the one a client can be broken by.
+// EVERY ENUM IN THIS RESPONSE CARRIES ITS NAME, AND EVERY ID IS A BARE GUID. The v1 release settled
+// the two encodings this file used to carry as documented debts:
 //
-//   - `recommendations` IS A WIRE-TYPE CHANGE, and it is the point of the release rather than a cost of
-//     it. Pre-chain Analysis.Recommendations was IReadOnlyList<string>, so the field shipped as
-//     string[]; it is now an array of objects ({section, priority, kind, message, impact}), and any
-//     client with a typed model breaks the first time the array is non-empty. Nothing before this chain
-//     ever emitted a recommendation, so the array was always [] and no deployed client has observed the
-//     difference yet — which is what makes this the cheap moment to make the change, NOT a reason to
-//     describe the response as unchanged.
-//   - Ids stay wrapped as {"value": guid} and `band` stays an integer. Both predate this chain and have
-//     clients. Flipping either convention on one endpoint out of five is worse than a consistent bad
-//     convention; that is its own repo-wide change.
-//   - `breakdown.sections[]` and `recommendations[]` BOTH name their sections: "Skills", not 0. The
-//     sections projection looks pre-existing but is not — it was added by PR 1, is unmerged and has no
-//     clients, so it is this chain's shape rather than the endpoint's. Shipping a raw enum integer
-//     inside the very DTO that exists to stop enum numbers becoming a public contract is the one
-//     inconsistency that gets harder to justify with every release, so it was corrected while it was
-//     still free.
+//   - `band` shipped as an integer while every other enum in the same response carried its name. It
+//     is the ScoreBand name now ("Good", never 2), so renumbering the enum stays a persistence
+//     concern instead of a client break.
+//   - Ids shipped wrapped as {"value": guid} — the shape a strongly-typed id record happens to
+//     serialize into. They are bare guids now, and so is every id on every other v1 route: the
+//     resume and organization endpoints were still answering with their Domain AGGREGATE, which is
+//     what made the envelope reappear on the two endpoints a candidate actually uses. ResumeResponse
+//     and OrganizationResponse closed that in the same release.
 //
-// Every encoding here is decided in this file: enum names come from ToString() and `band` from an int
-// property, so a JsonStringEnumConverter registered globally later cannot silently change any of it.
-// That makes the response converter-proof, which is the property that matters — not the numbering.
+// THE CONVENTION IS EXECUTED, NOT ASSERTED. V1ContractShapeTests walks the real response body of
+// every v1 route and fails on any object that is a single-value wrapper, or any enum-named property
+// that is a number — which is the test this file's comment could not previously be checked against.
+//
+// Both flips happened in the release that introduced /v1 BECAUSE it was that release: no frontend or
+// third-party client existed yet, so shipping the correct shape was free, exactly once. The moment a
+// client binds to v1, either change becomes a /v2.
+//
+// `breakdown.sections[]` and `recommendations[]` both name their sections: "Skills", not 0. Every
+// encoding here is decided in this file — enum names come from ToString() — so a
+// JsonStringEnumConverter registered globally later cannot silently change any of it. That makes the
+// response converter-proof, which is the property that matters, not the numbering.
 /// <summary>
-/// One scoring run, as returned by <c>POST /scoring/score</c>, <c>GET /scoring/{analysisId}</c> and
-/// each entry of <c>GET /resumes/{id}/analyses</c>. One shape for one aggregate, on purpose.
+/// One scoring run, as returned by <c>POST /v1/scoring/score</c>, <c>GET /v1/scoring/{analysisId}</c>
+/// and each entry of <c>GET /v1/resumes/{id}/analyses</c>. One shape for one aggregate, on purpose.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -50,11 +50,11 @@ public sealed record ScoreResumeRequest(Guid ResumeId, Guid JobPostingId);
 /// <para>
 /// <b><c>Weights.Languages</c> is 0 on every analysis this build can produce</b>, and that is a missing
 /// feature rather than anything a recruiter chose: no endpoint puts a language requirement on a posting.
-/// <b><c>Weights.Skills</c> is no longer always 0</b> — <c>POST /job-offers/import</c> lets a candidate
-/// state skill requirements on their own Draft offer, so an analysis scored against an imported offer
-/// carries a NONZERO skills weight. It is still 0 for a posting created through <c>POST /jobs</c>, which
-/// carries only a title, company and description. A UI must read the weight per analysis, not assume
-/// either is always 0.
+/// <b><c>Weights.Skills</c> is no longer always 0</b> — <c>POST /v1/job-offers/import</c> lets a
+/// candidate state skill requirements on their own Draft offer, so an analysis scored against an
+/// imported offer carries a NONZERO skills weight. It is still 0 for a posting created through
+/// <c>POST /v1/jobs</c>, which carries only a title, company and description. A UI must read the weight
+/// per analysis, not assume either is always 0.
 /// </para>
 /// <para>
 /// The remaining weights are RENORMALIZED to still total 1.0, so the ceiling is 100 for every posting.
@@ -70,24 +70,24 @@ public sealed record ScoreResumeRequest(Guid ResumeId, Guid JobPostingId);
 /// </para>
 /// </remarks>
 public sealed record AnalysisResponse(
-    IdEnvelope Id,
+    Guid Id,
     ScoreBreakdownResponse Breakdown,
-    IdEnvelope ResumeId,
-    IdEnvelope JobPostingId,
+    Guid ResumeId,
+    Guid JobPostingId,
     DateTimeOffset ScoredAt,
     IReadOnlyList<RecommendationResponse> Recommendations,
     int OverallScore,
-    int Band)
+    string Band)
 {
     public static AnalysisResponse From(Analysis analysis)
     {
         ArgumentNullException.ThrowIfNull(analysis);
 
         return new AnalysisResponse(
-            new IdEnvelope(analysis.Id.Value),
+            analysis.Id.Value,
             ScoreBreakdownResponse.From(analysis.Breakdown),
-            new IdEnvelope(analysis.ResumeId.Value),
-            new IdEnvelope(analysis.JobPostingId.Value),
+            analysis.ResumeId.Value,
+            analysis.JobPostingId.Value,
             analysis.ScoredAt,
             // Sorted HERE, and not merely trusted. Analysis.Recommendations is a set: the child table
             // carries a surrogate key and no stored position, so a reloaded analysis hands them back in
@@ -95,14 +95,9 @@ public sealed record AnalysisResponse(
             // which ten survive the cap; this sorts again, to decide what the candidate reads first.
             [.. RecommendationOrder.Sort(analysis.Recommendations).Select(RecommendationResponse.From)],
             analysis.OverallScore,
-            (int)analysis.Band);
+            analysis.Band.ToString());
     }
 }
-
-// The {"value": guid} wrapper every id on this endpoint already ships in. Declared here rather than
-// left to the strongly-typed id's own serialization, so the wire shape is this file's decision and a
-// Domain refactor cannot change it by accident.
-public sealed record IdEnvelope(Guid Value);
 
 public sealed record ScoreBreakdownResponse(
     double SkillsScore,

@@ -38,7 +38,7 @@ public sealed class ResumeExtractSizeLimitTests
 
         var endpoint = factory.Services.GetRequiredService<EndpointDataSource>()
             .Endpoints.OfType<RouteEndpoint>()
-            .Single(candidate => candidate.RoutePattern.RawText == "/resumes/import/extract");
+            .Single(candidate => candidate.RoutePattern.RawText == "/v1/resumes/import/extract");
 
         endpoint.Metadata.GetMetadata<IRequestSizeLimitMetadata>()!.MaxRequestBodySize
             .Should().Be(IDocumentTextExtractor.MaxDocumentBytes);
