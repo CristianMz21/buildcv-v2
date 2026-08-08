@@ -3,6 +3,7 @@ using BuildCv.Domain.Exceptions;
 using BuildCv.Domain.Identity;
 using BuildCv.Domain.Jobs;
 using BuildCv.Domain.Organizations;
+using BuildCv.Domain.Readability;
 using BuildCv.Domain.Resumes;
 using BuildCv.Domain.Scoring;
 using BuildCv.Infrastructure.Persistence.Converters;
@@ -275,6 +276,78 @@ public class ValueObjectConverterTests
         act.Should().Throw<ArgumentException>();
     }
 
+    // The readability weighting, through the same JSON column mechanism and with the same three
+    // guarantees: the shape survives, the PERSISTED version survives, and a set that no longer sums to
+    // 1.0 fails loudly rather than explaining a report it could not have produced.
+    [Fact]
+    public void ReadabilityWeights_RoundTripThroughJsonWithFiveMembers()
+    {
+        var weights = ReadabilityWeightsSnapshot.Default();
+
+        var json = ReadabilityWeightsSnapshotConverter.ToJson(weights);
+
+        json.Should().Contain("\"AtsParseability\"",
+            "the section is shaped and stored even while it is renormalized out of every report");
+        ReadabilityWeightsSnapshotConverter.FromJson(json).Should().Be(weights);
+    }
+
+    // The version has to be the one that was WRITTEN, not the one that ships today. The argument doing
+    // that is optional, so dropping it compiles silently and every historical row would start claiming
+    // it was produced by whatever model is current. The version here is deliberately unequal to
+    // CurrentSchemaVersion, so it cannot agree with the fallback.
+    [Fact]
+    public void ReadabilityWeights_ThePersistedSchemaVersionSurvivesTheRoundTrip()
+    {
+        const int persisted = 7;
+        persisted.Should().NotBe(ReadabilityWeightsSnapshot.CurrentSchemaVersion,
+            "a version equal to the fallback cannot detect the fallback");
+
+        const string stored =
+            """{"Completeness":0.3,"Contact":0.2,"Achievements":0.25,"Chronology":0.15,"AtsParseability":0.1,"SchemaVersion":7}""";
+
+        // Parsed from a literal rather than round-tripped through ToJson, so a writer that dropped the
+        // member could not make this pass by never emitting it.
+        ReadabilityWeightsSnapshotConverter.FromJson(stored).SchemaVersion.Should().Be(persisted);
+    }
+
+    // THE PAYLOAD EVERY STORED REPORT ACTUALLY HOLDS, and the one that can fail the width guard: the
+    // renormalized set comes out of a division, so all five members serialize at full round-trip
+    // precision. Default() serializes to about a third of the cap and would pass against almost any
+    // regression.
+    [Fact]
+    public void ReadabilityWeights_ARenormalizedPayloadStillFitsTheDeclaredColumnWidth()
+    {
+        var weights = ReadabilityWeightsSnapshot.Default().RenormalizedTo(
+        [
+            ReadabilitySectionType.Completeness,
+            ReadabilitySectionType.Contact,
+            ReadabilitySectionType.Achievements,
+            ReadabilitySectionType.Chronology,
+        ]);
+
+        var json = ReadabilityWeightsSnapshotConverter.ToJson(weights);
+
+        json.Length.Should().BeGreaterThan(100,
+            "a payload that does not approach the cap cannot be evidence the cap is wide enough");
+        json.Length.Should().BeLessThanOrEqualTo(ReadabilityWeightsSnapshotConverter.MaxLength,
+            "a payload wider than the column truncates, and a truncated snapshot cannot be parsed back");
+
+        // Truncation is not the only failure: a value that lost precision on the way out would come back
+        // as a different snapshot, and the 1.0-sum check would not necessarily catch it.
+        ReadabilityWeightsSnapshotConverter.FromJson(json).Should().Be(weights);
+    }
+
+    [Fact]
+    public void ReadabilityWeights_APayloadThatNoLongerSumsToOne_FailsLoudly()
+    {
+        const string broken =
+            """{"Completeness":0.3,"Contact":0.2,"Achievements":0.25,"Chronology":0.15,"AtsParseability":0.2,"SchemaVersion":1}""";
+
+        var act = () => ReadabilityWeightsSnapshotConverter.FromJson(broken);
+
+        act.Should().Throw<ArgumentException>();
+    }
+
     [Fact]
     public void StronglyTypedIds_RoundTripThroughGuid()
     {
@@ -285,6 +358,8 @@ public class ValueObjectConverterTests
         new JobPostingIdConverter().ConvertFromProvider(value).Should().Be(new JobPostingId(value));
         new OrganizationIdConverter().ConvertFromProvider(value).Should().Be(new OrganizationId(value));
         new AnalysisIdConverter().ConvertFromProvider(value).Should().Be(new AnalysisId(value));
+        new ReadabilityReportIdConverter().ConvertFromProvider(value)
+            .Should().Be(new ReadabilityReportId(value));
     }
 
     [Fact]

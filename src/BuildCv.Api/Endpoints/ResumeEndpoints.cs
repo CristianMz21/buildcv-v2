@@ -4,9 +4,11 @@ using BuildCv.Api.Security;
 using BuildCv.Application.Common.Abstractions;
 using BuildCv.Application.Common.Pagination;
 using BuildCv.Application.Common.Services;
+using BuildCv.Application.Readability;
 using BuildCv.Application.Resumes;
 using BuildCv.Application.Scoring;
 using BuildCv.Domain.Common.ValueObjects;
+using BuildCv.Domain.Readability;
 using BuildCv.Domain.Resumes;
 using BuildCv.Domain.Scoring;
 using Microsoft.AspNetCore.Mvc;
@@ -323,6 +325,47 @@ public static class ResumeEndpoints
             + "`isStale` is computed per request against the resume as it stands now, so on any page at "
             + "most the newest entries are false — and every entry is stale once the candidate edits "
             + "again.");
+
+        // THE HALF OF THE PRODUCT THAT NEEDS NO JOB OFFER. It hangs off the CV rather than off /scoring
+        // because it is a fact about this resource and nothing else: no posting is named in the request,
+        // none is read, and the call succeeds with zero job offers in the entire system.
+        //
+        // POST rather than GET, matching /v1/scoring/score: the request WRITES a row. A readability run
+        // is a fact about a moment — the advice quotes the CV as it stood — so it is appended, never
+        // recomputed over the top of an earlier one.
+        //
+        // Ownership is checked in the handler, exactly as it is for the analyses route above: an
+        // authenticated caller who does not own this resume gets 403 and nothing is evaluated.
+        group.MapPost("/{id:guid}/readability", async (
+            Guid id,
+            HttpContext httpContext,
+            ICommandHandler<EvaluateResumeReadabilityCommand, Result<ReadabilityReport>> handler,
+            CancellationToken cancellationToken) =>
+        {
+            var result = await handler.Handle(new EvaluateResumeReadabilityCommand(
+                httpContext.User.GetAccountId(), new ResumeId(id)), cancellationToken);
+
+            return result.ToHttpResult(report => Results.Ok(ReadabilityResponse.From(report)));
+        })
+        .WithSummary("Scores how readable this resume is on its own, with no job posting involved.")
+        .WithDescription(
+            "THE OTHER HALF OF THE SCORE, and the one that needs no job offer: this measures the CV "
+            + "itself — whether the sections an ATS expects are there, whether a recruiter can reach "
+            + "you, whether your bullet points state what you achieved, and whether your timeline reads "
+            + "without unexplained breaks. It succeeds with no job posting in the system at all. "
+            + "`readabilityScore` is NOT `overallScore` and the two must never be added together: one "
+            + "grades the resume, the other grades a match against one posting. "
+            + "Every `impact` is MEASURED — the exact increase in `breakdown.weightedTotal` that acting "
+            + "on that one recommendation produces, computed by re-evaluating the same rule with that "
+            + "one gap closed — and `priority` is a pure function of it. "
+            + "A section whose `breakdown.weights.<section>` is 0 could not be measured for this resume: "
+            + "it neither helped nor hurt, and the remaining weights are renormalized to still total 1.0, "
+            + "so the ceiling is 100. `weights.atsParseability` is 0 on every run this build can "
+            + "produce — that section grades the uploaded DOCUMENT, and the signed import-signals "
+            + "evidence it needs is a separate change. "
+            + "Advice can be absent for a section scoring 0: a resume with no experience entries gets no "
+            + "Achievements advice, because there is no role to add a bullet point to. It appears once "
+            + "the work history does.");
 
         group.MapPut("/{id:guid}/contact", async (
             Guid id,

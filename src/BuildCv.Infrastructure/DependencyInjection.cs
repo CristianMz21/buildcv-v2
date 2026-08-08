@@ -5,12 +5,14 @@ using BuildCv.Application.Common.Services;
 using BuildCv.Application.Identity;
 using BuildCv.Application.Jobs;
 using BuildCv.Application.Organizations;
+using BuildCv.Application.Readability;
 using BuildCv.Application.Resumes;
 using BuildCv.Application.Scoring;
 using BuildCv.Domain.Common.ValueObjects;
 using BuildCv.Domain.Identity;
 using BuildCv.Domain.Jobs;
 using BuildCv.Domain.Organizations;
+using BuildCv.Domain.Readability;
 using BuildCv.Domain.Resumes;
 using BuildCv.Domain.Scoring;
 using BuildCv.Infrastructure.Documents;
@@ -99,6 +101,11 @@ public static class DependencyInjection
         services.AddSingleton<ISkillLexicon>(SkillLexicon.Load());
         services.AddSingleton<IScoringEngine, ScoringEngine>();
 
+        // A singleton for the same reason the scoring engine is one: it is a pure function of its
+        // arguments and holds no state. It takes no dependencies at all — every readability rule reads
+        // the resume and the closed action-verb vocabulary beside it, and nothing else.
+        services.AddSingleton<IReadabilityEngine, ReadabilityEngine>();
+
         // Document text extraction. The dispatcher is the port; the per-format adapters are registered
         // as themselves so the graph stays explicit — there is no reflection-driven "all extractors"
         // collection to quietly pick up a fourth format nobody reviewed.
@@ -159,6 +166,9 @@ public static class DependencyInjection
         services.AddScoped<ICommandHandler<ScoreResumeCommand, Result<AnalysisView>>, ScoreResumeHandler>();
         services.AddScoped<IQueryHandler<GetAnalysisByIdQuery, Result<AnalysisView>>, GetAnalysisByIdHandler>();
         services.AddScoped<IQueryHandler<GetAnalysisHistoryQuery, Result<Page<AnalysisView>>>, GetAnalysisHistoryHandler>();
+
+        // Readability
+        services.AddScoped<ICommandHandler<EvaluateResumeReadabilityCommand, Result<ReadabilityReport>>, EvaluateResumeReadabilityHandler>();
 
         return services;
     }
@@ -235,6 +245,7 @@ public static class DependencyInjection
         services.AddScoped<IJobPostingRepository, JobPostingRepository>();
         services.AddScoped<IOrganizationRepository, OrganizationRepository>();
         services.AddScoped<IAnalysisRepository, AnalysisRepository>();
+        services.AddScoped<IReadabilityReportRepository, ReadabilityReportRepository>();
     }
 
     // The in-memory store is a development convenience and a test double. It is registered as singletons
@@ -263,6 +274,13 @@ public static class DependencyInjection
         services.AddSingleton<IJobPostingRepository, InMemoryJobPostingRepository>();
         services.AddSingleton<IOrganizationRepository, InMemoryOrganizationRepository>();
         services.AddSingleton<IAnalysisRepository, InMemoryAnalysisRepository>();
+
+        // Registered as the CONCRETE type first and then forwarded, so a test host can resolve
+        // InMemoryReadabilityReportRepository and read its Count. The port has no read method, so
+        // "did that request write a report" is otherwise unobservable from outside the process.
+        services.AddSingleton<InMemoryReadabilityReportRepository>();
+        services.AddSingleton<IReadabilityReportRepository>(
+            provider => provider.GetRequiredService<InMemoryReadabilityReportRepository>());
     }
 
     // Development gets it for free. Anything else has to say so — EXCEPT Production, which cannot say so

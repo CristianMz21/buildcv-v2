@@ -1,6 +1,7 @@
 using BuildCv.Domain.Identity;
 using BuildCv.Domain.Jobs;
 using BuildCv.Domain.Organizations;
+using BuildCv.Domain.Readability;
 using BuildCv.Domain.Resumes;
 using BuildCv.Domain.Scoring;
 using BuildCv.Infrastructure.Persistence.BlindIndexes;
@@ -97,6 +98,18 @@ public sealed class ModelConfigurationTests
         // stays plaintext beside it, which is what keeps "which advice do we give most often"
         // answerable without the text.
         ["Recommendation.Message"] = "Recommendation.Message",
+
+        // The same judgement on the readability side, and if anything a stronger case. This sentence
+        // quotes the candidate's own bullet points and job titles back at them ("Add an entry covering
+        // the 14-month gap before 'Backend Developer'"), so a dump of readability.Recommendations would
+        // read as a summary of every gap in every candidate's history.
+        //
+        // ITS OWN CONTEXT STRING, and that is the whole reason this entry is not "Recommendation.Message"
+        // a second time. The context is the AAD: two columns sharing one would let an envelope be moved
+        // between scoring.Recommendations and readability.Recommendations and still decrypt, which is
+        // exactly the binding the context exists to create.
+        // EncryptionContexts_MatchTheirConverterAndTheirColumn asserts that uniqueness.
+        ["ReadabilityRecommendation.Message"] = "ReadabilityRecommendation.Message",
     };
 
     // The other half of the same requirement. Encrypting any of these would silently end a feature:
@@ -147,12 +160,24 @@ public sealed class ModelConfigurationTests
         // The half of a recommendation that survives its message being sealed. Encrypting any of
         // these would not lose a column, it would lose the rollup the encryption was traded for.
         "Recommendation.Section", "Recommendation.Priority", "Recommendation.Kind", "Recommendation.Impact",
+
+        // The readability side of the identical trade, and it belongs on THIS list rather than in a
+        // test of its own for the reason stated above it: these four carry the (Section, Priority)
+        // index that readability.Recommendations is grouped by, so they really are queried.
+        "ReadabilityRecommendation.Section", "ReadabilityRecommendation.Priority",
+        "ReadabilityRecommendation.Kind", "ReadabilityRecommendation.Impact",
     ];
 
+    // SEVEN, not six. ReadabilityReport is an aggregate root of its own and not a part of Analysis:
+    // an Analysis requires a non-nullable JobPostingId, and a readability report is taken with no
+    // posting in existence. It therefore has to carry the same table shape every other root does --
+    // audit columns, soft delete, a rowversion and the clustered Seq index -- and this list is what
+    // makes "it is a root" a checked claim rather than a sentence in a comment.
     private static readonly Type[] ExpectedAggregateRoots =
     [
         typeof(Account), typeof(RefreshToken), typeof(Resume),
         typeof(JobPosting), typeof(Organization), typeof(Analysis),
+        typeof(ReadabilityReport),
     ];
 
     [Fact]
@@ -350,11 +375,11 @@ public sealed class ModelConfigurationTests
         }
     }
 
-    // The ten resume collections plus the five elsewhere: three on JobPosting (Requirements,
-    // LanguageRequirements, Responsibilities), Organization.Members, and Analysis.Recommendations.
-    // Every getter returns _entries.AsReadOnly(), so EF reading through the property gets a
-    // ReadOnlyCollection it cannot add to; the failure is an exception on the first child insert, not
-    // at model build.
+    // The ten resume collections plus the six elsewhere: three on JobPosting (Requirements,
+    // LanguageRequirements, Responsibilities), Organization.Members, Analysis.Recommendations and
+    // ReadabilityReport.Recommendations. Every getter returns _entries.AsReadOnly(), so EF reading
+    // through the property gets a ReadOnlyCollection it cannot add to; the failure is an exception on
+    // the first child insert, not at model build.
     [Fact]
     public void OwnedCollections_UseTheBackingField()
     {
@@ -365,7 +390,7 @@ public sealed class ModelConfigurationTests
             .Where(navigation => navigation.IsCollection)
             .ToList();
 
-        collections.Should().HaveCount(15);
+        collections.Should().HaveCount(16);
         collections.Should().OnlyContain(navigation =>
             navigation.GetPropertyAccessMode() == PropertyAccessMode.Field
             && navigation.FieldInfo != null);
@@ -383,6 +408,13 @@ public sealed class ModelConfigurationTests
     // discover SectionScore as an ENTITY TYPE and the model build throws, so every test in this file
     // fails at once rather than this one assertion.
     [InlineData(typeof(ScoreBreakdown), nameof(ScoreBreakdown.Sections))]
+    // The readability aggregate carries the same four computed members and the same rule applies to
+    // each: a persisted ReadabilityScore or Band would silently keep the old classification the first
+    // time the band thresholds move, and a mapped Sections would take the whole model build with it.
+    [InlineData(typeof(ReadabilityReport), nameof(ReadabilityReport.ReadabilityScore))]
+    [InlineData(typeof(ReadabilityReport), nameof(ReadabilityReport.Band))]
+    [InlineData(typeof(ReadabilityBreakdown), nameof(ReadabilityBreakdown.WeightedTotal))]
+    [InlineData(typeof(ReadabilityBreakdown), nameof(ReadabilityBreakdown.Sections))]
     public void ComputedMembers_AreNotMapped(Type clrType, string propertyName)
     {
         using var context = PersistenceTestContext.ModelOnly();
@@ -401,12 +433,14 @@ public sealed class ModelConfigurationTests
 
         var actual = context.Model.GetEntityTypes().Select(Name).Order(StringComparer.Ordinal);
 
-        // SectionScore is deliberately absent: it is projected from ScoreBreakdown's own columns and
-        // Ignored, so its appearance here would mean the projection had become a table.
+        // SectionScore and ReadabilitySectionScore are deliberately absent: each is projected from its
+        // breakdown's own columns and Ignored, so an appearance here would mean the projection had
+        // become a table.
         actual.Should().Equal(
             "Account", "Analysis", "Award", "Certificate", "ContactInformation", "Education",
             "Experience", "Interest", "JobPosting", "JobRequirement", "Language", "LanguageRequirement",
-            "Membership", "Organization", "Project", "Publication", "Recommendation", "Reference",
+            "Membership", "Organization", "Project", "Publication", "ReadabilityBreakdown",
+            "ReadabilityRecommendation", "ReadabilityReport", "Recommendation", "Reference",
             "RefreshToken", "Responsibility", "Resume", "ScoreBreakdown", "Skill");
     }
 
