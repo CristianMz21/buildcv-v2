@@ -15,7 +15,8 @@ public class ScoreResumeHandlerTests
     private readonly FakeResumeRepository _resumes = new();
     private readonly FakeJobPostingRepository _jobPostings = new();
     private readonly FakeAnalysisRepository _analyses = new();
-    private readonly ScoringEngine _scoringEngine = new();
+    // EMPTY LEXICON, assertions unchanged — see the note in ScoringEngineTests.
+    private readonly ScoringEngine _scoringEngine = new(FakeSkillLexicon.Empty);
     private readonly FakeTimeProvider _time = new(DateTimeOffset.UtcNow);
     private readonly ScoreResumeHandler _handler;
 
@@ -286,7 +287,7 @@ public class ScoreResumeHandlerTests
         var clock = new AdvancingTimeProvider(
             new DateTimeOffset(2026, 8, 4, 23, 59, 59, 900, TimeSpan.Zero),
             TimeSpan.FromMilliseconds(200));
-        var engine = new RecordingScoringEngine(new ScoringEngine());
+        var engine = new RecordingScoringEngine(new ScoringEngine(FakeSkillLexicon.Empty));
         var handler = new ScoreResumeHandler(_resumes, _jobPostings, _analyses, engine, clock);
 
         var ownerId = AccountId.New();

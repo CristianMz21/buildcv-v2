@@ -114,7 +114,10 @@ public sealed class ScoringEndpointTests
         }
 
         var weights = json.RootElement.GetProperty("breakdown").GetProperty("weights");
-        weights.GetProperty("schemaVersion").GetInt32().Should().Be(2);
+        // An analysis written after the bump reports the new model version, on the wire, from a live
+        // request — which is where a client reads it.
+        weights.GetProperty("schemaVersion").GetInt32().Should().Be(3,
+            "v3 is the release in which IsSatisfiedBy started consulting the skill lexicon");
 
         // THE WEIGHTS ON THE WIRE ARE THE ONES THE SCORE WAS COMPUTED UNDER, not the defaults. This is
         // the same set persisted on the analysis, which is what keeps a past score self-explaining: a

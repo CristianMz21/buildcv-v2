@@ -1,4 +1,5 @@
 using BuildCv.Application.Scoring;
+using BuildCv.Application.Tests.Fakes;
 using BuildCv.Domain.Common.ValueObjects;
 using BuildCv.Domain.Identity;
 using BuildCv.Domain.Jobs;
@@ -12,7 +13,11 @@ public class ScoringEngineTests
 {
     private static readonly DateOnly ReferenceDate = new(2025, 1, 1);
 
-    private readonly ScoringEngine _engine = new();
+    // EMPTY LEXICON, and every assertion in this file is unchanged beside it. That is the evidence that
+    // consulting a skill lexicon reproduces the previous behaviour bit for bit: Canonicalize is the
+    // identity on an empty table, so ScoringRules.IsSatisfiedBy collapses to the whole-string comparison
+    // it was. EmptyLexiconEquivalenceTests makes the same claim over a vocabulary chosen to break it.
+    private readonly ScoringEngine _engine = new(FakeSkillLexicon.Empty);
 
     // Score now returns a ScoreResult: the six numbers AND the advice derived from the same pass. Every
     // test in this file is about the numbers, so they read through the breakdown and the advice has its
