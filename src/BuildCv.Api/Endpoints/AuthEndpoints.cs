@@ -26,9 +26,28 @@ public static class AuthEndpoints
             HttpContext httpContext,
             CancellationToken cancellationToken) =>
         {
+            // IsDefined here is DEFENCE IN DEPTH, not a fix for a reachable corruption, and the
+            // difference is worth stating so nobody deletes it as redundant.
+            //
+            // Account.Role is an int-backed enum on a tinyint column exactly like the membership role
+            // below, so an undefined value would be just as durable — but it never reaches the column,
+            // because RegisterAccountHandler.IsSelfAssignable is `role is Candidate or Recruiter` and an
+            // undefined value is neither. Measured: role "-1" answered 400 before this line and answers
+            // 400 after it; only the detail changes, from "Role is not available for self-registration."
+            // to "Invalid role.", which is what EnumGuardTests asserts.
+            //
+            // What this line buys is that the refusal stops depending on an allow-list written to answer
+            // a different question. IsSelfAssignable exists to decide what a stranger may grant
+            // themselves; rewrite it as `role != Role.Admin` — the obvious edit the day a third role is
+            // added — and an undefined value goes straight through to the tinyint. The same applies to
+            // the next endpoint that parses a Role.
+            //
+            // Undefined values only: "Candidate,Recruiter" is 0|1 = Recruiter and "+1" is Recruiter,
+            // both defined members, both still accepted. See the membership route for why they are left
+            // reachable rather than narrowed at one site.
             var role = Role.Candidate;
             if (request.Role is not null
-                && !Enum.TryParse(request.Role, ignoreCase: true, out role))
+                && (!Enum.TryParse(request.Role, ignoreCase: true, out role) || !Enum.IsDefined(role)))
             {
                 return Results.Problem(detail: "Invalid role.", statusCode: StatusCodes.Status400BadRequest);
             }
