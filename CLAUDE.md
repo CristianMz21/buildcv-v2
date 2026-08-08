@@ -172,6 +172,20 @@ Instruments only: `Meter`, `Counter<T>` and `ActivitySource` are all in the BCL 
 - Spans: `buildcv.document.extract` (tags `buildcv.document.format`, `buildcv.document.outcome`), `buildcv.resume.score` (tag `buildcv.scoring.outcome`), `buildcv.resume.readability` (no tags at all — everything about a readability run is either an identifier or derived from advice that quotes the candidate's own bullet points). The **declared `Content-Type` never reaches a span**: it is client-controlled, so `DocumentFormats.Of` maps it into a closed set first.
 - `BuildCvActivities` **is** static, unlike the metrics: a span is attributed by parentage (`Activity.Current` is an AsyncLocal), so a test isolates its own spans by trace id. A measurement carries no parent, which is why only the meter needs a scope.
 
+### Observability — nothing about a CV may reach a log, a metric tag or a span
+
+`ObservabilityLeakTests.NoCvContentReachesALogScopeAMetricTagOrASpan` is the load-bearing test of the observability work, and the rule it enforces applies to every future change: **a log line, a metric tag and an `Activity` attribute are covered by none of this repository's encryption**, and unlike a row they are shipped to an aggregator with its own retention and access list. A leaked row can be re-encrypted; a leaked log line has already been indexed and replicated.
+
+It drives extract, a *failing* extract, propose, import, a *rejected* import, score (both branches) and readability with alphabetic sentinel values, then asserts the sentinels are absent from everything captured. Three things keep it from being a test that cannot fail:
+
+- **Every request is asserted to have succeeded and to have echoed its sentinel back in the response body.** A suite of 400s would carry no CV content anywhere and would pass while proving nothing.
+- **The log filters are cleared to `Trace`** (`RecordingLogging.Capturing`) — `appsettings.json` filters `Microsoft.AspNetCore` to `Warning`, and filter selection prefers the most specific category, so adding a permissive rule would not have been enough. `TheRecorderSeesTraceLevelFrameworkLines` proves the levels really are open.
+- **The `ActivityRecorder` listens to every source**, not just `BuildCv`: a span this code never wrote is where an unnoticed leak would sit.
+
+The uploaded **file name** is one of the sentinels, on purpose: a CV is routinely called `Jane_Doe_CV.pdf`, and the form reader sees it before any of this repository's code does.
+
+What already made this pass rather than luck: `AuditLog` hashes emails, the extraction adapters forward no library exception message (`PdfPigTextExtractor`, `OpenXmlDocxTextExtractor`), `EnableSensitiveDataLogging(false)` is stated on the context, refusal messages are this repo's own words, and the readability span carries no attributes at all. This test pins that discipline instead of assuming it survives the next change.
+
 ### Deployment requirement — forwarded headers
 
 Rate limiting partitions on `Connection.RemoteIpAddress`. **Behind any reverse proxy, ingress, or CDN you must configure `Network:ForwardedHeaders`**, otherwise every client collapses into the proxy's single partition and the 5/min auth window becomes a global 5/min cap for the whole deployment — a self-inflicted denial of service that also throttles no individual attacker.
