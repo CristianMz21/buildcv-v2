@@ -1,4 +1,5 @@
 using System.Text;
+using BuildCv.Application.Common.Observability;
 using BuildCv.Application.Common.Services;
 using BuildCv.Application.Resumes;
 using BuildCv.Infrastructure.Documents;
@@ -30,8 +31,11 @@ public sealed class ResumeExtractionCorpusTests
     // not the measured number; raising it is only honest after a real parser improvement re-measures higher.
     private const double PerFieldAccuracyFloor = 0.90;
 
+    // Unscoped; see the note in DocumentTextExtractionTests.
+    private static readonly BuildCvMetrics Metrics = new();
+
     private static readonly DocumentTextExtractor Extractor =
-        new(new PdfPigTextExtractor(), new OpenXmlDocxTextExtractor(), new PlainTextExtractor());
+        new(new PdfPigTextExtractor(Metrics), new OpenXmlDocxTextExtractor(Metrics), new PlainTextExtractor(Metrics), Metrics);
 
     private static readonly PdfColumnDetector ColumnDetector = new();
 

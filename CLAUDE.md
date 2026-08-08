@@ -131,7 +131,60 @@ Auth is JWT in HttpOnly cookies (with `Authorization: Bearer` fallback — `OnMe
 - `/auth/change-password` is throttled **per account** by `Security/PasswordChangeRateLimiter`, acquired inside the endpoint rather than as a named policy — `UseRateLimiter` runs before `UseAuthentication`, so a policy partitioner has no principal to key on. Sharing the per-IP auth window let one client behind a NAT deny password rotation to everyone on that address, while buying nothing against an attacker who already holds an access token and can rotate source IPs.
 - Authorization: role policies in `Security/Policies.cs` plus a fallback policy requiring authentication — endpoints are secure by default; opt out explicitly with `AllowAnonymous`.
 
-Middleware order in `Program.cs` matters (ForwardedHeaders → SecurityHeaders → ExceptionHandler → HSTS/HTTPS → CORS → RateLimiter → AuthN → CsrfGuard → AuthZ); insert new middleware deliberately.
+Middleware order in `Program.cs` matters (ForwardedHeaders → **CorrelationId** → SecurityHeaders → ExceptionHandler → HSTS/HTTPS → CORS → RateLimiter → AuthN → CsrfGuard → AuthZ); insert new middleware deliberately.
+
+### Observability — correlation id
+
+`CorrelationIdMiddleware` (`Api/Observability/`) gives every request one id, echoes it as `X-Correlation-ID`, and opens an `ILogger` scope keyed `CorrelationId` around the rest of the pipeline.
+
+- **It sits before `UseExceptionHandler`**, because the lines most worth correlating are the ones the `IExceptionHandler`s write — a 500 the caller was handed an id for is the difference between "a user reports an error" and "here is the request". Nothing above it logs.
+- **The echo is written from `Response.OnStarting`**, the same lesson as `SecurityHeadersMiddleware`: `ExceptionHandlerMiddleware` clears the response, so an eagerly assigned header is gone on exactly the responses that need one.
+- **An inbound value is adopted only if it is safe to log**: 1–64 characters of ASCII letters, digits and hyphen. Anything else — a space, a quote, a brace, a comma, a tab, 65 characters, or the header sent twice (`StringValues.ToString()` joins with a comma) — is **replaced** with a generated `Guid("N")`, never trimmed or stripped. Trimming would alias two clients' ids onto one string; stripping would report an id nobody sent while looking like the one they did.
+- The scope covers everything downstream, framework loggers included — `ILoggerFactory` shares one `IExternalScopeProvider`. Hosting's own "Request starting/finished" lines are the exception and always will be: `HostingApplication` wraps the pipeline from outside.
+- `CorrelationIdTests.EveryLineARequestWrites_CarriesThatRequestsCorrelationId` drives **two** requests and checks each one's lines for its own id *and against the other's* — an id attached once and never cleared would satisfy a single-request assertion with the wrong value.
+
+### Observability — health probes
+
+`GET /health/live` and `GET /health/ready` (`Api/Health/`), both **outside `/v1`**: a probe URL lives in a deployment manifest, not a client library, so it must not move when the product contract versions.
+
+- **Liveness touches nothing outside the process** (`Predicate = _ => false`, no checks selected). A failed liveness probe *restarts* the process, so a liveness check that opened a database connection would roll-restart the fleet the moment the database hiccuped — at the moment it can least afford a reconnection stampede. `HealthEndpointTests.Live_ConsultsNoProbeAtAll_WhileReadyConsultsItEveryTime` **counts probe calls** rather than reading a status code, because 200 is a small closed value that a skipped check and a succeeding check produce identically.
+- **Readiness is tag-filtered** on `DatabaseHealthCheck.ReadinessTag`, so a newly registered check does not silently join it. Its one check goes through `IPersistenceProbe` (`Application/Common/Services/`) — registered on **both** persistence branches (`EfCorePersistenceProbe` / `InMemoryPersistenceProbe`), because a missing registration must not be able to answer "ready".
+- Both are `AllowAnonymous`, `DisableRateLimiting` (the **global** 100/min limiter is the one that would fire; a 429 is not a health status, so a throttled probe reads as a failed one) and constrained to **GET** — `MapHealthChecks` maps every method by default, and an unsafe method on an anonymous path would put `CsrfGuardMiddleware` in front of a route that changes nothing.
+- The default plaintext writer emits the **status only**, so health-check descriptions never reach the wire — but `HealthCheckService` logs every description, which is why `DatabaseHealthCheck`'s are fixed strings and never quote the store (a SQL Server connection failure names host, database and sometimes login).
+
+### Observability — metrics and spans, no exporter
+
+Instruments only: `Meter`, `Counter<T>` and `ActivitySource` are all in the BCL on `net10.0` (`System.Diagnostics.DiagnosticSource`, part of `Microsoft.NETCore.App`), so **zero packages were added**. The OpenTelemetry SDK and its exporters are deliberately deferred — they configure a collector that does not exist. `StartActivity` returns `null` with no listener attached, so today every span costs one null check.
+
+`Application/Common/Observability/` holds one `Meter` named **`BuildCv`** (`BuildCvMetrics`) and one `ActivitySource` named **`BuildCv`** (`BuildCvActivities`). An exporter must also name **`BuildCv.Infrastructure.Encryption`**, the pre-existing meter behind `buildcv.encryption.operations` — meter names match exactly.
+
+| Instrument | Tag | Values |
+|---|---|---|
+| `buildcv.scoring.runs` | `outcome` | `computed`, `deduplicated` (`ScoringOutcomes`) |
+| `buildcv.readability.reports` | — | untagged; no de-duplication, no variants |
+| `buildcv.documents.extraction_failures` | `reason` | 10 values (`DocumentExtractionFailureReasons`) |
+| `buildcv.throttle.rejections` | `policy` | 6 values (`ThrottlePolicies`) |
+
+- **A tag is a time-series dimension and is covered by none of this repo's encryption.** No account id, resume id, partition key, skill name or anything else derived from candidate text may appear in one — it would make a metrics backend an unencrypted PII store *and* multiply the series count by the number of users. Every emit method takes a value from a closed set named in code, and there is no overload accepting caller-supplied dimensions.
+- `BuildCvMetrics` is **an instance, not a static**, and stamps its `Meter` with `scope: this`. That is the `IMeterFactory` mechanism, minus the `AddMetrics()` call that lives in an ASP.NET Core assembly Application and Infrastructure cannot reference. It makes a `MeterListener` able to tell one composed host's measurements from another's — without it, an assertion could be satisfied by a measurement some *other* test produced.
+- The extraction reason is named **at the site that writes the message**, so the tag and the prose are one statement. `DocumentTextExtractionTests.TheReasonsThisSuiteEmits_...` checks the set in both directions — everything emitted is declared, and everything declared is reachable except `password_protected`, which needs a genuinely encrypted PDF fixture and is named as the gap rather than quietly missing.
+- `buildcv.throttle.rejections` is emitted from **two** places: `RateLimiterOptions.OnRejected` for the middleware's limiters, and inside the endpoint for the three per-account limiters, which the middleware has already waved through by the time they refuse. `OnRejected` reads the policy from endpoint metadata because `OnRejectedContext` exposes neither the middleware's internal global-vs-endpoint flag nor a policy name; that is exact for every route without a policy and reports the endpoint's policy on the four that have one even in the rare case where the global 100/min ceiling fired first.
+- Spans: `buildcv.document.extract` (tags `buildcv.document.format`, `buildcv.document.outcome`), `buildcv.resume.score` (tag `buildcv.scoring.outcome`), `buildcv.resume.readability` (no tags at all — everything about a readability run is either an identifier or derived from advice that quotes the candidate's own bullet points). The **declared `Content-Type` never reaches a span**: it is client-controlled, so `DocumentFormats.Of` maps it into a closed set first.
+- `BuildCvActivities` **is** static, unlike the metrics: a span is attributed by parentage (`Activity.Current` is an AsyncLocal), so a test isolates its own spans by trace id. A measurement carries no parent, which is why only the meter needs a scope.
+
+### Observability — nothing about a CV may reach a log, a metric tag or a span
+
+`ObservabilityLeakTests.NoCvContentReachesALogScopeAMetricTagOrASpan` is the load-bearing test of the observability work, and the rule it enforces applies to every future change: **a log line, a metric tag and an `Activity` attribute are covered by none of this repository's encryption**, and unlike a row they are shipped to an aggregator with its own retention and access list. A leaked row can be re-encrypted; a leaked log line has already been indexed and replicated.
+
+It drives extract, a *failing* extract, propose, import, a *rejected* import, score (both branches) and readability with alphabetic sentinel values, then asserts the sentinels are absent from everything captured. Three things keep it from being a test that cannot fail:
+
+- **Every request is asserted to have succeeded and to have echoed its sentinel back in the response body.** A suite of 400s would carry no CV content anywhere and would pass while proving nothing.
+- **The log filters are cleared to `Trace`** (`RecordingLogging.Capturing`) — `appsettings.json` filters `Microsoft.AspNetCore` to `Warning`, and filter selection prefers the most specific category, so adding a permissive rule would not have been enough. `TheRecorderSeesTraceLevelFrameworkLines` proves the levels really are open.
+- **The `ActivityRecorder` listens to every source**, not just `BuildCv`: a span this code never wrote is where an unnoticed leak would sit.
+
+The uploaded **file name** is one of the sentinels, on purpose: a CV is routinely called `Jane_Doe_CV.pdf`, and the form reader sees it before any of this repository's code does.
+
+What already made this pass rather than luck: `AuditLog` hashes emails, the extraction adapters forward no library exception message (`PdfPigTextExtractor`, `OpenXmlDocxTextExtractor`), `EnableSensitiveDataLogging(false)` is stated on the context, refusal messages are this repo's own words, and the readability span carries no attributes at all. This test pins that discipline instead of assuming it survives the next change.
 
 ### Deployment requirement — forwarded headers
 

@@ -1,3 +1,4 @@
+using BuildCv.Application.Common.Observability;
 using BuildCv.Application.Common.Services;
 using BuildCv.Domain.Common.ValueObjects;
 using UglyToad.PdfPig;
@@ -11,7 +12,7 @@ namespace BuildCv.Infrastructure.Documents;
 /// <c>AesGcmFieldEncryptor</c> is: PdfPig is pre-1.0, so the day a breaking upgrade lands, this one
 /// class is the blast radius.
 /// </summary>
-public sealed class PdfPigTextExtractor
+public sealed class PdfPigTextExtractor(BuildCvMetrics metrics)
 {
     /// <summary>
     /// Below this many non-whitespace characters per page, on average, the document is treated as
@@ -28,7 +29,8 @@ public sealed class PdfPigTextExtractor
     public Result<DocumentExtraction> Extract(Stream content, CancellationToken cancellationToken)
     {
         if (!MagicBytes.StartsWith(content, MagicBytes.Pdf))
-            return Result<DocumentExtraction>.Failure(
+            return Failed(
+                DocumentExtractionFailureReasons.FormatMismatch,
                 "The file is not a PDF. Check that the upload matches its declared type.");
 
         try
@@ -62,7 +64,8 @@ public sealed class PdfPigTextExtractor
         }
         catch (PdfDocumentEncryptedException)
         {
-            return Result<DocumentExtraction>.Failure(
+            return Failed(
+                DocumentExtractionFailureReasons.PasswordProtected,
                 "The PDF is password-protected. Remove the password and upload it again.");
         }
         catch (OperationCanceledException)
@@ -77,7 +80,18 @@ public sealed class PdfPigTextExtractor
             // written about the document's internals, and this adapter does not audit per version
             // whether that quotes candidate text. Refusing to forward any of it is what makes "the CV
             // never reaches a response or a log" hold.
-            return Result<DocumentExtraction>.Failure("The PDF could not be read. It may be corrupt.");
+            return Failed(
+                DocumentExtractionFailureReasons.Unreadable,
+                "The PDF could not be read. It may be corrupt.");
         }
+    }
+
+    // Reason and message stated together, so the tag can never describe a different refusal from the
+    // one the candidate is shown. The reason is a classification this adapter chose, never anything
+    // the parser read out of the file.
+    private Result<DocumentExtraction> Failed(string reason, string message)
+    {
+        metrics.ExtractionFailed(reason);
+        return Result<DocumentExtraction>.Failure(message);
     }
 }

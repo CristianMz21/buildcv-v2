@@ -1,3 +1,4 @@
+using BuildCv.Application.Common.Observability;
 using BuildCv.Application.Scoring;
 using BuildCv.Application.Tests.Common.Pagination;
 using BuildCv.Application.Tests.Fakes;
@@ -18,10 +19,14 @@ public class ScoreResumeHandlerTests
     // EMPTY LEXICON, assertions unchanged — see the note in ScoringEngineTests.
     private readonly ScoringEngine _scoringEngine = new(FakeSkillLexicon.Empty);
     private readonly FakeTimeProvider _time = new(DateTimeOffset.UtcNow);
+    // An unscoped meter: nothing listens to it in these tests, so a measurement costs a null check.
+    // The metric assertions live in ScoringMetricsTests, which builds its own SCOPED instance so it
+    // cannot observe measurements this class produced.
+    private readonly BuildCvMetrics _metrics = new();
     private readonly ScoreResumeHandler _handler;
 
     public ScoreResumeHandlerTests() =>
-        _handler = new ScoreResumeHandler(_resumes, _jobPostings, _analyses, _scoringEngine, _time);
+        _handler = new ScoreResumeHandler(_resumes, _jobPostings, _analyses, _scoringEngine, _time, _metrics);
 
     private static Resume BuildResume(AccountId ownerId, params string[] skillNames)
     {
@@ -288,7 +293,7 @@ public class ScoreResumeHandlerTests
             new DateTimeOffset(2026, 8, 4, 23, 59, 59, 900, TimeSpan.Zero),
             TimeSpan.FromMilliseconds(200));
         var engine = new RecordingScoringEngine(new ScoringEngine(FakeSkillLexicon.Empty));
-        var handler = new ScoreResumeHandler(_resumes, _jobPostings, _analyses, engine, clock);
+        var handler = new ScoreResumeHandler(_resumes, _jobPostings, _analyses, engine, clock, _metrics);
 
         var ownerId = AccountId.New();
         var resume = BuildResume(ownerId, "C#");

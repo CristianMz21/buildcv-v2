@@ -1,0 +1,42 @@
+using BuildCv.Application.Common.Services;
+using Microsoft.EntityFrameworkCore;
+
+namespace BuildCv.Infrastructure.Persistence.EfCore;
+
+/// <summary>
+/// The SQL Server half of <see cref="IPersistenceProbe"/>: opens a connection and closes it again.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <c>CanConnectAsync</c> rather than a query, because a query would make readiness depend on the
+/// schema being migrated as well as on the server being up, and those are different failures wanting
+/// different responses — one is "wait", the other is "deploy something".
+/// </para>
+/// <para>
+/// The catch is a backstop, not the mechanism. <c>CanConnectAsync</c> answers false rather than
+/// throwing for a REFUSED connection — measured against SQL Server in
+/// <c>EfCorePersistenceProbeUnreachableTests</c>. What it does not promise is that every OTHER failure
+/// arrives the same way, and a readiness endpoint that 500s instead of reporting not-ready is a probe
+/// an orchestrator cannot read. Nothing about the exception travels on: a connection failure's message
+/// quotes the server, the database name and sometimes the login, and a health check's message reaches
+/// the log (measured — see <c>HealthEndpointTests.AFailedReadinessProbe_LogsItsFixedDescription</c>).
+/// </para>
+/// </remarks>
+public sealed class EfCorePersistenceProbe(BuildCvDbContext dbContext) : IPersistenceProbe
+{
+    public async Task<bool> CanReachAsync(CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            return await dbContext.Database.CanConnectAsync(cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+}

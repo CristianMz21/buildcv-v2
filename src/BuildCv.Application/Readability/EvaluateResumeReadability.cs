@@ -1,6 +1,7 @@
 namespace BuildCv.Application.Readability;
 
 using BuildCv.Application.Common.Abstractions;
+using BuildCv.Application.Common.Observability;
 using BuildCv.Application.Common.Repositories;
 using BuildCv.Application.Common.Services;
 using BuildCv.Domain.Common.ValueObjects;
@@ -23,12 +24,19 @@ public sealed class EvaluateResumeReadabilityHandler(
     IResumeRepository resumeRepository,
     IReadabilityReportRepository readabilityReportRepository,
     IReadabilityEngine readabilityEngine,
-    TimeProvider timeProvider)
+    TimeProvider timeProvider,
+    BuildCvMetrics metrics)
     : ICommandHandler<EvaluateResumeReadabilityCommand, Result<ReadabilityReport>>
 {
     public async Task<Result<ReadabilityReport>> Handle(
         EvaluateResumeReadabilityCommand command, CancellationToken cancellationToken = default)
     {
+        // Untagged, and the span carries no attributes at all. There is nothing here that is not either
+        // a candidate identifier or derived from the advice itself, and the advice quotes the
+        // candidate's own bullet points back at them — see ReadabilityRecommendation, whose Message is
+        // encrypted at rest under its own context string. A span attribute has no such protection.
+        using var activity = BuildCvActivities.Source.StartActivity(BuildCvActivities.ResumeReadability);
+
         try
         {
             var resume = await resumeRepository.GetByIdAsync(command.ResumeId, cancellationToken);
@@ -70,6 +78,10 @@ public sealed class EvaluateResumeReadabilityHandler(
             // the safe direction -- a duplicate row is a wasted insert, while a reused row that should
             // not have been is a candidate shown a number about a CV they no longer have.
             await readabilityReportRepository.AddAsync(report, cancellationToken);
+
+            // After the write, matching ScoreResumeHandler: the counter reports reports that landed,
+            // not evaluations that were attempted.
+            metrics.ReadabilityReportProduced();
 
             return Result<ReadabilityReport>.Success(report);
         }

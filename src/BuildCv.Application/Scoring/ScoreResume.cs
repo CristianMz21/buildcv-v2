@@ -1,6 +1,8 @@
 namespace BuildCv.Application.Scoring;
 
+using System.Diagnostics;
 using BuildCv.Application.Common.Abstractions;
+using BuildCv.Application.Common.Observability;
 using BuildCv.Application.Common.Repositories;
 using BuildCv.Application.Common.Services;
 using BuildCv.Domain.Common.ValueObjects;
@@ -18,11 +20,19 @@ public sealed class ScoreResumeHandler(
     IJobPostingRepository jobPostingRepository,
     IAnalysisRepository analysisRepository,
     IScoringEngine scoringEngine,
-    TimeProvider timeProvider)
+    TimeProvider timeProvider,
+    BuildCvMetrics metrics)
     : ICommandHandler<ScoreResumeCommand, Result<AnalysisView>>
 {
     public async Task<Result<AnalysisView>> Handle(ScoreResumeCommand command, CancellationToken cancellationToken = default)
     {
+        // Started before the authorization reads so a refused request is still one span rather than a
+        // gap. It carries NO resume id, account id or posting id: a span attribute is exported to the
+        // same backend a metric tag is, and this repository encrypts neither. The correlation id on the
+        // log lines is what joins a trace to a request; joining it to a CANDIDATE is a question for the
+        // audit log, which is the place built to answer it.
+        using var activity = BuildCvActivities.Source.StartActivity(BuildCvActivities.ResumeScore);
+
         try
         {
             var resume = await resumeRepository.GetByIdAsync(command.ResumeId, cancellationToken);
@@ -85,7 +95,13 @@ public sealed class ScoreResumeHandler(
                 resume.Id, jobPosting.Id, cancellationToken);
 
             if (existing is not null && ScoredUnderTheSameConditions(existing, resume, jobPosting, referenceDate))
+            {
+                // The counter that makes de-duplication visible. Without it the saving is invisible in
+                // every other signal: the request count is identical, and the only trace of a reuse is a
+                // row that was NOT written.
+                Record(activity, metrics, ScoringOutcomes.Deduplicated);
                 return Result<AnalysisView>.Success(AnalysisView.Of(existing, resume));
+            }
 
             var score = scoringEngine.Score(resume, jobPosting, referenceDate);
 
@@ -106,6 +122,10 @@ public sealed class ScoreResumeHandler(
                 jobPosting.UpdatedAt);
             await analysisRepository.AddAsync(analysis, cancellationToken);
 
+            // After the write, so the counter reports runs that actually landed rather than runs that
+            // were attempted — a failing repository would otherwise inflate it with rows nobody has.
+            Record(activity, metrics, ScoringOutcomes.Computed);
+
             // Both exits go through AnalysisView.Of rather than reporting a hard-coded "not stale". Both
             // ARE not stale — this one because it was just built from `resume`, the de-duplicated one
             // because the first term of the key says the resume has not moved — but that second claim is
@@ -121,6 +141,14 @@ public sealed class ScoreResumeHandler(
         {
             return Result<AnalysisView>.Failure(ex.Message);
         }
+    }
+
+    // The outcome is stated ONCE per exit and reaches both signals from the same line, so a trace and
+    // a counter can never disagree about which kind of run this was.
+    private static void Record(Activity? activity, BuildCvMetrics metrics, string outcome)
+    {
+        activity?.SetTag(BuildCvActivities.ScoringOutcomeTag, outcome);
+        metrics.ScoringRun(outcome);
     }
 
     // WHAT MAKES TWO SCORING RUNS THE SAME RUN. Four terms, and dropping any one of them silently returns

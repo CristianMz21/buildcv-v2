@@ -1,4 +1,5 @@
 using BuildCv.Application.Common.Abstractions;
+using BuildCv.Application.Common.Observability;
 using BuildCv.Application.Common.Pagination;
 using BuildCv.Application.Common.Repositories;
 using BuildCv.Application.Common.Services;
@@ -87,6 +88,13 @@ public static class DependencyInjection
         // TryAdd so the Api can register an HttpContext-backed principal without removing this one.
         // Nothing in Application consumes ICurrentUser yet; the audit interceptor does.
         services.TryAddSingleton<ICurrentUser, UnknownCurrentUser>();
+
+        // A singleton, and that is what scopes its meter: BuildCvMetrics stamps the meter with itself,
+        // so two composed hosts in one process — which is what an xUnit assembly full of
+        // WebApplicationFactory instances is — publish to two distinguishable meters rather than to one
+        // global. Same mechanism IMeterFactory uses, without needing the ASP.NET Core assembly it lives
+        // in. See BuildCvMetrics.
+        services.AddSingleton<BuildCvMetrics>();
 
         services.AddSingleton(TimeProvider.System);
         services.AddSingleton<IPasswordHasher, PasswordHasher>();
@@ -239,6 +247,11 @@ public static class DependencyInjection
             // COMPOSED provider.
             .EnableSensitiveDataLogging(false));
 
+        // Scoped, because it holds the scoped DbContext. The readiness health check resolves it inside
+        // the scope HealthCheckService creates per check, so a probe never shares a context with a
+        // request.
+        services.AddScoped<IPersistenceProbe, EfCorePersistenceProbe>();
+
         services.AddScoped<IAccountRepository, AccountRepository>();
         services.AddScoped<IRefreshTokenRepository, RefreshTokenRepository>();
         services.AddScoped<IResumeRepository, ResumeRepository>();
@@ -267,6 +280,11 @@ public static class DependencyInjection
                     : $" If this really is a test host, set "
                         + $"{PersistenceConfiguration.AllowInMemoryOutsideDevelopmentKey}=true."));
         }
+
+        // Registered on BOTH branches, so the readiness endpoint always has a probe to ask. A null
+        // check in the health check instead would report ready whenever the registration was missed,
+        // which is the failure direction a readiness probe must never take.
+        services.AddSingleton<IPersistenceProbe, InMemoryPersistenceProbe>();
 
         services.AddSingleton<IAccountRepository, InMemoryAccountRepository>();
         services.AddSingleton<IRefreshTokenRepository, InMemoryRefreshTokenRepository>();

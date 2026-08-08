@@ -2,6 +2,7 @@ using BuildCv.Api.Common;
 using BuildCv.Api.Contracts;
 using BuildCv.Api.Security;
 using BuildCv.Application.Common.Abstractions;
+using BuildCv.Application.Common.Observability;
 using BuildCv.Application.Identity;
 using BuildCv.Domain.Common.ValueObjects;
 using BuildCv.Domain.Identity;
@@ -156,6 +157,7 @@ public static class AuthEndpoints
             ChangePasswordRequest request,
             ICommandHandler<ChangePasswordCommand, Result<AccountDto>> handler,
             PasswordChangeRateLimiter rateLimiter,
+            BuildCvMetrics metrics,
             ILogger<Program> logger,
             HttpContext httpContext,
             CancellationToken cancellationToken) =>
@@ -167,6 +169,10 @@ public static class AuthEndpoints
             {
                 RateLimitResponse.SetRetryAfter(httpContext.Response, lease);
                 AuditLog.Log(logger, "password_change_throttled", accountId, httpContext);
+                // Counted here, not in the middleware's OnRejected: PasswordChangeRateLimiter is
+                // acquired inside the endpoint because UseRateLimiter runs before UseAuthentication and
+                // a policy partitioner would have no principal to key on.
+                metrics.ThrottleRejection(ThrottlePolicies.PasswordChange);
                 return Results.Problem(
                     detail: "Too many password change attempts.",
                     statusCode: StatusCodes.Status429TooManyRequests);

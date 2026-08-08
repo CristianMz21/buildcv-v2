@@ -2,15 +2,20 @@ using System.Text;
 using System.Threading.RateLimiting;
 using BuildCv.Api.Common;
 using BuildCv.Api.Endpoints;
+using BuildCv.Api.Health;
+using BuildCv.Api.Observability;
 using BuildCv.Api.Security;
+using BuildCv.Application.Common.Observability;
 using BuildCv.Application.Common.Services;
 using BuildCv.Infrastructure;
 using BuildCv.Infrastructure.Persistence;
 using BuildCv.Infrastructure.Security;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 
@@ -68,6 +73,20 @@ builder.Services.AddRateLimiter(options =>
     options.OnRejected = (context, _) =>
     {
         RateLimitResponse.SetRetryAfter(context.HttpContext.Response, context.Lease);
+
+        // Counted from the ENDPOINT's policy metadata, because that is the only attribution this
+        // callback can make: OnRejectedContext carries exactly two things, HttpContext and the failed
+        // Lease, and neither names the limiter that refused.
+        // So the tag is exact for every route without a policy (there is only the global limiter to
+        // refuse it) and, on the four routes that have one, reports that policy even in the rare case
+        // where the global 100/min ceiling was hit first — reachable only by spending the global budget
+        // elsewhere and then arriving here, since the named windows are 5/min and 20/min. Stated rather
+        // than papered over; both directions are pinned by ThrottleMetricsTests.
+        var policy = context.HttpContext.GetEndpoint()?.Metadata
+            .GetMetadata<EnableRateLimitingAttribute>()?.PolicyName
+            ?? ThrottlePolicies.Global;
+        context.HttpContext.RequestServices.GetRequiredService<BuildCvMetrics>().ThrottleRejection(policy);
+
         return ValueTask.CompletedTask;
     };
     // Both limiters partition on the peer address, which is only the real client when the app is
@@ -136,6 +155,15 @@ builder.Services.AddExceptionHandler<MalformedRequestExceptionHandler>();
 builder.Services.AddExceptionHandler<PersistenceExceptionHandler>();
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 
+// The store probe is the only readiness check, and it is TAGGED rather than merely registered:
+// /health/live selects no checks at all and /health/ready selects this tag, so neither endpoint means
+// "whatever happens to be registered". See HealthEndpoints for why the two probes must differ.
+builder.Services.AddHealthChecks()
+    .AddCheck<DatabaseHealthCheck>(
+        DatabaseHealthCheck.Name,
+        failureStatus: HealthStatus.Unhealthy,
+        tags: [DatabaseHealthCheck.ReadinessTag]);
+
 builder.Services.AddOpenApi();
 
 var app = builder.Build();
@@ -163,6 +191,10 @@ if (app.Environment.IsDevelopment()
 if (forwardedHeaders.Enabled)
     app.UseForwardedHeaders(ForwardedHeadersConfiguration.Build(forwardedHeaders));
 
+// Before the exception handler, so the 500 a caller is shown and the stack trace this process logged
+// carry the same id. See CorrelationIdMiddleware for why the echo is written from OnStarting.
+app.UseMiddleware<CorrelationIdMiddleware>();
+
 app.UseMiddleware<SecurityHeadersMiddleware>();
 app.UseExceptionHandler();
 
@@ -181,6 +213,10 @@ app.UseAuthorization();
 
 if (app.Environment.IsDevelopment())
     app.MapOpenApi().AllowAnonymous();
+
+// Mapped before the /v1 group and deliberately not inside it: probe URLs live in deployment manifests,
+// not in client libraries, so they must not move when the product contract versions.
+app.MapHealthEndpoints();
 
 // Every public route lives under one URL version segment, so the analysis contract can change in a
 // /v2 without breaking whatever clients exist by then. A hand-rolled group rather than the
