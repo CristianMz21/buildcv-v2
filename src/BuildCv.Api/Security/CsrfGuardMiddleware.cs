@@ -1,3 +1,4 @@
+using BuildCv.Api.Common;
 using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Mvc;
 
@@ -56,7 +57,9 @@ public sealed class CsrfGuardMiddleware(RequestDelegate next)
                 // contentType passed to WriteAsJsonAsync, not assigned to Response.ContentType first:
                 // the overload without it OVERWRITES whatever is set with "application/json", so the
                 // assignment that used to be on the line above never survived and this response was
-                // ProblemDetails-shaped without being ProblemDetails-typed.
+                // ProblemDetails-shaped without being ProblemDetails-typed. This site was fixed during
+                // the CV-import phase; the four handlers in ApiExceptionHandlers and the JWT challenge
+                // were swept later, which is where the shared constant came from.
                 await context.Response.WriteAsJsonAsync(
                     new ProblemDetails
                     {
@@ -65,7 +68,7 @@ public sealed class CsrfGuardMiddleware(RequestDelegate next)
                         Status = StatusCodes.Status403Forbidden
                     },
                     options: null,
-                    contentType: "application/problem+json");
+                    contentType: ProblemDetailsContentType.Value);
                 return;
             }
         }
