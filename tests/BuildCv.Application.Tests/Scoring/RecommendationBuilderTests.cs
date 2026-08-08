@@ -168,6 +168,41 @@ public class RecommendationBuilderTests
         advice.Should().NotBeEmpty("the resume is otherwise empty, so the other sections must have spoken");
     }
 
+    // The row no endpoint can create any more, and the reason ScoringRules keeps `!= Professional`
+    // instead of `== Volunteer`.
+    //
+    // Until issue #21 was closed, POST /v1/resumes/{id}/experiences parsed the type with Enum.TryParse
+    // and no Enum.IsDefined guard, so a request could store a value that is a member of neither name;
+    // the column is tinyint and the conversion unchecked, so it survived a round trip as a mangled
+    // byte. Both write paths refuse that now, but rows written before are still out there, and this is
+    // the assertion that says what happens to them: they are counted as unmarked experience and turned
+    // into advice, rather than disappearing from both halves of the section the way `== Volunteer`
+    // would make them.
+    //
+    // The aggregate is built directly because that is the only way left to reach the state — which is
+    // the point of the fix, and is why this claim could no longer live in the Api suite.
+    [Fact]
+    public void AnExperienceTypeTheEnumDoesNotKnow_IsStillCountedAsUnmarkedExperience()
+    {
+        var resume = BuildResume();
+        resume.AddExperience(new Experience(
+            (ExperienceType)99, OrganizationName.Create("Acme"), "Backend Developer",
+            DateRange.Create(ReferenceDate.AddYears(-3), ReferenceDate)));
+
+        var result = _engine.Score(resume, BuildJobPosting(), ReferenceDate);
+
+        result.Breakdown.ExperienceScore.Should().Be(0.0,
+            "an undefined type is not Professional, so the three years fail closed");
+
+        // The advice is what proves the days were not simply dropped: ForExperience emits nothing
+        // unless re-tagging would raise the section, which it can only compute from days that
+        // `!= Professional` collected. Asserting the zero above on its own would hold just as well for
+        // an entry that had vanished from both halves.
+        result.Recommendations.Should()
+            .Contain(r => r.Kind == RecommendationKind.ExperienceNotMarkedProfessional,
+                "the candidate is told which entry is why, rather than losing the section silently");
+    }
+
     // Re-labelling volunteer work is not advice when the section is already at its cap, and it would be
     // advice to misrepresent unpaid work for a gain of zero.
     [Fact]

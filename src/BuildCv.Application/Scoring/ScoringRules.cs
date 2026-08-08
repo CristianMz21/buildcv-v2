@@ -151,11 +151,15 @@ internal static class ScoringRules
             .Sum(e => e.Period.DurationInDays(referenceDate));
 
     // The mirror image of ProfessionalDays, and deliberately `!= Professional` rather than
-    // `== Volunteer`: the API parses ExperienceType with Enum.TryParse and no Enum.IsDefined guard
-    // (ResumeEndpoints), so a request can persist a value that is neither member. Such an entry fails
-    // the `== Professional` test above and is excluded from the score, which harms only the candidate
-    // who sent it -- and it lands here, where it becomes advice naming the fix instead of a silent
-    // deduction. Widening this to `== Volunteer` would drop those entries out of both halves.
+    // `== Volunteer`, so the two halves are exhaustive by construction.
+    //
+    // Both write paths for ExperienceType now reject undefined values before they reach a column —
+    // ResumeEndpoints guards its Enum.TryParse with Enum.IsDefined, and the draft import goes through
+    // FieldErrorCollector.ParseOptionalEnum, which does the same. That was NOT true when this rule was
+    // written: the endpoint accepted any numeric string and the tinyint conversion is unchecked, so a
+    // row could hold a value that is neither member. Rows written before that guard landed can still
+    // hold one, and `!= Professional` is what keeps them counted as unmarked experience — advice
+    // naming the fix — instead of vanishing from both halves the way `== Volunteer` would make them.
     internal static int UnmarkedExperienceDays(Resume resume, DateOnly referenceDate) =>
         resume.Experiences
             .Where(e => e.Type != ExperienceType.Professional)

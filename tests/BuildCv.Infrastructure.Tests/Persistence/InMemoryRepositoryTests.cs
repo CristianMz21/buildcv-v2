@@ -154,7 +154,7 @@ public class InMemoryRepositoryTests
     [Fact]
     public async Task Resume_add_and_get_by_id_roundtrip()
     {
-        var repository = new InMemoryResumeRepository();
+        var repository = new InMemoryResumeRepository(new InMemoryAnalysisRepository());
         var ownerId = AccountId.New();
         var resume = CreateResume(ownerId);
 
@@ -170,13 +170,56 @@ public class InMemoryRepositoryTests
     [Fact]
     public async Task Resume_delete_removes_it()
     {
-        var repository = new InMemoryResumeRepository();
+        var repository = new InMemoryResumeRepository(new InMemoryAnalysisRepository());
         var resume = CreateResume(AccountId.New());
         await repository.AddAsync(resume);
 
         await repository.DeleteAsync(resume.Id);
 
         (await repository.GetByIdAsync(resume.Id)).Should().BeNull();
+    }
+
+    // THE PAIR OF ResumeRepositoryTests.DeleteAsync_AlsoTombstonesTheAnalysesDerivedFromTheResume, which
+    // makes the same claim against a real SQL Server. Two providers, one promise: deleting a resume
+    // takes its whole score history out of every read.
+    //
+    // It was true of EF and not of this store (issue #18), and the Api suite runs on this store — so a
+    // handler that read an analysis without loading its resume first would have been certified green
+    // against behaviour production does not have, on a PRIVACY promise. Nothing observed it only
+    // because both endpoints that read an analysis authorize against the resume first.
+    //
+    // BOTH READ PORTS, not just one. GetPageByResumeIdAsync is where the orphans were listed and
+    // GetByIdAsync inherits the same store, so a cascade that cleared one index and not the other would
+    // pass a test that checked either alone.
+    //
+    // THE BYSTANDER IS THE POINT OF THE SECOND HALF. A DeleteAsync that emptied the analysis store
+    // wholesale would satisfy every assertion above it, and would delete another candidate's score
+    // history on every delete.
+    [Fact]
+    public async Task Resume_delete_also_removes_the_analyses_derived_from_it()
+    {
+        var analyses = new InMemoryAnalysisRepository();
+        var repository = new InMemoryResumeRepository(analyses);
+
+        var resume = CreateResume(AccountId.New());
+        await repository.AddAsync(resume);
+        var derived = NewAnalysis(resume.Id);
+        await analyses.AddAsync(derived);
+
+        var survivor = CreateResume(AccountId.New());
+        await repository.AddAsync(survivor);
+        var bystander = NewAnalysis(survivor.Id);
+        await analyses.AddAsync(bystander);
+
+        await repository.DeleteAsync(resume.Id);
+
+        (await analyses.GetByIdAsync(derived.Id)).Should().BeNull("the resume it was derived from is gone");
+        (await analyses.GetPageByResumeIdAsync(resume.Id, PageRequests.Of())).Items
+            .Should().BeEmpty("the history is not merely unreachable by id, it is gone from the list too");
+
+        (await analyses.GetByIdAsync(bystander.Id)).Should().Be(bystander);
+        (await analyses.GetPageByResumeIdAsync(survivor.Id, PageRequests.Of())).Items
+            .Should().ContainSingle().Which.Should().Be(bystander);
     }
 
     [Fact]
@@ -263,7 +306,7 @@ public class InMemoryRepositoryTests
     [Fact]
     public async Task Resume_pages_walk_newest_first_without_a_gap_or_a_repeat()
     {
-        var repository = new InMemoryResumeRepository();
+        var repository = new InMemoryResumeRepository(new InMemoryAnalysisRepository());
         var ownerId = AccountId.New();
         var mine = new List<Resume>();
         for (var index = 0; index < 5; index++)
@@ -298,7 +341,7 @@ public class InMemoryRepositoryTests
     [Fact]
     public async Task Resume_update_does_not_move_the_resume_in_the_page_order()
     {
-        var repository = new InMemoryResumeRepository();
+        var repository = new InMemoryResumeRepository(new InMemoryAnalysisRepository());
         var ownerId = AccountId.New();
         var first = CreateResume(ownerId);
         var second = CreateResume(ownerId);
@@ -327,13 +370,9 @@ public class InMemoryRepositoryTests
     // The EF twin answers null for an id that was never stored AND for one whose row is tombstoned, and
     // both arrive at the same caller as the same nothing.
     //
-    // This store can only reproduce the first case, and the reason is stated in the repository: an
-    // Analysis has no Delete() and no Status, and the only writer of its DeletedAt column is
-    // ResumeRepository's cascade, which has no counterpart here — so a tombstoned row cannot exist for
-    // an IsLive filter to hide. The second case is closed one layer up instead, by
-    // GetAnalysisByIdHandler answering "Analysis not found." when the resume behind an analysis is gone;
-    // GetAnalysisByIdHandlerTests pins that, and AnalysisRepositoryTests pins the EF half against a real
-    // database.
+    // This store reaches the second case by REMOVING the row rather than hiding it — see the cascade
+    // test below — because an Analysis has no Delete() and no Status for an IsLive filter to read. The
+    // observable is the same null either way, which is the only thing a caller can tell apart.
     [Fact]
     public async Task Analysis_get_by_id_unknown_returns_null()
     {

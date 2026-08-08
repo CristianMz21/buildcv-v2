@@ -128,16 +128,19 @@ public sealed class AnalysisReadTests
     //
     // Deleting a resume must hide every score derived from it. Under EF that is
     // ResumeRepository.CascadeToAnalysesAsync tombstoning the analyses in the same unit of work, so the
-    // global query filter makes them vanish at the first read. The in-memory store has no cascade to run
-    // — Analysis has no Delete(), the port has no delete, and InMemoryResumeRepository touches only its
-    // own dictionary — so the analysis survives and the miss happens at the SECOND read, where
-    // GetAnalysisByIdHandler turns a missing resume into "Analysis not found.".
+    // global query filter makes them vanish at the first read. InMemoryResumeRepository.DeleteAsync now
+    // mirrors it by dropping those rows, so both providers miss at the SAME read.
     //
-    // Both providers therefore answer the same status AND the same message, which is the claim the
-    // in-memory store's missing cascade rests on. It was pinned at the handler (against fakes, which
-    // hard-remove) and at EF (against a real database), and neither of those is this: the fakes' and the
-    // in-memory store's agreement was itself unpinned, and a provider divergence certifying behaviour
-    // production does not have was found twice in the previous phase.
+    // THAT WAS NOT TRUE WHEN THIS TEST WAS WRITTEN. The in-memory store cascaded nothing, the analysis
+    // survived its resume, and the miss happened one read later — GetAnalysisByIdHandler turning a
+    // missing resume into "Analysis not found." That equivalence is what this test pinned, and it is
+    // exactly why issue #18 called the parity a property of the HANDLERS rather than of the store: the
+    // next handler to read an analysis without loading its resume first would have reintroduced the
+    // divergence, and the Api suite runs on this store, so it would have certified it green.
+    //
+    // The test is unchanged and still passes, which is the useful part — the observable was already the
+    // contract, and closing the store's gap did not move it. GetAnalysisByIdHandlerTests still covers
+    // the orphan branch against fakes, where an orphan can still be constructed.
     //
     // Costs no auth budget — the delete and the two reads reuse the candidate's existing token.
     [Fact]

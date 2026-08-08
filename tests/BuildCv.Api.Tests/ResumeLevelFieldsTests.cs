@@ -225,6 +225,137 @@ public sealed class ResumeLevelFieldsTests
             .GetProperty("educations").GetArrayLength().Should().Be(0);
     }
 
+    // The two sites issue #21 named. They are in this file rather than beside the endpoints' own tests
+    // because the rule is the same one the language and education blocks above state, and the guard is
+    // now symmetric across all four: an undefined value never reaches a tinyint column.
+    //
+    // BEHAVIOUR CHANGE. Every numeric row below answered 200 before this guard and answered it by
+    // storing a mangled byte — measured on the CLR and reproduced against the tinyint conversion: 99
+    // stays 99, 300 truncates to 44, -1 wraps to 255. Nothing scores Skill.Level today, so what was at
+    // stake was durable data no reader can interpret rather than a wrong score. `"Experto"` and `""`
+    // are the rows TryParse already refused; they are here so a regression that deleted the whole
+    // parse block, not just IsDefined, is still visible.
+    [Theory]
+    [InlineData("Experto")]
+    [InlineData("")]
+    [InlineData("4")]
+    [InlineData("99")]
+    [InlineData("300")]
+    [InlineData("-1")]
+    public async Task AddSkill_WithALevelTheEnumDoesNotKnow_IsABadRequest(string level)
+    {
+        using var factory = new ApiTestFactory();
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        var (_, token) = await client.RegisterAndLoginAsync(TestHelpers.CandidateEmail);
+        var resumeId = await CreateResumeAsync(client, token);
+
+        var response = await PostAsync(client, token, $"/v1/resumes/{resumeId}/skills", new
+        {
+            skillName = "C#",
+            level,
+            yearsOfExperience = (int?)null
+        });
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        response.Content.Headers.ContentType!.MediaType.Should().Be("application/problem+json");
+
+        // Refused BEFORE the handler ran, so nothing was written. Without this the test would pass for
+        // an endpoint that answered 400 and stored the skill anyway.
+        (await GetResumeAsync(client, token, resumeId))
+            .GetProperty("skills").GetArrayLength().Should().Be(0);
+    }
+
+    // A DEFINED number is still accepted, and the guard must not start rejecting one. GET answers the
+    // level as a NAME since v1 (SkillResponse.From calls ToString), so a round-tripping client sends
+    // "Expert" and never needs this — what the tolerance protects is callers written against the
+    // pre-v1 shape, which answered the tinyint. The pair is what makes the guard's job precise: tell
+    // 0 and 3 (real members) from 4, 99, 300 and -1 (not members).
+    [Theory]
+    [InlineData("0", "Beginner")]
+    [InlineData("1", "Intermediate")]
+    [InlineData("3", "Expert")]
+    public async Task AddSkill_AcceptsAValidNumericLevel_SoAnOldClientKeepsWorking(
+        string level, string expected)
+    {
+        using var factory = new ApiTestFactory();
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        var (_, token) = await client.RegisterAndLoginAsync(TestHelpers.CandidateEmail);
+        var resumeId = await CreateResumeAsync(client, token);
+
+        var response = await PostAsync(client, token, $"/v1/resumes/{resumeId}/skills", new
+        {
+            skillName = "C#",
+            level,
+            yearsOfExperience = (int?)null
+        });
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await GetResumeAsync(client, token, resumeId))
+            .GetProperty("skills").EnumerateArray().Single()
+            .GetProperty("level").GetString().Should().Be(expected);
+    }
+
+    // ExperienceType has exactly two members, so every number from 2 up is undefined — 2 is here
+    // rather than only the dramatic ones because "just past the end" is the value a client actually
+    // sends after someone appends a third member to the enum in a later version.
+    [Theory]
+    [InlineData("Freelance")]
+    [InlineData("")]
+    [InlineData("2")]
+    [InlineData("99")]
+    [InlineData("300")]
+    [InlineData("-1")]
+    public async Task AddExperience_WithATypeTheEnumDoesNotKnow_IsABadRequest(string type)
+    {
+        using var factory = new ApiTestFactory();
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        var (_, token) = await client.RegisterAndLoginAsync(TestHelpers.CandidateEmail);
+        var resumeId = await CreateResumeAsync(client, token);
+
+        var response = await PostAsync(client, token, $"/v1/resumes/{resumeId}/experiences", new
+        {
+            type,
+            organization = "Acme",
+            position = "Backend Developer",
+            start = "2020-01-01",
+            end = (string?)null,
+            summary = (string?)null
+        });
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        response.Content.Headers.ContentType!.MediaType.Should().Be("application/problem+json");
+
+        (await GetResumeAsync(client, token, resumeId))
+            .GetProperty("experiences").GetArrayLength().Should().Be(0);
+    }
+
+    [Theory]
+    [InlineData("0", "Professional")]
+    [InlineData("1", "Volunteer")]
+    [InlineData("Volunteer", "Volunteer")]
+    public async Task AddExperience_AcceptsEveryDefinedType(string type, string expected)
+    {
+        using var factory = new ApiTestFactory();
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        var (_, token) = await client.RegisterAndLoginAsync(TestHelpers.CandidateEmail);
+        var resumeId = await CreateResumeAsync(client, token);
+
+        var response = await PostAsync(client, token, $"/v1/resumes/{resumeId}/experiences", new
+        {
+            type,
+            organization = "Acme",
+            position = "Backend Developer",
+            start = "2020-01-01",
+            end = (string?)null,
+            summary = (string?)null
+        });
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await GetResumeAsync(client, token, resumeId))
+            .GetProperty("experiences").EnumerateArray().Single()
+            .GetProperty("type").GetString().Should().Be(expected);
+    }
+
     private static async Task<HttpResponseMessage> PostAsync(
         HttpClient client, string token, string url, object body)
     {

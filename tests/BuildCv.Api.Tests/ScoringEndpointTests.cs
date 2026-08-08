@@ -144,18 +144,22 @@ public sealed class ScoringEndpointTests
                 "every SectionType on the wire is a name, in both arrays that carry one");
     }
 
-    // The pre-existing Enum.TryParse hole on ExperienceType, followed through to what a candidate sees
-    // rather than left as a note. `Enum.TryParse` has no Enum.IsDefined guard on this endpoint (the two
-    // level fields were guarded in the previous PR; the four older sites were correctly left to their
-    // own behaviour-changing PR), so "99" is accepted and stored as a value that is neither member.
+    // An entry the score does not count becomes advice naming the fix, followed through to what a
+    // candidate actually receives rather than left as a note.
     //
-    // It fails CLOSED in the score — ComputeExperienceScore tests `== Professional`, so the entry is
-    // simply not counted, and only the candidate who sent it is affected. What is new is that the same
-    // entry now also fails `!= Professional` in the recommendation rule, so instead of a silent
-    // deduction the candidate is told the entry's type is why the time is not counted. Executed here
-    // rather than asserted from reading, because "arguably the right outcome" is not evidence.
+    // THIS TEST USED TO SEND type = "99". It could, because the endpoint parsed ExperienceType with
+    // Enum.TryParse and no Enum.IsDefined guard, so an undefined value was accepted and stored; the
+    // test asserted the 200 explicitly and called it a pre-existing hole. Issue #21 closed the hole,
+    // so that request is now a 400 and no new resume can hold such a row — the refusal is pinned by
+    // ResumeLevelFieldsTests.AddExperience_WithATypeTheEnumDoesNotKnow_IsABadRequest, and the claim
+    // that a row already holding one still counts as unmarked experience moved to
+    // RecommendationBuilderTests, where the aggregate can be built directly.
+    //
+    // What is left here is the reachable half, and it is the one worth having end to end: Volunteer is
+    // a defined type that ComputeExperienceScore does not count, and the wire contract has to carry
+    // the recommendation kind that explains why.
     [Fact]
-    public async Task Score_AnExperienceTypeTheEnumDoesNotKnow_BecomesAdviceRatherThanASilentDeduction()
+    public async Task Score_AnExperienceNotMarkedProfessional_BecomesAdviceRatherThanASilentDeduction()
     {
         using var factory = new ApiTestFactory();
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
@@ -169,7 +173,7 @@ public sealed class ScoringEndpointTests
         {
             Content = JsonContent.Create(new
             {
-                type = "99",
+                type = "Volunteer",
                 organization = "Acme",
                 position = "Backend Developer",
                 start = DateOnly.FromDateTime(DateTime.UtcNow).AddYears(-3),
@@ -178,8 +182,7 @@ public sealed class ScoringEndpointTests
             })
         }.WithBearer(candidateToken);
 
-        (await client.SendAsync(addExperience)).StatusCode.Should().Be(HttpStatusCode.OK,
-            "the undefined numeric value is accepted today — that is the pre-existing hole, not this test's claim");
+        (await client.SendAsync(addExperience)).StatusCode.Should().Be(HttpStatusCode.OK);
 
         var jobId = await CreateJobAsync(client, recruiterToken);
         await PublishAsync(client, recruiterToken, jobId);
@@ -188,7 +191,7 @@ public sealed class ScoringEndpointTests
         using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
 
         json.RootElement.GetProperty("breakdown").GetProperty("experienceScore").GetDouble()
-            .Should().Be(0.0, "an undefined type is not Professional, so the time fails closed");
+            .Should().Be(0.0, "Volunteer is not Professional, so the time is not counted");
 
         json.RootElement.GetProperty("recommendations").EnumerateArray()
             .Select(r => r.GetProperty("kind").GetString())
