@@ -3,6 +3,7 @@ using System.Threading.RateLimiting;
 using BuildCv.Api.Common;
 using BuildCv.Api.Endpoints;
 using BuildCv.Api.Health;
+using BuildCv.Api.Observability;
 using BuildCv.Api.Security;
 using BuildCv.Application.Common.Services;
 using BuildCv.Infrastructure;
@@ -173,6 +174,10 @@ if (app.Environment.IsDevelopment()
 // and defeat rate limiting outright.
 if (forwardedHeaders.Enabled)
     app.UseForwardedHeaders(ForwardedHeadersConfiguration.Build(forwardedHeaders));
+
+// Before the exception handler, so the 500 a caller is shown and the stack trace this process logged
+// carry the same id. See CorrelationIdMiddleware for why the echo is written from OnStarting.
+app.UseMiddleware<CorrelationIdMiddleware>();
 
 app.UseMiddleware<SecurityHeadersMiddleware>();
 app.UseExceptionHandler();

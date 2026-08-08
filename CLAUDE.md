@@ -131,7 +131,17 @@ Auth is JWT in HttpOnly cookies (with `Authorization: Bearer` fallback — `OnMe
 - `/auth/change-password` is throttled **per account** by `Security/PasswordChangeRateLimiter`, acquired inside the endpoint rather than as a named policy — `UseRateLimiter` runs before `UseAuthentication`, so a policy partitioner has no principal to key on. Sharing the per-IP auth window let one client behind a NAT deny password rotation to everyone on that address, while buying nothing against an attacker who already holds an access token and can rotate source IPs.
 - Authorization: role policies in `Security/Policies.cs` plus a fallback policy requiring authentication — endpoints are secure by default; opt out explicitly with `AllowAnonymous`.
 
-Middleware order in `Program.cs` matters (ForwardedHeaders → SecurityHeaders → ExceptionHandler → HSTS/HTTPS → CORS → RateLimiter → AuthN → CsrfGuard → AuthZ); insert new middleware deliberately.
+Middleware order in `Program.cs` matters (ForwardedHeaders → **CorrelationId** → SecurityHeaders → ExceptionHandler → HSTS/HTTPS → CORS → RateLimiter → AuthN → CsrfGuard → AuthZ); insert new middleware deliberately.
+
+### Observability — correlation id
+
+`CorrelationIdMiddleware` (`Api/Observability/`) gives every request one id, echoes it as `X-Correlation-ID`, and opens an `ILogger` scope keyed `CorrelationId` around the rest of the pipeline.
+
+- **It sits before `UseExceptionHandler`**, because the lines most worth correlating are the ones the `IExceptionHandler`s write — a 500 the caller was handed an id for is the difference between "a user reports an error" and "here is the request". Nothing above it logs.
+- **The echo is written from `Response.OnStarting`**, the same lesson as `SecurityHeadersMiddleware`: `ExceptionHandlerMiddleware` clears the response, so an eagerly assigned header is gone on exactly the responses that need one.
+- **An inbound value is adopted only if it is safe to log**: 1–64 characters of ASCII letters, digits and hyphen. Anything else — a space, a quote, a brace, a comma, a tab, 65 characters, or the header sent twice (`StringValues.ToString()` joins with a comma) — is **replaced** with a generated `Guid("N")`, never trimmed or stripped. Trimming would alias two clients' ids onto one string; stripping would report an id nobody sent while looking like the one they did.
+- The scope covers everything downstream, framework loggers included — `ILoggerFactory` shares one `IExternalScopeProvider`. Hosting's own "Request starting/finished" lines are the exception and always will be: `HostingApplication` wraps the pipeline from outside.
+- `CorrelationIdTests.EveryLineARequestWrites_CarriesThatRequestsCorrelationId` drives **two** requests and checks each one's lines for its own id *and against the other's* — an id attached once and never cleared would satisfy a single-request assertion with the wrong value.
 
 ### Observability — health probes
 
