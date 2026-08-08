@@ -1,4 +1,5 @@
 using BuildCv.Application.Common.Abstractions;
+using BuildCv.Application.Common.Observability;
 using BuildCv.Application.Common.Pagination;
 using BuildCv.Application.Common.Repositories;
 using BuildCv.Application.Common.Services;
@@ -87,6 +88,13 @@ public static class DependencyInjection
         // TryAdd so the Api can register an HttpContext-backed principal without removing this one.
         // Nothing in Application consumes ICurrentUser yet; the audit interceptor does.
         services.TryAddSingleton<ICurrentUser, UnknownCurrentUser>();
+
+        // A singleton, and that is what scopes its meter: BuildCvMetrics stamps the meter with itself,
+        // so two composed hosts in one process — which is what an xUnit assembly full of
+        // WebApplicationFactory instances is — publish to two distinguishable meters rather than to one
+        // global. Same mechanism IMeterFactory uses, without needing the ASP.NET Core assembly it lives
+        // in. See BuildCvMetrics.
+        services.AddSingleton<BuildCvMetrics>();
 
         services.AddSingleton(TimeProvider.System);
         services.AddSingleton<IPasswordHasher, PasswordHasher>();

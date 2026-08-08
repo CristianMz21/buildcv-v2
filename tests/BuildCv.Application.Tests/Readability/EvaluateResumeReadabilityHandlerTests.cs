@@ -1,3 +1,4 @@
+using BuildCv.Application.Common.Observability;
 using BuildCv.Application.Readability;
 using BuildCv.Application.Tests.Fakes;
 using BuildCv.Domain.Identity;
@@ -16,10 +17,13 @@ public class EvaluateResumeReadabilityHandlerTests
     private readonly FakeReadabilityReportRepository _reports = new();
     private readonly ReadabilityEngine _engine = new();
     private readonly FakeTimeProvider _time = new(new DateTimeOffset(2025, 1, 1, 12, 0, 0, TimeSpan.Zero));
+    // See the note on ScoreResumeHandlerTests: unscoped, so it cannot be confused with the scoped
+    // instance ReadabilityMetricsTests listens to.
+    private readonly BuildCvMetrics _metrics = new();
     private readonly EvaluateResumeReadabilityHandler _handler;
 
     public EvaluateResumeReadabilityHandlerTests() =>
-        _handler = new EvaluateResumeReadabilityHandler(_resumes, _reports, _engine, _time);
+        _handler = new EvaluateResumeReadabilityHandler(_resumes, _reports, _engine, _time, _metrics);
 
     [Fact]
     public async Task Evaluate_returns_a_report_naming_the_resume_and_the_instant_it_was_taken()
@@ -113,7 +117,7 @@ public class EvaluateResumeReadabilityHandlerTests
         // next DATE and not merely on a later instant.
         var clock = new AdvancingTimeProvider(
             new DateTimeOffset(2025, 3, 10, 23, 59, 0, TimeSpan.Zero), TimeSpan.FromMinutes(2));
-        var handler = new EvaluateResumeReadabilityHandler(_resumes, _reports, _engine, clock);
+        var handler = new EvaluateResumeReadabilityHandler(_resumes, _reports, _engine, clock, _metrics);
 
         var result = await handler.Handle(new EvaluateResumeReadabilityCommand(ownerId, resume.Id));
 

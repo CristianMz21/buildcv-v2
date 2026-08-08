@@ -1,6 +1,9 @@
 using System.Buffers.Binary;
+using System.Diagnostics;
+using System.Diagnostics.Metrics;
 using System.IO.Compression;
 using System.Text;
+using BuildCv.Application.Common.Observability;
 using BuildCv.Application.Common.Services;
 using BuildCv.Infrastructure.Documents;
 using DocumentFormat.OpenXml;
@@ -22,8 +25,12 @@ public sealed class DocumentTextExtractionTests
     private const string DocxContentType =
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
+    // Unscoped: nothing listens to it here. DocumentExtractionMetricsTests builds a scoped one and
+    // its own extractor, so the two cannot see each other's measurements.
+    private static readonly BuildCvMetrics Metrics = new();
+
     private static readonly DocumentTextExtractor Extractor =
-        new(new PdfPigTextExtractor(), new OpenXmlDocxTextExtractor(), new PlainTextExtractor());
+        new(new PdfPigTextExtractor(Metrics), new OpenXmlDocxTextExtractor(Metrics), new PlainTextExtractor(Metrics), Metrics);
 
     // ---------------------------------------------------------------- PDF
 
@@ -475,6 +482,214 @@ public sealed class DocumentTextExtractionTests
         result.IsSuccess.Should().BeFalse();
         result.Error.Should().Be(
             $"The document is larger than {IDocumentTextExtractor.MaxDocumentBytes / (1024 * 1024)} MB.");
+    }
+
+    // ------------------------------------------------- Metrics and spans
+
+    // Every refusal this suite can reach, with the reason tag it must carry. Written as ONE test over
+    // a table rather than one test per reason, because the property being asserted is a mapping — a
+    // per-reason test would pass just as happily if two paths reported the same tag, and "which
+    // refusal is spiking" is the only question this counter exists to answer.
+    //
+    // The fixtures are the same ones the behaviour tests above use, which is why these tests live in
+    // this class: a second class would need its own copy of PdfBytes, InflatingZip and AmplifyingDocx,
+    // and a fixture stated twice is a fixture that drifts.
+    public static TheoryData<string, string?, string> Refusals() => new()
+    {
+        { "not-a-pdf", PdfContentType, DocumentExtractionFailureReasons.FormatMismatch },
+        { "not-a-zip", DocxContentType, DocumentExtractionFailureReasons.FormatMismatch },
+        { "old format", "application/msword", DocumentExtractionFailureReasons.LegacyDoc },
+        { "whatever", "image/png", DocumentExtractionFailureReasons.UnsupportedType },
+        { "whatever", null, DocumentExtractionFailureReasons.UnsupportedType }
+    };
+
+    [Theory]
+    [MemberData(nameof(Refusals))]
+    public async Task ARefusalFromTheDispatcher_CountsOneFailureTaggedWithItsReason(
+        string content, string? contentType, string expectedReason)
+    {
+        using var measurements = new Measurements(Metrics);
+
+        (await Extract(Encoding.UTF8.GetBytes(content), contentType)).IsSuccess.Should().BeFalse();
+
+        measurements.Reasons.Should().Equal(expectedReason);
+    }
+
+    [Fact]
+    public async Task EveryAdapterRefusal_CountsOneFailureTaggedWithItsReason()
+    {
+        await AssertReason(PdfBytes("hidden"), DocumentTextExtractor.PlainTextContentType, DocumentExtractionFailureReasons.FormatMismatch);
+        await AssertReason([(byte)'a', 0x00, (byte)'b'], DocumentTextExtractor.PlainTextContentType, DocumentExtractionFailureReasons.BinaryContent);
+        await AssertReason(Encoding.UTF8.GetBytes("%PDF-1.7 and then rubbish"), PdfContentType, DocumentExtractionFailureReasons.Unreadable);
+        await AssertReason(Zip(("a.txt", Encoding.UTF8.GetBytes("x"))), DocxContentType, DocumentExtractionFailureReasons.NotADocx);
+        await AssertReason(Zip(("[Content_Types].xml", Encoding.UTF8.GetBytes(ContentTypesXml))), DocxContentType, DocumentExtractionFailureReasons.NotADocx);
+        await AssertReason(InflatingZip(inflatedBytes: 60L * 1024 * 1024), DocxContentType, DocumentExtractionFailureReasons.DecompressionBomb);
+        await AssertReason(AmplifyingDocx(paragraphs: 1_500_000), DocxContentType, DocumentExtractionFailureReasons.TooMuchText);
+    }
+
+    [Fact]
+    public async Task AStreamOverTheCeiling_CountsOneTooLargeFailure()
+    {
+        using var measurements = new Measurements(Metrics);
+        using var oversized = new ZeroStream(IDocumentTextExtractor.MaxDocumentBytes + 1, seekable: true);
+
+        (await Extractor.ExtractAsync(oversized, DocumentTextExtractor.PlainTextContentType)).IsSuccess.Should().BeFalse();
+
+        measurements.Reasons.Should().Equal(DocumentExtractionFailureReasons.TooLarge);
+    }
+
+    // Without this the counter could increment on every extraction and every assertion above would
+    // still pass, leaving a graph in which a healthy day looks exactly like an outage.
+    [Fact]
+    public async Task ASuccessfulExtraction_CountsNoFailureAtAll()
+    {
+        using var measurements = new Measurements(Metrics);
+
+        (await Extract(Encoding.UTF8.GetBytes("hola"), DocumentTextExtractor.PlainTextContentType)).IsSuccess.Should().BeTrue();
+
+        measurements.Reasons.Should().BeEmpty();
+    }
+
+    // The closed set, executed in BOTH directions. Subset alone would pass against a set widened to
+    // hold whatever was emitted; reachability alone would pass against a set with an extra member
+    // nothing produces. Together they say the declared set IS the emitted set.
+    //
+    // PasswordProtected is the one exception and it is named rather than quietly missing: it comes
+    // from catch (PdfDocumentEncryptedException), which needs a genuinely encrypted PDF, and PdfPig's
+    // builder cannot write one. Adding that fixture is the only way to close this line.
+    [Fact]
+    public async Task TheReasonsThisSuiteEmits_AreExactlyTheDeclaredSetLessThePasswordCase()
+    {
+        using var measurements = new Measurements(Metrics);
+
+        foreach (var row in Refusals())
+            await Extract(Encoding.UTF8.GetBytes((string)row[0]), (string?)row[1]);
+
+        await Extract(PdfBytes("hidden"), DocumentTextExtractor.PlainTextContentType);
+        await Extract([(byte)'a', 0x00, (byte)'b'], DocumentTextExtractor.PlainTextContentType);
+        await Extract(Encoding.UTF8.GetBytes("%PDF-1.7 and then rubbish"), PdfContentType);
+        await Extract(Zip(("a.txt", Encoding.UTF8.GetBytes("x"))), DocxContentType);
+        await Extract(InflatingZip(inflatedBytes: 60L * 1024 * 1024), DocxContentType);
+        await Extract(AmplifyingDocx(paragraphs: 1_500_000), DocxContentType);
+        using (var oversized = new ZeroStream(IDocumentTextExtractor.MaxDocumentBytes + 1, seekable: true))
+            await Extractor.ExtractAsync(oversized, DocumentTextExtractor.PlainTextContentType);
+
+        measurements.Reasons.Should().BeSubsetOf(DocumentExtractionFailureReasons.All);
+        measurements.Reasons.Distinct().Should().BeEquivalentTo(
+            DocumentExtractionFailureReasons.All.Except([DocumentExtractionFailureReasons.PasswordProtected]));
+    }
+
+    // The span, and specifically the one client-controlled input that reaches it. The declared content
+    // type is a request header: passed through, it would let a caller mint an unbounded number of
+    // attribute values and put arbitrary text into an exporter. It is mapped into DocumentFormats
+    // instead, so a hostile declaration lands on "unknown" and appears nowhere.
+    [Fact]
+    public async Task TheExtractionSpan_CarriesAClosedFormatAndOutcome_NeverTheDeclaredContentType()
+    {
+        const string Hostile = "application/x-ZZQ-SENTINEL-ZZQ";
+
+        using var spans = new Spans();
+        await Extract(Encoding.UTF8.GetBytes("hola"), DocumentTextExtractor.PlainTextContentType);
+        await Extract(Encoding.UTF8.GetBytes("whatever"), Hostile);
+
+        var recorded = spans.Recorded;
+        recorded.Select(activity => activity.OperationName)
+            .Should().Equal(BuildCvActivities.DocumentExtract, BuildCvActivities.DocumentExtract);
+
+        Tag(recorded[0], BuildCvActivities.DocumentFormatTag).Should().Be(DocumentFormats.Text);
+        Tag(recorded[0], BuildCvActivities.DocumentOutcomeTag).Should().Be(BuildCvActivities.Extracted);
+
+        Tag(recorded[1], BuildCvActivities.DocumentFormatTag).Should().Be(DocumentFormats.Unknown);
+        Tag(recorded[1], BuildCvActivities.DocumentOutcomeTag).Should().Be(BuildCvActivities.Failed);
+
+        foreach (var activity in recorded)
+        {
+            foreach (var tag in activity.Tags)
+            {
+                tag.Value.Should().NotContain("ZZQ-SENTINEL",
+                    "no part of a client-controlled header may reach a span attribute");
+                DocumentFormats.All.Concat([BuildCvActivities.Extracted, BuildCvActivities.Failed])
+                    .Should().Contain(tag.Value);
+            }
+        }
+    }
+
+    private static string? Tag(Activity activity, string key) =>
+        activity.Tags.FirstOrDefault(tag => tag.Key == key).Value;
+
+    private static async Task AssertReason(byte[] content, string contentType, string expectedReason)
+    {
+        using var measurements = new Measurements(Metrics);
+
+        (await Extract(content, contentType)).IsSuccess.Should().BeFalse();
+
+        measurements.Reasons.Should().Equal(expectedReason);
+    }
+
+    // Scoped to THIS class's BuildCvMetrics instance. A MeterListener is process-global, and the
+    // corpus tests in the sibling class run their own extractions in parallel; without the scope
+    // filter their refusals would land in these assertions. Tests inside one class are sequential, so
+    // within this class the filter is exact.
+    private sealed class Measurements : IDisposable
+    {
+        private readonly MeterListener _listener = new();
+        private readonly List<string> _reasons = [];
+
+        public Measurements(BuildCvMetrics metrics)
+        {
+            _listener.InstrumentPublished = (instrument, listener) =>
+            {
+                if (ReferenceEquals(instrument.Meter.Scope, metrics)
+                    && instrument.Name == BuildCvMetrics.ExtractionFailuresInstrument)
+                    listener.EnableMeasurementEvents(instrument);
+            };
+            _listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
+            {
+                foreach (var tag in tags)
+                {
+                    if (tag.Key == BuildCvMetrics.ReasonTag)
+                        _reasons.Add(tag.Value?.ToString() ?? string.Empty);
+                }
+            });
+            _listener.Start();
+        }
+
+        public IReadOnlyList<string> Reasons => _reasons;
+
+        public void Dispose() => _listener.Dispose();
+    }
+
+    // An ActivitySource has no scope to filter on, so isolation comes from PARENTAGE instead: the
+    // listener records only activities sharing the trace id of a parent this test started, and
+    // Activity.Current is an AsyncLocal, so a sibling class's extraction cannot join it.
+    private sealed class Spans : IDisposable
+    {
+        private readonly ActivityListener _listener = new();
+        private readonly Activity _parent = new Activity("test-root").Start();
+        private readonly List<Activity> _recorded = [];
+
+        public Spans()
+        {
+            _listener.ShouldListenTo = source => source.Name == BuildCvActivities.SourceName;
+            // AllData, not PropagationData: anything less and the tags are never recorded, which would
+            // make every assertion below vacuously true.
+            _listener.Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData;
+            _listener.ActivityStopped = activity =>
+            {
+                if (activity.TraceId == _parent.TraceId)
+                    _recorded.Add(activity);
+            };
+            ActivitySource.AddActivityListener(_listener);
+        }
+
+        public IReadOnlyList<Activity> Recorded => _recorded;
+
+        public void Dispose()
+        {
+            _parent.Stop();
+            _parent.Dispose();
+            _listener.Dispose();
+        }
     }
 
     // ---------------------------------------------------------------- Fixtures

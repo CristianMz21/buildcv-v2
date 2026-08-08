@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using System.Text;
+using BuildCv.Application.Common.Observability;
 using BuildCv.Application.Common.Services;
 using BuildCv.Domain.Common.ValueObjects;
 using DocumentFormat.OpenXml;
@@ -16,7 +17,7 @@ namespace BuildCv.Infrastructure.Documents;
 /// is a million-element DOM. Both are bounded here: the byte counter caps ingest, and the streaming
 /// reader caps the object graph and the extracted text.
 /// </summary>
-public sealed class OpenXmlDocxTextExtractor
+public sealed class OpenXmlDocxTextExtractor(BuildCvMetrics metrics)
 {
     /// <summary>
     /// The most an uploaded package may decompress to, in total across its entries. 50 MiB is ten
@@ -50,7 +51,8 @@ public sealed class OpenXmlDocxTextExtractor
     public Result<DocumentExtraction> Extract(Stream content, CancellationToken cancellationToken)
     {
         if (!MagicBytes.StartsWith(content, MagicBytes.Zip))
-            return Result<DocumentExtraction>.Failure(
+            return Failed(
+                DocumentExtractionFailureReasons.FormatMismatch,
                 "The file is not a Word document. Check that the upload matches its declared type.");
 
         try
@@ -69,7 +71,7 @@ public sealed class OpenXmlDocxTextExtractor
                 // Every OPC package carries [Content_Types].xml. A ZIP without it is some other ZIP
                 // wearing the extension, and it never reaches the OpenXml SDK at all.
                 if (archive.GetEntry("[Content_Types].xml") is null)
-                    return Result<DocumentExtraction>.Failure(NotADocxMessage);
+                    return Failed(DocumentExtractionFailureReasons.NotADocx, NotADocxMessage);
 
                 // The read-time bound: inflate every entry and count the bytes it actually yields,
                 // refusing once the total passes the cap. Two measured facts sit under this (see the
@@ -107,11 +109,11 @@ public sealed class OpenXmlDocxTextExtractor
             // crucially, the streaming read below never asks for the DOM either.
             var mainPart = document.MainDocumentPart;
             if (mainPart is null)
-                return Result<DocumentExtraction>.Failure(NotADocxMessage);
+                return Failed(DocumentExtractionFailureReasons.NotADocx, NotADocxMessage);
 
             var extracted = ExtractBodyText(mainPart, cancellationToken);
             if (extracted is null)
-                return Result<DocumentExtraction>.Failure(TooMuchTextMessage);
+                return Failed(DocumentExtractionFailureReasons.TooMuchText, TooMuchTextMessage);
 
             IReadOnlyList<string> warnings = extracted.Length == 0 ? [NoTextWarning] : [];
             return Result<DocumentExtraction>.Success(new DocumentExtraction(extracted, PageCount: null, warnings));
@@ -125,7 +127,8 @@ public sealed class OpenXmlDocxTextExtractor
             // Everything, deliberately: a truncated archive, a corrupt deflate stream mid-entry, an
             // OPC part the SDK refuses — all of them are "this upload is unreadable", and none of the
             // libraries' messages are forwarded, for the reason given on PdfPigTextExtractor.
-            return Result<DocumentExtraction>.Failure(
+            return Failed(
+                DocumentExtractionFailureReasons.Unreadable,
                 "The Word document could not be read. It may be corrupt.");
         }
     }
@@ -176,8 +179,18 @@ public sealed class OpenXmlDocxTextExtractor
         return text.ToString().Trim();
     }
 
-    private static Result<DocumentExtraction> TooLargeDecompressed() =>
-        Result<DocumentExtraction>.Failure(
+    private Result<DocumentExtraction> TooLargeDecompressed() =>
+        Failed(
+            DocumentExtractionFailureReasons.DecompressionBomb,
             $"The document decompresses to more than {MaxDecompressedBytes / (1024 * 1024)} MB "
             + "and cannot be processed.");
+
+    // Reason and message stated together, so the tag can never describe a different refusal from the
+    // one the candidate is shown. The reason is a classification this adapter chose, never anything
+    // the SDK or the zip stack read out of the file.
+    private Result<DocumentExtraction> Failed(string reason, string message)
+    {
+        metrics.ExtractionFailed(reason);
+        return Result<DocumentExtraction>.Failure(message);
+    }
 }

@@ -152,6 +152,26 @@ Middleware order in `Program.cs` matters (ForwardedHeaders → **CorrelationId**
 - Both are `AllowAnonymous`, `DisableRateLimiting` (the **global** 100/min limiter is the one that would fire; a 429 is not a health status, so a throttled probe reads as a failed one) and constrained to **GET** — `MapHealthChecks` maps every method by default, and an unsafe method on an anonymous path would put `CsrfGuardMiddleware` in front of a route that changes nothing.
 - The default plaintext writer emits the **status only**, so health-check descriptions never reach the wire — but `HealthCheckService` logs every description, which is why `DatabaseHealthCheck`'s are fixed strings and never quote the store (a SQL Server connection failure names host, database and sometimes login).
 
+### Observability — metrics and spans, no exporter
+
+Instruments only: `Meter`, `Counter<T>` and `ActivitySource` are all in the BCL on `net10.0` (`System.Diagnostics.DiagnosticSource`, part of `Microsoft.NETCore.App`), so **zero packages were added**. The OpenTelemetry SDK and its exporters are deliberately deferred — they configure a collector that does not exist. `StartActivity` returns `null` with no listener attached, so today every span costs one null check.
+
+`Application/Common/Observability/` holds one `Meter` named **`BuildCv`** (`BuildCvMetrics`) and one `ActivitySource` named **`BuildCv`** (`BuildCvActivities`). An exporter must also name **`BuildCv.Infrastructure.Encryption`**, the pre-existing meter behind `buildcv.encryption.operations` — meter names match exactly.
+
+| Instrument | Tag | Values |
+|---|---|---|
+| `buildcv.scoring.runs` | `outcome` | `computed`, `deduplicated` (`ScoringOutcomes`) |
+| `buildcv.readability.reports` | — | untagged; no de-duplication, no variants |
+| `buildcv.documents.extraction_failures` | `reason` | 10 values (`DocumentExtractionFailureReasons`) |
+| `buildcv.throttle.rejections` | `policy` | 6 values (`ThrottlePolicies`) |
+
+- **A tag is a time-series dimension and is covered by none of this repo's encryption.** No account id, resume id, partition key, skill name or anything else derived from candidate text may appear in one — it would make a metrics backend an unencrypted PII store *and* multiply the series count by the number of users. Every emit method takes a value from a closed set named in code, and there is no overload accepting caller-supplied dimensions.
+- `BuildCvMetrics` is **an instance, not a static**, and stamps its `Meter` with `scope: this`. That is the `IMeterFactory` mechanism, minus the `AddMetrics()` call that lives in an ASP.NET Core assembly Application and Infrastructure cannot reference. It makes a `MeterListener` able to tell one composed host's measurements from another's — without it, an assertion could be satisfied by a measurement some *other* test produced.
+- The extraction reason is named **at the site that writes the message**, so the tag and the prose are one statement. `DocumentTextExtractionTests.TheReasonsThisSuiteEmits_...` checks the set in both directions — everything emitted is declared, and everything declared is reachable except `password_protected`, which needs a genuinely encrypted PDF fixture and is named as the gap rather than quietly missing.
+- `buildcv.throttle.rejections` is emitted from **two** places: `RateLimiterOptions.OnRejected` for the middleware's limiters, and inside the endpoint for the three per-account limiters, which the middleware has already waved through by the time they refuse. `OnRejected` reads the policy from endpoint metadata because `OnRejectedContext` exposes neither the middleware's internal global-vs-endpoint flag nor a policy name; that is exact for every route without a policy and reports the endpoint's policy on the four that have one even in the rare case where the global 100/min ceiling fired first.
+- Spans: `buildcv.document.extract` (tags `buildcv.document.format`, `buildcv.document.outcome`), `buildcv.resume.score` (tag `buildcv.scoring.outcome`), `buildcv.resume.readability` (no tags at all — everything about a readability run is either an identifier or derived from advice that quotes the candidate's own bullet points). The **declared `Content-Type` never reaches a span**: it is client-controlled, so `DocumentFormats.Of` maps it into a closed set first.
+- `BuildCvActivities` **is** static, unlike the metrics: a span is attributed by parentage (`Activity.Current` is an AsyncLocal), so a test isolates its own spans by trace id. A measurement carries no parent, which is why only the meter needs a scope.
+
 ### Deployment requirement — forwarded headers
 
 Rate limiting partitions on `Connection.RemoteIpAddress`. **Behind any reverse proxy, ingress, or CDN you must configure `Network:ForwardedHeaders`**, otherwise every client collapses into the proxy's single partition and the 5/min auth window becomes a global 5/min cap for the whole deployment — a self-inflicted denial of service that also throttles no individual attacker.

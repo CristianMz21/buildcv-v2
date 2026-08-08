@@ -5,12 +5,14 @@ using BuildCv.Api.Endpoints;
 using BuildCv.Api.Health;
 using BuildCv.Api.Observability;
 using BuildCv.Api.Security;
+using BuildCv.Application.Common.Observability;
 using BuildCv.Application.Common.Services;
 using BuildCv.Infrastructure;
 using BuildCv.Infrastructure.Persistence;
 using BuildCv.Infrastructure.Security;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
@@ -71,6 +73,20 @@ builder.Services.AddRateLimiter(options =>
     options.OnRejected = (context, _) =>
     {
         RateLimitResponse.SetRetryAfter(context.HttpContext.Response, context.Lease);
+
+        // Counted from the ENDPOINT's policy metadata, because that is the only attribution this
+        // callback can make: RateLimitingMiddleware knows internally whether the global limiter or the
+        // endpoint policy refused, and OnRejectedContext exposes neither the flag nor a policy name.
+        // So the tag is exact for every route without a policy (there is only the global limiter to
+        // refuse it) and, on the four routes that have one, reports that policy even in the rare case
+        // where the global 100/min ceiling was hit first — reachable only by spending the global budget
+        // elsewhere and then arriving here, since the named windows are 5/min and 20/min. Stated rather
+        // than papered over; both directions are pinned by ThrottleMetricsTests.
+        var policy = context.HttpContext.GetEndpoint()?.Metadata
+            .GetMetadata<EnableRateLimitingAttribute>()?.PolicyName
+            ?? ThrottlePolicies.Global;
+        context.HttpContext.RequestServices.GetRequiredService<BuildCvMetrics>().ThrottleRejection(policy);
+
         return ValueTask.CompletedTask;
     };
     // Both limiters partition on the peer address, which is only the real client when the app is

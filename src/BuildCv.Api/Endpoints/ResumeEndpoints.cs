@@ -2,6 +2,7 @@ using BuildCv.Api.Common;
 using BuildCv.Api.Contracts;
 using BuildCv.Api.Security;
 using BuildCv.Application.Common.Abstractions;
+using BuildCv.Application.Common.Observability;
 using BuildCv.Application.Common.Pagination;
 using BuildCv.Application.Common.Services;
 using BuildCv.Application.Readability;
@@ -59,6 +60,7 @@ public static class ResumeEndpoints
             ImportResumeRequest request,
             ICommandHandler<CreateResumeFromDraftCommand, ResumeImportResult> handler,
             ResumeImportRateLimiter rateLimiter,
+            BuildCvMetrics metrics,
             ILogger<Program> logger,
             HttpContext httpContext,
             CancellationToken cancellationToken) =>
@@ -73,6 +75,10 @@ public static class ResumeEndpoints
             {
                 RateLimitResponse.SetRetryAfter(httpContext.Response, lease);
                 AuditLog.Log(logger, "resume_import_throttled", accountId, httpContext);
+                // Counted here rather than in the RateLimiter middleware's OnRejected, which never runs
+                // for this limiter: it is acquired inside the endpoint (see ResumeImportRateLimiter), so
+                // the middleware has already let the request through by the time it is refused.
+                metrics.ThrottleRejection(ThrottlePolicies.ResumeImport);
                 return Results.Problem(
                     detail: "Too many resume imports.",
                     statusCode: StatusCodes.Status429TooManyRequests);
@@ -133,6 +139,7 @@ public static class ResumeEndpoints
             IFormFile file,
             ICommandHandler<ExtractDocumentTextCommand, Result<DocumentExtraction>> handler,
             DocumentExtractionRateLimiter rateLimiter,
+            BuildCvMetrics metrics,
             ILogger<Program> logger,
             HttpContext httpContext,
             CancellationToken cancellationToken) =>
@@ -152,6 +159,7 @@ public static class ResumeEndpoints
             {
                 RateLimitResponse.SetRetryAfter(httpContext.Response, lease);
                 AuditLog.Log(logger, "resume_extract_throttled", accountId, httpContext);
+                metrics.ThrottleRejection(ThrottlePolicies.DocumentExtraction);
                 return Results.Problem(
                     detail: "Too many document extractions.",
                     statusCode: StatusCodes.Status429TooManyRequests);
@@ -212,6 +220,7 @@ public static class ResumeEndpoints
             IFormFile file,
             ICommandHandler<ProposeResumeDraftFromDocumentCommand, Result<ResumeDraftProposal>> handler,
             DocumentExtractionRateLimiter rateLimiter,
+            BuildCvMetrics metrics,
             ILogger<Program> logger,
             HttpContext httpContext,
             CancellationToken cancellationToken) =>
@@ -227,6 +236,7 @@ public static class ResumeEndpoints
             {
                 RateLimitResponse.SetRetryAfter(httpContext.Response, lease);
                 AuditLog.Log(logger, "resume_propose_throttled", accountId, httpContext);
+                metrics.ThrottleRejection(ThrottlePolicies.DocumentExtraction);
                 return Results.Problem(
                     detail: "Too many document extractions.",
                     statusCode: StatusCodes.Status429TooManyRequests);

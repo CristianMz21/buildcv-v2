@@ -1,3 +1,4 @@
+using BuildCv.Application.Common.Observability;
 using BuildCv.Application.Common.Services;
 using BuildCv.Domain.Common.ValueObjects;
 
@@ -7,7 +8,7 @@ namespace BuildCv.Infrastructure.Documents;
 /// Plain-text passthrough. Text has no magic bytes, so this adapter cannot prove the file IS text —
 /// it can only refuse the things it can prove text is not.
 /// </summary>
-public sealed class PlainTextExtractor
+public sealed class PlainTextExtractor(BuildCvMetrics metrics)
 {
     public const string NoTextWarning = "The document contains no text.";
 
@@ -16,7 +17,8 @@ public sealed class PlainTextExtractor
         cancellationToken.ThrowIfCancellationRequested();
 
         if (MagicBytes.StartsWith(content, MagicBytes.Pdf) || MagicBytes.StartsWith(content, MagicBytes.Zip))
-            return Result<DocumentExtraction>.Failure(
+            return Failed(
+                DocumentExtractionFailureReasons.FormatMismatch,
                 "The file is not plain text. It looks like a PDF or an Office document; upload it with "
                 + "its real type.");
 
@@ -25,7 +27,7 @@ public sealed class PlainTextExtractor
         // order mark tested first, in which case their NUL bytes are expected halves of characters and
         // the StreamReader below decodes them by that mark.
         if (!HasByteOrderMark(content) && ContainsNulByte(content))
-            return Result<DocumentExtraction>.Failure("The file is not plain text.");
+            return Failed(DocumentExtractionFailureReasons.BinaryContent, "The file is not plain text.");
 
         content.Position = 0;
         using var reader = new StreamReader(content, detectEncodingFromByteOrderMarks: true, leaveOpen: true);
@@ -33,6 +35,14 @@ public sealed class PlainTextExtractor
 
         IReadOnlyList<string> warnings = text.Length == 0 ? [NoTextWarning] : [];
         return Result<DocumentExtraction>.Success(new DocumentExtraction(text, PageCount: null, warnings));
+    }
+
+    // Reason and message stated together, so the tag can never describe a different refusal from the
+    // one the candidate is shown.
+    private Result<DocumentExtraction> Failed(string reason, string message)
+    {
+        metrics.ExtractionFailed(reason);
+        return Result<DocumentExtraction>.Failure(message);
     }
 
     private static bool HasByteOrderMark(Stream content) =>
