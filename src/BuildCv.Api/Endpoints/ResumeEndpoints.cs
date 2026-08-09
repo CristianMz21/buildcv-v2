@@ -119,7 +119,7 @@ public static class ResumeEndpoints
         .WithMetadata(new RequestSizeLimitAttribute(ImportRequestSizeLimitBytes))
         .WithSummary("Creates a complete resume from one reviewed draft.")
         .WithDescription(
-            "Every field is sent as a STRING, including dates (yyyy-MM-dd), numbers and levels, so that no "
+            "Every field is sent as a STRING, including dates, numbers and levels, so that no "
             + "VALUE can be rejected at model binding: a malformed date or an unknown level comes back as "
             + "a field error rather than as a framework 400 naming nothing. Malformed JSON, a null body "
             + "and a body over 2 MiB are still refused by the server before validation runs. "
@@ -129,6 +129,11 @@ public static class ResumeEndpoints
             + "is reported at its own index. Levels accept the enum name or its number. Duplicate skills, "
             + "certificates, languages and interests are reported against the LATER occurrence — that is "
             + "the line to delete — including when that item has another bad field as well. "
+            + "PERIOD DATES CARRY THE PRECISION YOU HAVE: the `start` and `end` of an experience, an "
+            + "education, a project and a certificate's validity accept `yyyy-MM-dd`, `yyyy-MM` or "
+            + "`yyyy`, so a CV that says \"June 2015\" needs no invented day and comes back as `2015-06` "
+            + "wherever it is read. A date you state fully stays fully precise — nothing is widened. The "
+            + "single-day fields (`awards[].date`, `publications[].releaseDate`) are still `yyyy-MM-dd`. "
             + "`importEvidence` is the opaque token POST /v1/resumes/import/propose returned inside the "
             + "draft it proposed: send it back UNCHANGED to have the readability engine grade the "
             + "document you uploaded, or omit it entirely — a draft typed by hand needs none, and its "
@@ -284,6 +289,8 @@ public static class ResumeEndpoints
             + "structure the review screen uses and does NOT post back. Extraction is best-effort: a field "
             + "the parser could not read confidently is left empty and flagged (confidence "
             + "`NotExtracted`), never guessed; levels, experience type and end dates are never invented; "
+            + "a date arrives at the precision the document stated it in, so \"June 2015\" comes back as "
+            + "`2015-06` rather than as a blank or as an invented first of the month; "
             + "and a two-column layout is warned about rather than silently reordered. Nothing is stored — "
             + "correct the draft, then submit it to POST /v1/resumes/import, the only endpoint that creates "
             + "a resume. "
