@@ -1,4 +1,5 @@
 using BuildCv.Application.Common.Services;
+using BuildCv.Domain.Resumes;
 using BuildCv.Infrastructure.Documents;
 using FluentAssertions;
 using UglyToad.PdfPig.Content;

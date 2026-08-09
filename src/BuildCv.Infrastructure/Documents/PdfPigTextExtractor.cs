@@ -54,13 +54,18 @@ public sealed class PdfPigTextExtractor(BuildCvMetrics metrics)
             // exist, their content is pixels, and the candidate deserves to be told exactly that
             // instead of being shown an empty result that looks like a bug.
             var nonWhitespace = text.Count(character => !char.IsWhiteSpace(character));
-            IReadOnlyList<string> warnings =
-                document.NumberOfPages > 0 && nonWhitespace < NearZeroCharactersPerPage * document.NumberOfPages
-                    ? [NoTextLayerWarning]
-                    : [];
+
+            // ONE predicate, two outputs: the sentence the candidate reads and the closed flag that gets
+            // signed into the import evidence and scored by the readability engine. Computing them from
+            // separate conditions is how a candidate ends up told their PDF is a scan while the score
+            // says it parsed fine.
+            var hadTextLayer =
+                document.NumberOfPages == 0
+                || nonWhitespace >= NearZeroCharactersPerPage * document.NumberOfPages;
+            IReadOnlyList<string> warnings = hadTextLayer ? [] : [NoTextLayerWarning];
 
             return Result<DocumentExtraction>.Success(
-                new DocumentExtraction(text, document.NumberOfPages, warnings));
+                new DocumentExtraction(text, document.NumberOfPages, warnings, hadTextLayer));
         }
         catch (PdfDocumentEncryptedException)
         {

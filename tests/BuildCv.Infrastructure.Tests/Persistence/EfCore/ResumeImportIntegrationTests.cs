@@ -5,6 +5,7 @@ using BuildCv.Domain.Common.ValueObjects;
 using BuildCv.Domain.Identity;
 using BuildCv.Domain.Resumes;
 using BuildCv.Infrastructure.Persistence;
+using BuildCv.Infrastructure.Tests.Security;
 using FluentAssertions;
 
 namespace BuildCv.Infrastructure.Tests.Persistence.EfCore;
@@ -34,7 +35,7 @@ public sealed class ResumeImportIntegrationTests
 
         await using (var writer = _fixture.NewApplicationContext())
         {
-            var handler = new CreateResumeFromDraftHandler(TestRepositories.Resumes(writer));
+            var handler = new CreateResumeFromDraftHandler(TestRepositories.Resumes(writer), TestImportEvidence.Protector());
             var result = await handler.Handle(new CreateResumeFromDraftCommand(owner, FullDraft()));
 
             result.FieldErrors.Should().BeEmpty();
@@ -69,7 +70,7 @@ public sealed class ResumeImportIntegrationTests
     public async Task Import_WithALanguageNameOverItsColumnLength_IsAFieldErrorAndNeverReachesTheDatabase()
     {
         await using var writer = _fixture.NewApplicationContext();
-        var handler = new CreateResumeFromDraftHandler(TestRepositories.Resumes(writer));
+        var handler = new CreateResumeFromDraftHandler(TestRepositories.Resumes(writer), TestImportEvidence.Protector());
 
         var draft = FullDraft() with { Languages = [new LanguageDraft(new string('a', 101))] };
 
@@ -93,7 +94,7 @@ public sealed class ResumeImportIntegrationTests
 
         await using (var writer = _fixture.NewApplicationContext())
         {
-            var handler = new CreateResumeFromDraftHandler(TestRepositories.Resumes(writer));
+            var handler = new CreateResumeFromDraftHandler(TestRepositories.Resumes(writer), TestImportEvidence.Protector());
             var result = await handler.Handle(new CreateResumeFromDraftCommand(
                 owner, FullDraft() with { Languages = [new LanguageDraft(name, "Bilingüe", "Native")] }));
 

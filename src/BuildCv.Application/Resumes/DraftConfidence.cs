@@ -1,5 +1,7 @@
 namespace BuildCv.Application.Resumes;
 
+using BuildCv.Domain.Resumes;
+
 // Confidence is a PARALLEL structure, returned BESIDE the draft, never a field ON it. That separation
 // is load-bearing, not stylistic:
 //
@@ -86,8 +88,26 @@ public sealed record DraftConfidence(
 
 /// <summary>
 /// A best-effort resume draft and the confidence beside it, as the extract step hands them to the review
-/// screen. The submit path (<c>POST /resumes/import</c>) takes only <see cref="Draft"/>.
+/// screen. The submit path (<c>POST /resumes/import</c>) takes <see cref="Draft"/> and, unlike
+/// <see cref="Confidence"/>, the SIGNED form of <see cref="Signals"/>.
 /// </summary>
 public sealed record ResumeDraftProposal(
     ResumeDraft Draft,
-    DraftConfidence Confidence);
+    DraftConfidence Confidence)
+{
+    /// <summary>
+    /// What the uploaded document looked like to a parser. Unlike <see cref="Confidence"/>, this DOES
+    /// cross back — as an HMAC-signed token the client cannot forge, minted at the composition root and
+    /// verified at import (see <c>IImportEvidenceProtector</c>). It is the input to the readability
+    /// engine's ATS-parseability section, and it is the only trace of a file this product never keeps.
+    /// </summary>
+    /// <remarks>
+    /// It is NOT a positional member, deliberately: <c>ResumeTextParser.Parse</c> is a pure text-to-draft
+    /// function with no document behind it, so it produces a proposal with no signals, and a third
+    /// positional member would change the deconstruction every one of its callers uses. Null therefore
+    /// means "this proposal came from the parser alone". <c>ProposeResumeDraftFromDocumentHandler</c> —
+    /// the only producer with an extraction to describe — always sets it, and
+    /// <c>Propose_EveryProposal_CarriesTheSignalsOfTheDocumentItRead</c> is what keeps that true.
+    /// </remarks>
+    public ImportSignals? Signals { get; init; }
+}

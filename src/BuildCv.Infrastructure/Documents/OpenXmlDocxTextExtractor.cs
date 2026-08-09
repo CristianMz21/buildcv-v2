@@ -3,6 +3,7 @@ using System.Text;
 using BuildCv.Application.Common.Observability;
 using BuildCv.Application.Common.Services;
 using BuildCv.Domain.Common.ValueObjects;
+using BuildCv.Domain.Resumes;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
@@ -115,8 +116,14 @@ public sealed class OpenXmlDocxTextExtractor(BuildCvMetrics metrics)
             if (extracted is null)
                 return Failed(DocumentExtractionFailureReasons.TooMuchText, TooMuchTextMessage);
 
-            IReadOnlyList<string> warnings = extracted.Length == 0 ? [NoTextWarning] : [];
-            return Result<DocumentExtraction>.Success(new DocumentExtraction(extracted, PageCount: null, warnings));
+            // The sentence and the closed flag from ONE predicate — see PlainTextExtractor for why.
+            var empty = extracted.Length == 0;
+            IReadOnlyList<string> warnings = empty ? [NoTextWarning] : [];
+            return Result<DocumentExtraction>.Success(new DocumentExtraction(
+                extracted,
+                PageCount: null,
+                warnings,
+                WarningFlags: empty ? ImportWarningFlags.NoTextContent : ImportWarningFlags.None));
         }
         catch (OperationCanceledException)
         {

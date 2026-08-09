@@ -22,10 +22,12 @@ using BuildCv.Domain.Resumes;
 // entries) and not in Completeness: counted in both, adding a first experience would move two sections
 // and every Impact naming it would understate what it paid.
 //
-//   Completeness  reads Educations, Skills and ContactInformation.Summary
-//   Contact       reads ContactInformation.PhoneNumber, .Location, .Website and .Profiles
-//   Achievements  reads Experience.Highlights
-//   Chronology    reads Experience.Period and the number of experience entries
+//   Completeness    reads Educations, Skills and ContactInformation.Summary
+//   Contact         reads ContactInformation.PhoneNumber, .Location, .Website and .Profiles
+//   Achievements    reads Experience.Highlights
+//   Chronology      reads Experience.Period and the number of experience entries
+//   AtsParseability reads ImportSignals, and NOTHING ELSE READS IT -- the disjointness is free here,
+//                   because it grades the uploaded document rather than anything the candidate typed.
 //
 // Static and pure: ReadabilityEngine is registered as a singleton and shared across every request.
 internal static class ReadabilityRules
@@ -35,8 +37,8 @@ internal static class ReadabilityRules
     // ReadabilityWeightsSnapshot.RenormalizedTo and cannot move it in either direction.
     internal const double NotApplicableScore = 0.0;
 
-    // The four sections computable from any resume this build can load. AtsParseability is absent, and
-    // ApplicableSections is the only place that can add it.
+    // The four sections computable from any resume at all. AtsParseability is absent because it needs a
+    // document to grade, and ApplicableSections is the only place that can add it.
     private static readonly ReadabilitySectionType[] AlwaysApplicable =
     [
         ReadabilitySectionType.Completeness,
@@ -46,13 +48,17 @@ internal static class ReadabilityRules
     ];
 
     // Which sections could be measured for this resume. The weights are renormalized across exactly
-    // these, so the ceiling is 1.00 whether or not the ATS evidence exists.
+    // these, so THE CEILING IS 1.00 EITHER WAY -- a clean single-column PDF with a text layer scores 100,
+    // not 90, and a resume typed by hand is not charged for a document that does not exist.
     //
-    // The parameter is a BOOL rather than a Resume because there is nothing on a Resume to read yet:
-    // roadmap T3.5 adds the signed import-signals token and the nullable owned ImportSignals value, and
-    // this becomes `resume.ImportSignals is not null` at its one call site in ReadabilityEngine. Keeping
-    // the renormalization decision in a parameter means the mechanism is exercised in BOTH directions
-    // today -- a rule that only ever answered one way would be a guarantee nothing could falsify.
+    // The parameter is a BOOL rather than a Resume so both directions stay trivially exercisable: its one
+    // call site in ReadabilityEngine passes `resume.ImportSignals is not null`, and every renormalization
+    // test can ask for the other answer without constructing an aggregate to get it.
+    //
+    // MERE PRESENCE IS ENOUGH, and that rests on AtsSignalCounts: whether the document yielded text is
+    // known for every format, so a set of signals always has at least one measurable term and can never
+    // be applicable-but-unmeasurable -- which would be the 0.90 cap this renormalization exists to
+    // prevent, reintroduced one level down.
     internal static IReadOnlyList<ReadabilitySectionType> ApplicableSections(bool hasImportSignals) =>
         hasImportSignals
             ? [.. AlwaysApplicable, ReadabilitySectionType.AtsParseability]
@@ -245,18 +251,59 @@ internal static class ReadabilityRules
         return gaps;
     }
 
-    // ATS PARSEABILITY -- what the uploaded document looked like to a parser.
+    // ATS PARSEABILITY -- the share of the things an ATS needs from a document that the one this resume
+    // was imported from actually provided: text it can extract without OCR, and a single reading column.
     //
-    // IT SCORES NOTHING AND APPLIES TO NOTHING TODAY, and those two facts must move together. Roadmap
-    // T3.5 is what supplies the evidence: a closed ImportSignals value, signed at extract time and
-    // verified at import, persisted as a nullable owned value on Resume. Until it lands there is no
-    // input, ApplicableSections is called with false, and the section is renormalized out of every
-    // report.
+    // A SHARE, exactly like Completeness and Contact, and for the same reason: a share needs no invented
+    // constant to express severity. The two terms are not equally bad -- no text at all means an ATS
+    // reads NOTHING, while two columns means it reads everything in the wrong order -- but that
+    // difference belongs in the sentence the candidate is shown, not in a weighting nobody can check.
     //
-    // WHOEVER LANDS T3.5 MUST LAND BOTH HALVES IN ONE CHANGE. Flipping applicability on while this still
-    // answers zero would give the section its 0.10 weight against a hard zero and cap every candidate at
-    // 0.90 -- ten points off everyone, for a question the product still could not ask them. That is the
-    // exact failure ScoringWeightsSnapshot.RenormalizedTo's remark on Languages describes, and it is
-    // cheaper to state here than to rediscover.
-    internal static double AtsParseabilityScore() => NotApplicableScore;
+    // THE DENOMINATOR MOVES, and that is the whole of what this rule has to say about Unknown. A
+    // non-PDF upload carries no geometry, so "we could not tell" is not evidence of a problem and must
+    // not be scored as one: the column term is dropped from BOTH halves of the fraction, and the
+    // document is graded on what was actually measured. Penalising Unknown would charge a DOCX -- the
+    // most ATS-parseable format there is -- for the detector's silence.
+    //
+    // IT IS ONLY EVER EVIDENCE ABOUT THE UPLOADED DOCUMENT, never about the CV as it now stands. A
+    // candidate who imports a scanned PDF and then corrects every field by hand still scores what the
+    // scan scored, because the file is deliberately never kept and there is nothing else to re-read. The
+    // section's 0.10 -- the smallest of the five -- is sized for exactly that.
+    internal static double AtsParseabilityScore(double metSignals, double measurableSignals) =>
+        measurableSignals <= 0.0
+            ? NotApplicableScore
+            : Math.Clamp(metSignals / measurableSignals, 0.0, 1.0);
+
+    // The numerator and the denominator the formula wants. Measurable is never zero for signals that
+    // exist -- whether text came out is known for every format -- which is what makes
+    // ApplicableSections safe to key on the mere presence of the value.
+    internal static (int Met, int Measurable) AtsSignalCounts(ImportSignals signals)
+    {
+        ArgumentNullException.ThrowIfNull(signals);
+
+        var met = ExtractsMachineReadableText(signals) ? 1 : 0;
+        var measurable = 1;
+
+        if (HasColumnEvidence(signals))
+        {
+            measurable++;
+            if (ReadsInOneColumn(signals))
+                met++;
+        }
+
+        return (met, measurable);
+    }
+
+    // ONE term from TWO facts, because they are two causes of one failure: a scanned PDF and an empty
+    // document both hand an ATS nothing. They stay separate on ImportSignals because the candidate's fix
+    // differs -- export it properly, or upload the right file -- and the two rules that say so are the
+    // reason the distinction is worth carrying.
+    internal static bool ExtractsMachineReadableText(ImportSignals signals) =>
+        signals.HadTextLayer && !signals.Warnings.HasFlag(ImportWarningFlags.NoTextContent);
+
+    internal static bool HasColumnEvidence(ImportSignals signals) =>
+        signals.ColumnLayout != ColumnLayout.Unknown;
+
+    internal static bool ReadsInOneColumn(ImportSignals signals) =>
+        signals.ColumnLayout == ColumnLayout.Single;
 }

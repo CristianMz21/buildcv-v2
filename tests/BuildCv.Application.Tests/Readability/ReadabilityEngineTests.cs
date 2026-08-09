@@ -39,8 +39,9 @@ public class ReadabilityEngineTests
         act.Should().Throw<ArgumentNullException>();
     }
 
-    // A COMPLETE CV SCORES 1.0. Only reachable because AtsParseability is renormalized out: left
-    // weighted against a hard zero it would cap this at 0.90.
+    // A COMPLETE CV SCORES 1.0. This one carries no import signals, so it is reachable because
+    // AtsParseability is renormalized out; the same ceiling WITH a document behind it is
+    // AtsParseabilityTests.A_perfect_single_column_pdf_with_a_text_layer_scores_one_hundred_not_ninety.
     [Fact]
     public void A_fully_populated_resume_scores_one()
     {
@@ -95,7 +96,7 @@ public class ReadabilityEngineTests
         var weights = BreakdownOf(ReadabilityTestResumes.FullyPopulated()).Weights;
 
         weights.AtsParseability.Should().Be(0.0,
-            "no resume carries import signals yet, so the section could not be measured");
+            "this resume carries no import signals, so the section could not be measured");
         (weights.Completeness + weights.Contact + weights.Achievements + weights.Chronology)
             .Should().BeApproximately(1.0, 1e-12,
                 "the four that remain carry the whole score, so the ceiling stays 1.00");

@@ -3,6 +3,7 @@ using BuildCv.Application.Common.Services;
 using BuildCv.Application.Resumes;
 using BuildCv.Application.Tests.Fakes;
 using BuildCv.Domain.Common.ValueObjects;
+using BuildCv.Domain.Resumes;
 using FluentAssertions;
 
 namespace BuildCv.Application.Tests.Resumes;

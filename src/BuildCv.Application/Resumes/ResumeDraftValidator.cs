@@ -66,7 +66,15 @@ public static class ResumeDraftValidator
     // so the same single return that keeps UnusableContact in also keeps this one in.
     private static readonly OrganizationName UnusableOrganization = OrganizationName.Create("unused");
 
-    public static ResumeImportResult Validate(AccountId ownerId, ResumeDraft draft)
+    /// <param name="importSignals">
+    /// What the document this draft was extracted from looked like to a parser, already verified by the
+    /// caller, or null for a draft with no document behind it. It takes no part in validation — there is
+    /// nothing in it a candidate could get wrong, because it never passed through their hands unsigned —
+    /// and it is here only so it enters the aggregate through the SAME single <see cref="Resume.Create"/>
+    /// every other field does.
+    /// </param>
+    public static ResumeImportResult Validate(
+        AccountId ownerId, ResumeDraft draft, ImportSignals? importSignals = null)
     {
         ArgumentNullException.ThrowIfNull(ownerId);
         ArgumentNullException.ThrowIfNull(draft);
@@ -76,7 +84,7 @@ public static class ResumeDraftValidator
 
         var profiles = BuildProfiles(contactDraft.Profiles, errors);
         var contact = BuildContact(contactDraft, profiles, errors);
-        var resume = Resume.Create(ownerId, contact ?? UnusableContact);
+        var resume = Resume.Create(ownerId, contact ?? UnusableContact, importSignals);
 
         AddExperiences(resume, draft.Experiences, errors);
         AddEducations(resume, draft.Educations, errors);

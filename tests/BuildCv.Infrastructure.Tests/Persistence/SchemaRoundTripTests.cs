@@ -218,6 +218,69 @@ public sealed class SchemaRoundTripTests
         // prose behind, which the engine must never parse.
         reloaded.Languages.Single().Level.Should().Be(LanguageProficiency.Native);
         reloaded.Educations.Single().Level.Should().Be(EducationLevel.Bachelor);
+
+        // THE ORDINARY CASE for the optional owned value: this resume was built by hand, so all four
+        // Import_* columns are null and EF must materialize the whole value as null rather than as an
+        // ImportSignals full of defaults. A default-valued instance would read as
+        // (Unknown, HadTextLayer: false) — a document nobody uploaded, scored as unparseable.
+        reloaded.ImportSignals.Should().BeNull();
+    }
+
+    // The other half of the same value, against a real database: every field of an imported resume's
+    // signals survives the round trip, INCLUDING the two whose absence is meaningful. A null page count
+    // must not come back as zero, and ImportWarningFlags.None must not come back as anything else — both
+    // are what the ATS-parseability rule reads, and both are invisible to a test that only checks the
+    // value is non-null.
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task Resume_RoundTrips_ItsImportSignals()
+    {
+        var signals = ImportSignals.Create(
+            ColumnLayout.Multiple, hadTextLayer: false, pageCount: 4, ImportWarningFlags.NoTextContent);
+
+        var resume = Resume.Create(
+            AccountId.New(),
+            new ContactInformation(PersonName.Create("Ada Lovelace"), Email.Create(UniqueEmail("signals"))),
+            signals);
+
+        await using (var context = _fixture.NewContext())
+        {
+            context.Resumes.Add(resume);
+            await context.SaveChangesAsync();
+        }
+
+        await using var reader = _fixture.NewContext();
+        var reloaded = await reader.Resumes.SingleAsync(entity => entity.Id == resume.Id);
+
+        reloaded.ImportSignals.Should().Be(signals);
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task Resume_RoundTrips_ImportSignalsWithNoPageCountAndNoWarnings()
+    {
+        var signals = ImportSignals.Create(ColumnLayout.Unknown, hadTextLayer: true);
+
+        var resume = Resume.Create(
+            AccountId.New(),
+            new ContactInformation(PersonName.Create("Ada Lovelace"), Email.Create(UniqueEmail("signals2"))),
+            signals);
+
+        await using (var context = _fixture.NewContext())
+        {
+            context.Resumes.Add(resume);
+            await context.SaveChangesAsync();
+        }
+
+        await using var reader = _fixture.NewContext();
+        var reloaded = await reader.Resumes.SingleAsync(entity => entity.Id == resume.Id);
+
+        // NOT null, even though three of the four columns hold their zero value and the fourth is null.
+        // This is the case an optional owned type gets wrong in the dangerous direction: EF decides the
+        // value is absent from the columns alone, and a mapping that leaned on "Unknown means nothing
+        // was uploaded" would silently drop the evidence for every DOCX and pasted-text import.
+        reloaded.ImportSignals.Should().NotBeNull();
+        reloaded.ImportSignals.Should().Be(signals);
     }
 
     // The Language.Fluency ruling, checked at the only layer where it is true or false: the bytes on
