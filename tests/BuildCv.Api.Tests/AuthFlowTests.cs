@@ -30,6 +30,51 @@ public sealed class AuthFlowTests
             .And.ContainEquivalentOf("Path=/v1/auth/refresh");
     }
 
+    // THE LOCATION HEADER IS FOLLOWED, not merely compared to a string. It used to name
+    // /v1/auth/accounts/{id}, which is mapped nowhere, so the standard "201 then GET the Location"
+    // convention answered 404 — and no test noticed, because nothing followed it.
+    //
+    // BOTH HALVES ARE NEEDED, and neither alone would have caught it. Asserting the header's VALUE
+    // pins today's answer without saying whether that path resolves; asserting only that a GET of it
+    // succeeds would pass on any route this suite happened to reach. Following the header the API
+    // really sent, with a credential, is the assertion the convention actually makes.
+    //
+    // THE ID IS COMPARED, because /v1/auth/me answers 200 for whatever principal calls it: a Location
+    // pointing at some other account's resource would return a body of the same shape and status. The
+    // id the 201 carried is the only thing that says the header named the resource it created.
+    //
+    // Two auth requests — a register and a login — out of the 5/min a TestServer client gets.
+    [Fact]
+    public async Task Register_TheLocationItReturns_ResolvesToTheAccountItJustCreated()
+    {
+        using var factory = new ApiTestFactory();
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+
+        var register = await client.RegisterAsync(TestHelpers.CandidateEmail);
+        register.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        var location = register.Headers.Location;
+        location.Should().NotBeNull("a 201 has to say where the thing it created lives");
+
+        var created = await register.Content.ReadFromJsonAsync<AccountBody>();
+
+        // Registering does not log you in, so the header is followed with a credential obtained the
+        // way a client would obtain one. Without it this route answers 401 — a real refusal from a
+        // route that exists, which is the accepted cost stated on the endpoint.
+        var token = await client.LoginAndGetAccessTokenAsync(TestHelpers.CandidateEmail);
+
+        using var follow = new HttpRequestMessage(HttpMethod.Get, location).WithBearer(token);
+        var followed = await client.SendAsync(follow);
+
+        followed.StatusCode.Should().Be(HttpStatusCode.OK,
+            "following a 201's Location must not 404 — {0} is the path the API sent", location);
+
+        var read = await followed.Content.ReadFromJsonAsync<AccountBody>();
+        read!.Id.Should().Be(created!.Id, "the Location must name the account the 201 reported creating");
+    }
+
+    private sealed record AccountBody(Guid Id);
+
     // Anonymous callers must not be able to name a privileged role at registration. Each case gets
     // its own factory so the shared 5/min auth rate limit never masks a failure.
     [Theory]
