@@ -1,3 +1,5 @@
+using BuildCv.Domain.Exceptions;
+
 namespace BuildCv.Domain.Jobs;
 
 public sealed record JobPostingId
@@ -7,7 +9,7 @@ public sealed record JobPostingId
     public JobPostingId(Guid value)
     {
         if (value == Guid.Empty)
-            throw new ArgumentException("JobPostingId must not be empty.", nameof(value));
+            throw new EmptyIdentifierException("JobPostingId must not be empty.");
         Value = value;
     }
 

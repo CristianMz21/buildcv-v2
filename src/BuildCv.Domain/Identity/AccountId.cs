@@ -1,3 +1,5 @@
+using BuildCv.Domain.Exceptions;
+
 namespace BuildCv.Domain.Identity;
 
 public sealed record AccountId
@@ -7,7 +9,7 @@ public sealed record AccountId
     public AccountId(Guid value)
     {
         if (value == Guid.Empty)
-            throw new ArgumentException("AccountId must not be empty.", nameof(value));
+            throw new EmptyIdentifierException("AccountId must not be empty.");
         Value = value;
     }
 

@@ -453,12 +453,17 @@ public class ValueObjectConverterTests
         new AnalysisIdConverter().ConvertToProvider(new AnalysisId(value)).Should().Be(value);
     }
 
+    // A stored empty guid is corruption, and materializing one silently would put a row into memory that
+    // no code path could have written. The TYPE is asserted rather than just "it throws": the id now
+    // raises EmptyIdentifierException, a DomainException, which is what turned the Api's answer to an
+    // empty route guid from a 500 into a 400 — a converter reverted to ArgumentException would quietly
+    // take that back on the read path.
     [Fact]
     public void StronglyTypedIds_EmptyPersistedGuid_FailsLoudly()
     {
         var act = () => new ResumeIdConverter().ConvertFromProvider(Guid.Empty);
 
-        act.Should().Throw<ArgumentException>();
+        act.Should().Throw<EmptyIdentifierException>();
     }
 
     [Fact]

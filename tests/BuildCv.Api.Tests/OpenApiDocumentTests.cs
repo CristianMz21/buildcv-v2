@@ -99,6 +99,77 @@ public sealed class OpenApiDocumentTests
             "every v1 operation must state its success shape — nothing can infer it from IResult");
     }
 
+    // 403 AND 404 TRAVEL TOGETHER, and only those two. They are the same question asked twice about an
+    // owned resource: 403 says it exists and is not yours, 404 says it is not there — and a route that
+    // can answer either can answer the other, because the caller naming an id cannot know which case
+    // they are in. ProducesResultProblems() declares them together for exactly that reason.
+    //
+    // 400 IS NOT PART OF THE PAIR, and getting that wrong twice is what shaped this test:
+    //   - Demanding all three from anything declaring 400 failed POST /v1/resumes/import, correctly.
+    //     That route creates a resume the caller owns by construction, so no other owner can forbid it
+    //     and no existing entity can be missing; its failures are field errors that never reach
+    //     ToHttpResult. A 400-only operation is a complete statement, not an omission.
+    //   - Demanding 400 alongside 403/404 then failed GET /v1/scoring/{analysisId}, correctly AT THE
+    //     TIME. Its handler makes no Domain-factory calls, so nothing the handler returns can fall to
+    //     ToHttpResult's else-arm, and declaring a 400 would have documented a response the route could
+    //     not give — the same defect as omitting one it can.
+    //     THAT ROUTE DECLARES 400 NOW, and the reason is worth keeping: the 400 never came from the
+    //     handler and still does not. `new AnalysisId(analysisId)` runs first, and the empty guid the
+    //     `:guid` constraint matches used to escape as a bare ArgumentException and answer 500 with a C#
+    //     parameter name in the body. It is EmptyIdentifierException — a DomainException — since then,
+    //     so the refusal is an ordinary 400. Reachability is decided per route by what the whole lambda
+    //     can produce, never by the handler alone; ByIdRouteTests pins the answer end to end.
+    //
+    // This exists because POST /v1/scoring/score did not. It was hand-annotated before that helper
+    // existed, was not swept when the helper landed, and shipped declaring {200, 400, 404} while the
+    // comment directly above the list named 403 as one of the codes it answers. The handler returns
+    // "Forbidden." on two reachable paths and a passing test already proved the 403 — the document was
+    // the only thing that disagreed, and a client generated from it had no typed case for an ordinary
+    // refusal. A .Produces that lies is worse than one that says nothing.
+    [Fact]
+    public async Task AnOperationThatCanForbidCanAlsoNotFind()
+    {
+        using var document = await FetchAsync();
+
+        var incomplete = new List<string>();
+        var examined = 0;
+
+        foreach (var route in document.RootElement.GetProperty("paths").EnumerateObject())
+        {
+            if (!route.Name.StartsWith("/v1/", StringComparison.Ordinal))
+                continue;
+
+            foreach (var operation in route.Value.EnumerateObject())
+            {
+                var responses = operation.Value.GetProperty("responses");
+                var declared = responses.EnumerateObject().Select(response => response.Name).ToHashSet();
+
+                var pair = new[] { "403", "404" };
+                if (!pair.Any(declared.Contains))
+                    continue;
+
+                examined++;
+                var missing = pair.Where(code => !declared.Contains(code)).ToArray();
+                if (missing.Length > 0)
+                {
+                    incomplete.Add(
+                        $"{operation.Name.ToUpperInvariant()} {route.Name} declares "
+                        + $"[{string.Join(", ", declared.Where(pair.Contains))}] "
+                        + $"but not [{string.Join(", ", missing)}]");
+                }
+            }
+        }
+
+        // Same guard as above, and for the same reason: an empty list of offenders means nothing unless
+        // the walk reached operations that carry refusals at all.
+        examined.Should().BeGreaterThan(20,
+            "the walk must actually have reached the operations that declare refusals");
+
+        incomplete.Should().BeEmpty(
+            "403 and 404 are one question about an owned resource asked twice, so declaring one and "
+            + "omitting the other tells a generated client an ordinary refusal cannot happen");
+    }
+
     private static void Walk(JsonElement element, string path, List<string> offenders)
     {
         if (element.ValueKind == JsonValueKind.Object)

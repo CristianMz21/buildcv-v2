@@ -1,3 +1,5 @@
+using BuildCv.Domain.Exceptions;
+
 namespace BuildCv.Domain.Readability;
 
 public sealed record ReadabilityReportId
@@ -7,7 +9,7 @@ public sealed record ReadabilityReportId
     public ReadabilityReportId(Guid value)
     {
         if (value == Guid.Empty)
-            throw new ArgumentException("ReadabilityReportId must not be empty.", nameof(value));
+            throw new EmptyIdentifierException("ReadabilityReportId must not be empty.");
         Value = value;
     }
 

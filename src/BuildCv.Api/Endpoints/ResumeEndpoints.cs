@@ -464,6 +464,49 @@ public static class ResumeEndpoints
             + "Achievements advice, because there is no role to add a bullet point to. It appears once "
             + "the work history does.");
 
+        // The read half of the route above, on the same path and by the method that means "read" — the
+        // POST writes a run, this walks the runs already written. Splitting them by verb rather than by
+        // path is what keeps the pair discoverable: a client that knows how to produce a readability
+        // report knows where its history is without learning a second URL.
+        //
+        // OLDEST FIRST, joining score history as the second exception to this repo's newest-first paging
+        // convention. The full argument is on IReadabilityReportRepository.GetPageByResumeIdAsync; the
+        // consequence for a client is that `cursor` walks FORWARD IN TIME.
+        group.MapGet("/{id:guid}/readability", async (
+            Guid id,
+            HttpContext httpContext,
+            IQueryHandler<GetReadabilityHistoryQuery, Result<Page<ReadabilityReport>>> handler,
+            CancellationToken cancellationToken,
+            int? limit,
+            string? cursor) =>
+        {
+            var result = await handler.Handle(new GetReadabilityHistoryQuery(
+                httpContext.User.GetAccountId(), new ResumeId(id), limit, cursor), cancellationToken);
+
+            // Mapped through the same ReadabilityResponse the POST returns, so each entry is identical in
+            // shape to what the candidate was shown when it was taken, recommendations included and in
+            // the same order — which is what makes "did acting on that advice pay what it promised" a
+            // comparison a client can just do.
+            return result.ToHttpResult(page => Results.Ok(new PagedResponse<ReadabilityResponse>(
+                [.. page.Items.Select(ReadabilityResponse.From)], page.NextCursor)));
+        })
+        .Produces<PagedResponse<ReadabilityResponse>>(StatusCodes.Status200OK)
+        .ProducesResultProblems()
+        .ProducesAuthProblems()
+        .WithSummary("Returns this resume's readability history, OLDEST FIRST, keyset paginated.")
+        .WithDescription(
+            "The second list in this API that pages oldest first — `GET /v1/resumes/{id}/analyses` is the "
+            + "other — because a history is read forwards, so `cursor` walks toward the present. Entries "
+            + "are the same shape POST /v1/resumes/{id}/readability returns. "
+            + "EVERY POST WRITES AN ENTRY: there is no de-duplication here, so two identical requests "
+            + "against an unedited CV produce two entries with the same numbers. "
+            + "Entries with different `weights.schemaVersion` values were produced by different "
+            + "readability models and are not comparable; compare `weights` before comparing "
+            + "`readabilityScore`. Each entry's numbers are as they were taken and are never re-measured "
+            + "on read — there is no `isStale` on a readability report, because nothing on it records the "
+            + "state of the CV it graded. `nextCursor` is null on the last page and is the only supported "
+            + "way to ask for more.");
+
         group.MapPut("/{id:guid}/contact", async (
             Guid id,
             UpdateContactRequest request,
@@ -624,9 +667,18 @@ public static class ResumeEndpoints
         // they meet a requirement they do not. IsDefined runs on the CLR value before that conversion,
         // which is what closes all three.
         //
-        // It must stay IsDefined rather than "reject numeric input": GET returns level as a NUMBER
-        // (no JsonStringEnumConverter is configured), so a read-modify-write client legitimately POSTs
-        // 4 back. Valid numbers keep working; only undefined ones do not.
+        // It must stay IsDefined rather than "reject numeric input", and the REASON changed with v1
+        // while the conclusion did not. This used to read "GET returns level as a NUMBER", which was
+        // true when the route answered the Domain aggregate and no JsonStringEnumConverter was
+        // configured: a read-modify-write client had to be able to POST 4 back because 4 was what it
+        // had just been given. GET answers the NAME now — LanguageResponse.From calls ToString(), and
+        // ResumeContractTests asserts GetString() — so a round-tripping client sends "Native" and never
+        // needs the tolerance.
+        //
+        // The tolerance stays anyway, for every caller written against the old shape: refusing a number
+        // would be a behaviour change nobody asked for, and it would break them for no gain. What
+        // IsDefined still has to do is separate 0 and 4, which are real members, from 99, 300 and -1,
+        // which are not — and that job never depended on how GET renders the field.
         //
         // What this does NOT do is narrow the input space to the enum's own names. TryParse
         // OR-combines COMMA-SEPARATED members whether or not the type is [Flags], and the result is

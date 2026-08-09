@@ -41,6 +41,12 @@ public static class ScoringEndpoints
         // this route can answer.
         .Produces<AnalysisResponse>(StatusCodes.Status200OK)
         .ProducesProblem(StatusCodes.Status400BadRequest)
+        // 403 IS REACHABLE TWICE, and this list omitted it while the comment above named it. Both paths
+        // are in ScoreResumeHandler: a resume the caller does not own, and a posting that is neither
+        // published nor theirs. Scoring is deliberately narrower than GET /jobs/{id}, so the second is an
+        // ORDINARY refusal rather than an edge case -- and a client generated from this document had no
+        // typed case for it. OpenApiDocumentTests keeps 403 and 404 travelling together from here on.
+        .ProducesProblem(StatusCodes.Status403Forbidden)
         .ProducesProblem(StatusCodes.Status404NotFound)
         .WithSummary("Scores a resume against a job posting, reusing an identical run rather than repeating it.")
         .WithDescription(
@@ -74,6 +80,14 @@ public static class ScoringEndpoints
             return result.ToHttpResult(view => Results.Ok(AnalysisResponse.From(view.Analysis, view.IsStale)));
         })
         .Produces<AnalysisResponse>(StatusCodes.Status200OK)
+        // 400 IS REACHABLE AGAIN, and it was not when this list was written. The handler still makes no
+        // Domain-factory call, so nothing can hand ToHttpResult a message that falls to its else-arm —
+        // but `new AnalysisId(analysisId)` above runs BEFORE the handler, and the empty guid the `:guid`
+        // constraint happily matches now throws EmptyIdentifierException, which DomainExceptionHandler
+        // answers as a 400. It used to escape as a bare ArgumentException and answer 500 with a C#
+        // parameter name in the detail; see EmptyIdentifierException for why the fix is a 400 rather
+        // than a route constraint.
+        .ProducesProblem(StatusCodes.Status400BadRequest)
         .ProducesProblem(StatusCodes.Status403Forbidden)
         .ProducesProblem(StatusCodes.Status404NotFound)
         .WithSummary("Returns one stored analysis, readable only by the owner of the resume it scored.")

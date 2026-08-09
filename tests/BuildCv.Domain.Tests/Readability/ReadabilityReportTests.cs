@@ -92,13 +92,11 @@ public class ReadabilityReportTests
         report.Equals(report).Should().BeTrue();
     }
 
-    [Fact]
-    public void ReadabilityReportId_rejects_an_empty_guid()
-    {
-        var act = () => new ReadabilityReportId(Guid.Empty);
-
-        act.Should().Throw<ArgumentException>().WithParameterName("value");
-    }
+    // The empty-guid refusal moved to Domain.Tests.Identity.IdTests, where the other five id types are
+    // swept together. It lived here asserting `.WithParameterName("value")` — pinning the very leak that
+    // reached a response body on every by-id route, because ArgumentException.Message appends
+    // "(Parameter 'value')". The id throws EmptyIdentifierException now, which carries no parameter name
+    // and which the Api answers as a 400 instead of a 500; the sweep asserts both.
 
     private static ReadabilityRecommendation Advice() =>
         ReadabilityRecommendation.Create(
