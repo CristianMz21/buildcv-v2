@@ -41,7 +41,19 @@ public sealed class BuildCvDbContextFactory : IDesignTimeDbContextFactory<BuildC
 
         var options = new DbContextOptionsBuilder<BuildCvDbContext>()
             .UseSqlServer(connectionString, sqlServer =>
-                sqlServer.MigrationsHistoryTable("__EFMigrationsHistory", "dbo"))
+            {
+                sqlServer.MigrationsHistoryTable("__EFMigrationsHistory", "dbo");
+
+                // The same retry policy AddPersistence gives the running application, for a reason
+                // that is specific to this factory rather than symmetry. A serverless Azure SQL
+                // database auto-pauses when idle, and its first connection afterwards fails with
+                // error 40613 while it resumes — roughly a minute. `dotnet ef database update` is
+                // exactly the caller that meets a paused database: it runs on a deploy, and a
+                // deploy outside working hours is when the database is most likely to be asleep.
+                // Without this the migration step fails intermittently, and only on the deploys
+                // nobody is watching.
+                sqlServer.EnableRetryOnFailure();
+            })
             .Options;
 
         return new BuildCvDbContext(options, new AesGcmFieldEncryptor(new EncryptionKeyRing(DesignTimeSettings())));
