@@ -30,14 +30,27 @@ public sealed class ReadabilityEngine : IReadabilityEngine
     private static ReadabilityBreakdown BuildBreakdown(Resume resume, DateOnly referenceDate)
     {
         var (quantified, actionLed, totalHighlights) = ReadabilityRules.HighlightCounts(resume);
+        var signals = resume.ImportSignals;
 
-        // FALSE, AND IT IS THE ONE LINE ROADMAP T3.5 REPLACES: `resume.ImportSignals is not null`. No
-        // resume this build can load carries import signals -- Resume has no such member yet -- so
-        // AtsParseability is renormalized out of every report, its weight reads 0 on the wire, and the
-        // remaining four still total 1.0. Written as a named argument rather than inlined so the
-        // substitution is one word in one place.
+        // THE SCORE AND THE APPLICABILITY MOVE TOGETHER, and nothing here may separate them. A resume
+        // with signals gets its ATS section measured AND weighted; one without gets neither, the section
+        // is renormalized out, and the remaining four still total 1.0. Turning applicability on while the
+        // score stayed a hard zero would weight 0.10 against 0.0 and cap every importer at 0.90 -- ten
+        // points off, for a question the product then never asks -- which is the failure
+        // ReadabilityWeightsSnapshot.RenormalizedTo's remark describes. Both branches below read the same
+        // `signals`, so there is no second condition to get out of step with this one.
         var weights = ReadabilityWeightsSnapshot.Default()
-            .RenormalizedTo(ReadabilityRules.ApplicableSections(hasImportSignals: false));
+            .RenormalizedTo(ReadabilityRules.ApplicableSections(hasImportSignals: signals is not null));
+
+        // NotApplicableScore when there are no signals, exactly as the other two conditional sections do
+        // it: nothing was measured, so the honest answer is zero, and the weight of zero beside it is
+        // what keeps that zero out of the total.
+        var atsParseability = ReadabilityRules.NotApplicableScore;
+        if (signals is not null)
+        {
+            var (met, measurable) = ReadabilityRules.AtsSignalCounts(signals);
+            atsParseability = ReadabilityRules.AtsParseabilityScore(met, measurable);
+        }
 
         return ReadabilityBreakdown.Create(
             ReadabilityRules.CompletenessScore(ReadabilityRules.PresentSectionCount(resume)),
@@ -46,7 +59,7 @@ public sealed class ReadabilityEngine : IReadabilityEngine
             ReadabilityRules.ChronologyScore(
                 ReadabilityRules.ContinuousEntryCount(resume, referenceDate),
                 resume.Experiences.Count),
-            ReadabilityRules.AtsParseabilityScore(),
+            atsParseability,
             weights);
     }
 }

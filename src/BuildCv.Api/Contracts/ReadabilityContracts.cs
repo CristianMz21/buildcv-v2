@@ -30,12 +30,25 @@ using BuildCv.Domain.Readability;
 /// remaining weights are RENORMALIZED to still total 1.0, so the ceiling is 100 for every resume.
 /// </para>
 /// <para>
-/// <b><c>weights.atsParseability</c> is 0 on every run this build can produce.</b> That section grades
-/// what the UPLOADED DOCUMENT looked like to a parser, and the evidence for it does not exist yet: the
-/// signed import-signals token is a separate change. Until it lands, the section is renormalized out and
-/// the other four carry the whole score. When it does land, the signals will describe the last document
-/// uploaded rather than the CV as it stands — in a product that deliberately never keeps the file, that
-/// is the only thing ATS-parseability can honestly mean.
+/// <b><c>weights.atsParseability</c> is 0 unless the resume was imported with an <c>importEvidence</c>
+/// token.</b> That section grades what the UPLOADED DOCUMENT looked like to a parser — whether an ATS can
+/// extract its text at all, and whether it reads in a single column — so a CV typed by hand has nothing
+/// for it to measure and is renormalized out rather than scored zero. When it does apply, a cleanly
+/// exported single-column PDF scores the section in full and the report's ceiling is still 100: applying
+/// the section is not a penalty for having imported.
+/// </para>
+/// <para>
+/// Two honest limits, stated rather than papered over. The signals describe the DOCUMENT THAT WAS
+/// UPLOADED, not the CV as it now stands: a candidate who imports a scan and then corrects every field
+/// keeps the scan's score, because the file is deliberately never kept and there is nothing else to
+/// re-read. And the token is bound to an ACCOUNT rather than to a resume, so a candidate can import a
+/// different CV of their own with it. Both are inherent to never storing the file; the section's 0.10 is
+/// the smallest of the five for exactly that reason.
+/// </para>
+/// <para>
+/// Its advice is also the only advice in this response that names an edit to a FILE rather than to this
+/// resume, and every such sentence ends in "import it again" — re-exporting alone cannot change what a
+/// stored set of signals says.
 /// </para>
 /// <para>
 /// <b><c>impact</c> is measured, not estimated.</b> It is the exact increase in

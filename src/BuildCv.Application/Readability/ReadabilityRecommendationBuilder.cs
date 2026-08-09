@@ -23,12 +23,15 @@ using BuildCv.Domain.Scoring;
 // A number that came from someone's intuition would be worse than no number at all: it gives a candidate
 // false precision they cannot verify, about the one thing they are here to improve.
 //
-// EMIT NOTHING A CANDIDATE CANNOT ACT ON. Two omissions carry that rule and both are deliberate. There
-// is no "your career is too short" advice, because that is a fact about time. And a resume with no
+// EMIT NOTHING A CANDIDATE CANNOT ACT ON. Three omissions carry that rule and all three are deliberate.
+// There is no "your career is too short" advice, because that is a fact about time. A resume with no
 // experience entries gets NO achievements advice at all -- "add a bullet point" names an edit to a role
 // that does not exist -- so that section's whole weight sits unadvised until the Chronology rule's
-// advice has been acted on. Advice that appears once it can be followed is better than advice that
-// cannot, and the section still scores zero meanwhile: not advising it is not the same as excusing it.
+// advice has been acted on. And a resume with no import signals gets no ATS-parseability advice, because
+// there is no document to re-export. Advice that appears once it can be followed is better than advice
+// that cannot, and the section still scores zero meanwhile: not advising it is not the same as excusing
+// it -- except for ATS-parseability, whose zero is renormalized out rather than counted, because a CV
+// typed by hand is not a badly-exported document.
 internal static class ReadabilityRecommendationBuilder
 {
     // Ten is a reading limit, not a scoring one. Past it a candidate is being handed a backlog rather
@@ -54,6 +57,7 @@ internal static class ReadabilityRecommendationBuilder
             .. ForContact(resume, breakdown),
             .. ForAchievements(resume, breakdown),
             .. ForChronology(resume, breakdown, referenceDate),
+            .. ForAtsParseability(resume, breakdown),
         ];
 
         return [.. ReadabilityRecommendationOrder.Sort(found).Take(MaxRecommendations)];
@@ -239,6 +243,65 @@ internal static class ReadabilityRecommendationBuilder
                 + "contract or volunteering all count.",
                 breakdown.Weights.Chronology
                     * (ReadabilityRules.ChronologyScore(continuous + 2, count + 1) - current));
+        }
+    }
+
+    // The only section whose advice names an edit to the DOCUMENT instead of to the resume, and the only
+    // one whose instruction has to end in "import it again": the file is never kept, so re-exporting it
+    // alone cannot change what this resume's stored signals say. That is stated in the sentences below
+    // because a candidate who re-exports and sees no movement would otherwise conclude the advice lied.
+    //
+    // Nothing is emitted when the resume carries no signals -- a CV typed by hand has no document to fix,
+    // and the section is renormalized out of its report anyway, so every impact here would be zero.
+    private static IEnumerable<ReadabilityRecommendation> ForAtsParseability(
+        Resume resume, ReadabilityBreakdown breakdown)
+    {
+        if (resume.ImportSignals is not { } signals)
+            yield break;
+
+        var (met, measurable) = ReadabilityRules.AtsSignalCounts(signals);
+        var current = breakdown.AtsParseabilityScore;
+
+        // Both gaps are worth the same, and that is arithmetic rather than a judgement: the section is a
+        // share, so closing either term moves the numerator by exactly one. Severity is carried by the
+        // sentence -- "reads nothing at all" against "reads it in the wrong order" -- which is where a
+        // candidate can act on it, instead of by a weighting they would have to take on trust.
+        var impact = breakdown.Weights.AtsParseability
+            * (ReadabilityRules.AtsParseabilityScore(met + 1, measurable) - current);
+
+        if (!ReadabilityRules.ExtractsMachineReadableText(signals))
+        {
+            // Two causes, two sentences, one gap. Only one of them can be true of a given document: the
+            // PDF adapter reports a missing text layer, and the DOCX and plain-text adapters report an
+            // empty document, so the flag and the bool are never both set by one extraction.
+            yield return signals.Warnings.HasFlag(ImportWarningFlags.NoTextContent)
+                ? Advice(
+                    ReadabilitySectionType.AtsParseability,
+                    ReadabilityRecommendationKind.DocumentHasNoText,
+                    "Upload your actual CV file and import it again: the document this resume came from "
+                    + "contained no text at all, so an ATS reading it would find nothing.",
+                    impact)
+                : Advice(
+                    ReadabilitySectionType.AtsParseability,
+                    ReadabilityRecommendationKind.DocumentHasNoTextLayer,
+                    "Export your CV to PDF from your editor rather than scanning or photographing it, "
+                    + "then import it again: the file this resume came from has no text layer, so an ATS "
+                    + "extracts nothing at all from it.",
+                    impact);
+        }
+
+        // Unknown is deliberately absent from this test. A non-PDF upload carries no geometry, so there
+        // is nothing to advise and nothing was charged for -- the column term is out of the section's
+        // denominator entirely.
+        if (ReadabilityRules.HasColumnEvidence(signals) && !ReadabilityRules.ReadsInOneColumn(signals))
+        {
+            yield return Advice(
+                ReadabilitySectionType.AtsParseability,
+                ReadabilityRecommendationKind.DocumentUsesMultipleColumns,
+                "Re-export your CV in a single column and import it again: the file this resume came "
+                + "from is laid out in two or more columns, and many ATS readers interleave those into "
+                + "the wrong order.",
+                impact);
         }
     }
 

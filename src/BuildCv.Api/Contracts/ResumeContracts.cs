@@ -112,8 +112,15 @@ public sealed record ImportResumeRequest(
     IReadOnlyList<ImportAwardRequest?>? Awards = null,
     IReadOnlyList<ImportPublicationRequest?>? Publications = null,
     IReadOnlyList<ImportInterestRequest?>? Interests = null,
-    IReadOnlyList<ImportReferenceRequest?>? References = null)
+    IReadOnlyList<ImportReferenceRequest?>? References = null,
+    string? ImportEvidence = null)
 {
+    // IT IS NOT PART OF ToDraft, and that is the point of it being last. ResumeDraft is "the resume as a
+    // review screen holds it" — every leaf a nullable string the candidate may correct — and this is the
+    // one field they must NOT correct: it is an opaque token the server signed, and a hand-edited one is
+    // a rejected one. It rides on this record because it is a field of the same request body, and it
+    // travels to the handler beside the draft rather than inside it.
+
     public ResumeDraft ToDraft() => new(
         Contact?.ToDraft(),
         ProjectedList.OrNull(Experiences, item => item?.ToDraft()),
@@ -332,12 +339,19 @@ public sealed record ExtractDocumentTextResponse(
 // draft is an ImportResumeRequest — the exact shape the review screen posts back to POST /resumes/import
 // after the candidate corrects it. Confidence is a SEPARATE structure and is deliberately not part of the
 // draft, so a client posting the corrected draft back cannot (and need not) send confidence with it.
+//
+// THE IMPORT EVIDENCE GOES THE OTHER WAY, and it is INSIDE the draft rather than beside it. Confidence is
+// advice to the review screen and must never cross back; the evidence must, because it is what lets the
+// readability engine grade the uploaded document, and it is signed precisely so that crossing back
+// through a client is safe. Putting it on the draft means the review screen's contract stays "post this
+// object back" — a client that had to lift a sibling field into the body is a client that will forget to.
 public sealed record ProposeResumeDraftResponse(
     ImportResumeRequest Draft,
     DraftConfidenceResponse Confidence)
 {
-    public static ProposeResumeDraftResponse FromProposal(ResumeDraftProposal proposal) => new(
-        ImportResumeRequest.FromDraft(proposal.Draft),
+    public static ProposeResumeDraftResponse FromProposal(
+        ResumeDraftProposal proposal, string? importEvidence) => new(
+        ImportResumeRequest.FromDraft(proposal.Draft) with { ImportEvidence = importEvidence },
         DraftConfidenceResponse.FromConfidence(proposal.Confidence));
 }
 

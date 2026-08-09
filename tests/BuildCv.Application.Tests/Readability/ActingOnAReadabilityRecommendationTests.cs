@@ -267,6 +267,64 @@ public class ActingOnAReadabilityRecommendationTests
                 "the other break is still there and still has advice of its own");
     }
 
+    // ATS PARSEABILITY, whose fix cannot be applied in place — and the reason is the feature's own
+    // premise. Import signals are write-once at Resume.Create because they describe the document this
+    // resume came FROM, and the file is never stored, so "act on the advice" really means: fix the
+    // document and IMPORT IT AGAIN. That is a second resume with the same content and better signals,
+    // which is exactly what this models.
+    //
+    // The two resumes are otherwise identical, so every other section contributes the same term to both
+    // totals and the whole difference is the one the advice promised.
+    private void ReImportingWithABetterDocument(
+        ReadabilityRecommendationKind kind, ImportSignals before, ImportSignals after)
+    {
+        var original = ReadabilityTestResumes.FullyPopulated(before);
+        var reimported = ReadabilityTestResumes.FullyPopulated(after);
+
+        var evaluated = _engine.Evaluate(original, ReferenceDate);
+        var advice = evaluated.Recommendations.Should().ContainSingle(r => r.Kind == kind).Subject;
+        advice.Impact.Should().BeGreaterThan(0.0, "an impact of zero makes the delta assertion vacuous");
+
+        var afterFix = _engine.Evaluate(reimported, ReferenceDate);
+
+        (afterFix.WeightedTotal - evaluated.WeightedTotal).Should().BeApproximately(advice.Impact, Tolerance,
+            "importing the corrected document must pay exactly what the advice promised");
+    }
+
+    // A scanned PDF that at least reads in one column: exporting it properly is worth half the section,
+    // not all of it, because the column term was already met. A rule that promised the whole section
+    // would fail here rather than in a scenario where both terms were open.
+    [Fact]
+    public void ReExportingAScanAsRealText_RaisesTheScoreByExactlyItsImpact()
+    {
+        ReImportingWithABetterDocument(
+            ReadabilityRecommendationKind.DocumentHasNoTextLayer,
+            ReadabilityTestResumes.ScannedPdf,
+            ReadabilityTestResumes.CleanPdf);
+    }
+
+    // The column half, with the text half already met for the same reason.
+    [Fact]
+    public void ReExportingATwoColumnPdfInOneColumn_RaisesTheScoreByExactlyItsImpact()
+    {
+        ReImportingWithABetterDocument(
+            ReadabilityRecommendationKind.DocumentUsesMultipleColumns,
+            ReadabilityTestResumes.TwoColumnPdf,
+            ReadabilityTestResumes.CleanPdf);
+    }
+
+    // The empty-document rule, whose gap is the WHOLE section: the upload had no geometry either, so the
+    // denominator is one and closing the text term takes it from 0.0 straight to 1.0. Its impact is
+    // therefore twice the other two, which is what makes this a different test rather than a third copy.
+    [Fact]
+    public void UploadingARealFileInsteadOfAnEmptyOne_RaisesTheScoreByExactlyItsImpact()
+    {
+        ReImportingWithABetterDocument(
+            ReadabilityRecommendationKind.DocumentHasNoText,
+            ReadabilityTestResumes.EmptyDocument,
+            ReadabilityTestResumes.PastedText);
+    }
+
     private static Experience Role(string organization, string position, int startYear, int endYear) =>
         new(ExperienceType.Professional,
             OrganizationName.Create(organization),

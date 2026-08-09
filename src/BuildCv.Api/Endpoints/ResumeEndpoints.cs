@@ -85,7 +85,7 @@ public static class ResumeEndpoints
             }
 
             var result = await handler.Handle(
-                new CreateResumeFromDraftCommand(accountId, request.ToDraft()),
+                new CreateResumeFromDraftCommand(accountId, request.ToDraft(), request.ImportEvidence),
                 cancellationToken);
 
             return result.IsSuccess
@@ -128,7 +128,16 @@ public static class ResumeEndpoints
             + "(`experiences[2].end`, `contact.phoneNumber`), and creates nothing. A null array element "
             + "is reported at its own index. Levels accept the enum name or its number. Duplicate skills, "
             + "certificates, languages and interests are reported against the LATER occurrence — that is "
-            + "the line to delete — including when that item has another bad field as well.");
+            + "the line to delete — including when that item has another bad field as well. "
+            + "`importEvidence` is the opaque token POST /v1/resumes/import/propose returned inside the "
+            + "draft it proposed: send it back UNCHANGED to have the readability engine grade the "
+            + "document you uploaded, or omit it entirely — a draft typed by hand needs none, and its "
+            + "ATS-parseability section is then renormalized out rather than scored zero. A token that "
+            + "is malformed, was issued to another account, or is older than two hours is reported as a "
+            + "field error at `importEvidence` alongside any other bad field, and nothing is created; "
+            + "resubmitting without it succeeds. The token describes the DOCUMENT it was minted for, not "
+            + "the draft you send with it: nothing stops you posting it beside a different resume of "
+            + "your own, and the signals will then describe a file that resume did not come from.");
 
         // The upload half of the import flow: a PDF, DOCX or plain-text file in, its raw text back.
         // Raw text ONLY — no section detection and no draft: the candidate pastes or corrects the text
@@ -220,6 +229,7 @@ public static class ResumeEndpoints
             IFormFile file,
             ICommandHandler<ProposeResumeDraftFromDocumentCommand, Result<ResumeDraftProposal>> handler,
             DocumentExtractionRateLimiter rateLimiter,
+            IImportEvidenceProtector importEvidenceProtector,
             BuildCvMetrics metrics,
             ILogger<Program> logger,
             HttpContext httpContext,
@@ -247,7 +257,19 @@ public static class ResumeEndpoints
                 new ProposeResumeDraftFromDocumentCommand(content, file.ContentType),
                 cancellationToken);
 
-            return result.ToHttpResult(proposal => Results.Ok(ProposeResumeDraftResponse.FromProposal(proposal)));
+            // SIGNED HERE, at the composition root, and not in the handler. The handler depends on
+            // exactly the two read-only extraction ports and nothing else — that is the Application half
+            // of "extraction persists nothing", pinned by a test that reads its constructor — so a
+            // service holding a key does not belong in it. The account is also only knowable here.
+            //
+            // Signals are null only for a proposal that came from the parser with no document behind it,
+            // which this route cannot produce; the handler always sets them, and
+            // Propose_EveryProposal_CarriesTheSignalsOfTheDocumentItRead is what keeps that true.
+            return result.ToHttpResult(proposal => Results.Ok(ProposeResumeDraftResponse.FromProposal(
+                proposal,
+                proposal.Signals is { } signals
+                    ? importEvidenceProtector.Protect(signals, accountId)
+                    : null)));
         })
         // Same 5 MiB ceiling and CSRF story as /extract above: the ceiling is the extractor's own
         // constant (they cannot drift), and .DisableAntiforgery removes the framework's second, unusable
@@ -264,7 +286,15 @@ public static class ResumeEndpoints
             + "`NotExtracted`), never guessed; levels, experience type and end dates are never invented; "
             + "and a two-column layout is warned about rather than silently reordered. Nothing is stored — "
             + "correct the draft, then submit it to POST /v1/resumes/import, the only endpoint that creates "
-            + "a resume.");
+            + "a resume. "
+            + "The draft carries an `importEvidence` token: a signed, opaque record of what the uploaded "
+            + "document looked like to a parser — its column layout, whether it had a text layer, its "
+            + "page count — bound to your account and valid for two hours. Post it back unchanged with "
+            + "the draft and the readability engine can grade the document's ATS-parseability; drop it "
+            + "and that section is renormalized out of the report instead. It is signed because it feeds "
+            + "a score, so a client-asserted copy would be a score the client could set. Nothing about "
+            + "the document's CONTENT is in it, and the file itself is never stored — which is also why "
+            + "the evidence describes the upload rather than the resume as it later stands.");
 
         // Keyset paged, and there is no way to ask for the whole list: limit is clamped to a ceiling
         // and cursor is the only way forward. `limit` and `cursor` bind from the query string because
@@ -370,9 +400,14 @@ public static class ResumeEndpoints
             + "one gap closed — and `priority` is a pure function of it. "
             + "A section whose `breakdown.weights.<section>` is 0 could not be measured for this resume: "
             + "it neither helped nor hurt, and the remaining weights are renormalized to still total 1.0, "
-            + "so the ceiling is 100. `weights.atsParseability` is 0 on every run this build can "
-            + "produce — that section grades the uploaded DOCUMENT, and the signed import-signals "
-            + "evidence it needs is a separate change. "
+            + "so the ceiling is 100. `weights.atsParseability` is 0 unless this resume was imported with "
+            + "an `importEvidence` token: that section grades the uploaded DOCUMENT — whether an ATS can "
+            + "extract its text and whether it reads in one column — so a CV typed by hand has nothing "
+            + "for it to measure. When it does apply, a cleanly exported single-column PDF still scores "
+            + "100 overall; the section is not a tax on importing. Its advice is the only advice here "
+            + "that names an edit to a FILE rather than to this resume, and acting on it means importing "
+            + "the corrected document again — the file is never stored, so the signals on this resume "
+            + "cannot be re-read. "
             + "Advice can be absent for a section scoring 0: a resume with no experience entries gets no "
             + "Achievements advice, because there is no role to add a bullet point to. It appears once "
             + "the work history does.");

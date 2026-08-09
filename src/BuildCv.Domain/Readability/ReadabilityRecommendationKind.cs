@@ -22,5 +22,17 @@ public enum ReadabilityRecommendationKind
     NoExperienceHighlights = 7,
     HighlightWithoutANumber = 8,
     HighlightWithoutAnActionVerb = 9,
-    UnexplainedEmploymentGap = 10
+    UnexplainedEmploymentGap = 10,
+
+    // The three ATS-parseability kinds. They are the only ones that name an edit to the DOCUMENT rather
+    // than to the resume, and the only ones whose fix is "and import it again" -- see the remarks on
+    // ImportSignals for why a product that never keeps the file cannot re-grade the old upload.
+    //
+    // The first two are two causes of one gap and are mutually exclusive by construction: a scanned PDF
+    // and a document with no text in it both leave an ATS with nothing, and they are separate members
+    // because the candidate's fix differs and because "which of these do we see most" is the question
+    // this enum exists to keep answerable.
+    DocumentHasNoTextLayer = 11,
+    DocumentHasNoText = 12,
+    DocumentUsesMultipleColumns = 13
 }

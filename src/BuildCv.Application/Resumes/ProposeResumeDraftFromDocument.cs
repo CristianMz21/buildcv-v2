@@ -56,7 +56,23 @@ public sealed class ProposeResumeDraftFromDocumentHandler(
 
         var proposal = ResumeTextParser.Parse(
             extraction.Value!.Text, layout, extraction.Value.Warnings);
-        return Result<ResumeDraftProposal>.Success(proposal);
+
+        // The ONLY place the four scattered facts about the uploaded document are folded into one closed
+        // value. The free-text warnings are deliberately NOT among them: they are prose for the candidate
+        // and one of them quotes a heading out of the document, while WarningFlags is the closed
+        // statement of the same thing, set by the extractor at the site that decided it.
+        //
+        // Note what this does not do: SIGN it. Signing needs the account and a key, and this handler must
+        // keep depending on exactly the two read-only extraction ports — the no-writer pin below is the
+        // Application half of "extraction persists nothing", and a token service here would be the first
+        // dependency it could not check. The composition root signs; see IImportEvidenceProtector.
+        var signals = ImportSignals.Create(
+            layout,
+            extraction.Value.HadTextLayer,
+            extraction.Value.PageCount,
+            extraction.Value.WarningFlags);
+
+        return Result<ResumeDraftProposal>.Success(proposal with { Signals = signals });
     }
 
     private static async Task<MemoryStream> BufferBoundedAsync(Stream source, CancellationToken cancellationToken)

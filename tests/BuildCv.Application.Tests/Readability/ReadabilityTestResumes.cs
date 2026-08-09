@@ -11,16 +11,38 @@ internal static class ReadabilityTestResumes
 {
     internal static readonly DateOnly ReferenceDate = new(2025, 1, 1);
 
+    // The five documents the ATS-parseability tests are written against, named for what a candidate
+    // actually uploaded rather than for the field values, so a scenario reads as a story about a file.
+    //
+    // NULL IS THE SIXTH AND THE DEFAULT: a resume with no signals came from no document, which is what
+    // every resume built by hand or by any route other than /import/propose looks like.
+    internal static ImportSignals CleanPdf =>
+        ImportSignals.Create(ColumnLayout.Single, hadTextLayer: true, pageCount: 2);
+
+    internal static ImportSignals TwoColumnPdf =>
+        ImportSignals.Create(ColumnLayout.Multiple, hadTextLayer: true, pageCount: 2);
+
+    internal static ImportSignals ScannedPdf =>
+        ImportSignals.Create(ColumnLayout.Single, hadTextLayer: false, pageCount: 2);
+
+    // A DOCX or a pasted text file: readable text, and no geometry to judge the layout from.
+    internal static ImportSignals PastedText =>
+        ImportSignals.Create(ColumnLayout.Unknown, hadTextLayer: true);
+
+    internal static ImportSignals EmptyDocument => ImportSignals.Create(
+        ColumnLayout.Unknown, hadTextLayer: true, pageCount: null, ImportWarningFlags.NoTextContent);
+
     // THE MINIMUM A RESUME CAN BE. ContactInformation requires a name and an email, so this is genuinely
     // the emptiest document the Domain can hold — there is no "no contact information" case to test.
-    internal static Resume Empty() =>
+    internal static Resume Empty(ImportSignals? importSignals = null) =>
         Resume.Create(
             AccountId.New(),
-            new ContactInformation(PersonName.Create("Jane Doe"), Email.Create("jane@example.com")));
+            new ContactInformation(PersonName.Create("Jane Doe"), Email.Create("jane@example.com")),
+            importSignals);
 
     // EVERY SECTION AT ITS CEILING, which is what makes the 1.0 assertion mean "a good CV scores full
     // marks" rather than "the arithmetic happens to reach 1.0 somewhere".
-    internal static Resume FullyPopulated()
+    internal static Resume FullyPopulated(ImportSignals? importSignals = null)
     {
         var resume = Resume.Create(
             AccountId.New(),
@@ -30,7 +52,8 @@ internal static class ReadabilityTestResumes
                 PhoneNumber.Create("+541155501234"),
                 "Buenos Aires, Argentina",
                 Url.Create("https://janedoe.dev"),
-                "Backend engineer with eight years building payment systems."));
+                "Backend engineer with eight years building payment systems."),
+            importSignals);
 
         resume.AddSkill(Skill.Create(Technology.Create("C#")));
         resume.AddEducation(new Education(

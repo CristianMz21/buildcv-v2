@@ -15,10 +15,11 @@ namespace BuildCv.Application.Tests.Resumes;
 public class CreateResumeFromDraftHandlerTests
 {
     private readonly FakeResumeRepository _resumes = new();
+    private readonly FakeImportEvidenceProtector _evidence = new();
     private readonly CreateResumeFromDraftHandler _handler;
     private readonly AccountId _owner = AccountId.New();
 
-    public CreateResumeFromDraftHandlerTests() => _handler = new CreateResumeFromDraftHandler(_resumes);
+    public CreateResumeFromDraftHandlerTests() => _handler = new CreateResumeFromDraftHandler(_resumes, _evidence);
 
     private Task<ResumeImportResult> Import(ResumeDraft draft) =>
         _handler.Handle(new CreateResumeFromDraftCommand(_owner, draft));
