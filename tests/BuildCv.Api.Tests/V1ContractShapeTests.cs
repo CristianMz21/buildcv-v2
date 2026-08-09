@@ -98,6 +98,10 @@ public sealed class V1ContractShapeTests
         await Collect("/v1/job-offers/extract", HttpMethod.Post, candidate,
             new { text = "Our stack is C# and Docker." });
 
+        // The list of what the candidate owns. It carries `status` on every entry — an enum name, not a
+        // number — nested one level inside `items`, which is exactly the depth rule 2 exists to reach.
+        await Collect("/v1/job-offers?limit=5", HttpMethod.Get, candidate);
+
         var analysisId = (await Collect("/v1/scoring/score", HttpMethod.Post, candidate,
             new { resumeId, jobPostingId = jobId })).GetProperty("id").GetGuid();
         await Collect($"/v1/scoring/{analysisId}", HttpMethod.Get, candidate);
@@ -134,7 +138,7 @@ public sealed class V1ContractShapeTests
 
         // Guards the sweep itself: an empty or truncated list would pass both rules vacuously, and this
         // is the number of routes the walk is claimed to cover.
-        bodies.Should().HaveCount(22);
+        bodies.Should().HaveCount(23);
 
         foreach (var (route, body) in bodies)
         {

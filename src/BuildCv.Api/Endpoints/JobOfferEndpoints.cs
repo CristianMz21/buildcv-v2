@@ -2,8 +2,10 @@ using BuildCv.Api.Common;
 using BuildCv.Api.Contracts;
 using BuildCv.Api.Security;
 using BuildCv.Application.Common.Abstractions;
+using BuildCv.Application.Common.Pagination;
 using BuildCv.Application.Jobs;
 using BuildCv.Domain.Common.ValueObjects;
+using BuildCv.Domain.Jobs;
 using Microsoft.AspNetCore.Mvc;
 
 namespace BuildCv.Api.Endpoints;
@@ -70,6 +72,50 @@ public static class JobOfferEndpoints
             + "the caller: scorable by them via POST /v1/scoring/score and by nobody else, and it CANNOT be "
             + "published -- publishing is a recruiter action. A requirement priority left blank defaults "
             + "to NiceToHave; duplicate skills are reported against the LATER occurrence.");
+
+        // THE READ THAT MAKES THE 201 ABOVE MORE THAN A ONE-SHOT. Until this route existed, a candidate
+        // who imported an offer could only find it again if they had kept the Location header: the
+        // repository method behind it, IJobPostingRepository.GetPageByOwnerIdAsync, was implemented in
+        // both stores and called by nothing.
+        //
+        // IT LISTS EVERY POSTING THE CALLER OWNS, not only the ones imported here, and the reasoning is
+        // on GetJobPostingsByOwnerHandler: no column records which route created a row, and the two
+        // proxies that look like they might — Draft status, absent CompanyId — both match recruiter
+        // postings and would hide offers a candidate really owns. A Candidate cannot reach POST /v1/jobs
+        // at all, so for the account this group exists for the two answers are the same list.
+        //
+        // Newest first, unlike the two readability and score histories: this is an inventory of what the
+        // candidate is chasing now, not a record of events to replay forwards.
+        group.MapGet("/", async (
+            HttpContext httpContext,
+            IQueryHandler<GetJobPostingsByOwnerQuery, Result<Page<JobPosting>>> handler,
+            CancellationToken cancellationToken,
+            int? limit,
+            string? cursor) =>
+        {
+            var result = await handler.Handle(new GetJobPostingsByOwnerQuery(
+                httpContext.User.GetAccountId(), limit, cursor), cancellationToken);
+
+            // The same JobPostingResponse POST /import and GET /v1/jobs/{id} answer, so an entry from
+            // this list can be rendered by whatever already renders one posting.
+            return result.ToHttpResult(page => Results.Ok(new PagedResponse<JobPostingResponse>(
+                [.. page.Items.Select(JobPostingResponse.From)], page.NextCursor)));
+        })
+        .Produces<PagedResponse<JobPostingResponse>>(StatusCodes.Status200OK)
+        .ProducesResultProblems()
+        .ProducesAuthProblems()
+        .WithSummary("Lists every job posting the caller owns, newest first, keyset paginated.")
+        .WithDescription(
+            "OWNERSHIP, NOT PROVENANCE. This returns every posting whose owner is the caller — the "
+            + "offers imported at POST /v1/job-offers/import and, for a recruiter, the postings they "
+            + "created at POST /v1/jobs. Nothing on a posting records which route wrote it, so there is "
+            + "no narrower list to ask for; a Candidate cannot reach POST /v1/jobs, so for a candidate "
+            + "the two are the same. "
+            + "Entries are the same shape /v1/jobs/{id} returns, `status` included — a candidate's own "
+            + "offer stays `Draft` for its whole life, because publishing is a recruiter action. "
+            + "Postings owned by an ORGANIZATION the caller belongs to are NOT here: this lists what the "
+            + "caller owns, and `GET /v1/jobs/{id}` is the route that admits an organization's members. "
+            + "`nextCursor` is null on the last page and is the only supported way to ask for more.");
 
         // Pasted offer text in, PROPOSED skill requirements out. It creates nothing: the candidate edits
         // the proposals and posts the confirmed set to /import. Priorities come back as NiceToHave with

@@ -166,6 +166,7 @@ public static class DependencyInjection
         // Jobs
         services.AddScoped<ICommandHandler<CreateJobPostingCommand, Result<JobPosting>>, CreateJobPostingHandler>();
         services.AddScoped<IQueryHandler<GetJobPostingQuery, Result<JobPosting>>, GetJobPostingHandler>();
+        services.AddScoped<IQueryHandler<GetJobPostingsByOwnerQuery, Result<Page<JobPosting>>>, GetJobPostingsByOwnerHandler>();
         services.AddScoped<ICommandHandler<PublishJobPostingCommand, Result<JobPosting>>, PublishJobPostingHandler>();
         services.AddScoped<ICommandHandler<CloseJobPostingCommand, Result<JobPosting>>, CloseJobPostingHandler>();
         services.AddScoped<ICommandHandler<ImportJobOfferCommand, JobOfferImportResult>, ImportJobOfferHandler>();
