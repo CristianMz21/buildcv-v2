@@ -85,10 +85,12 @@ public class DateRangeTests
 
     // ---------------------------------------------------------------- the duration convention
     //
-    // Each of the three below isolates ONE endpoint of the convention, so a mutation to one cannot be
-    // covered by another's assertion: the month-start case pairs a month with a FULL end, the month-end
-    // case pairs a full start with a month, and the year case is the only one where either end is a bare
-    // year. The expected day counts are literals, computed independently of the implementation.
+    // FOUR CASES, ONE PER ENDPOINT AND PRECISION, and each pairs its partial end with a FULL one on the
+    // other side. That is what makes them separately observable: a mutation to the month-start rule
+    // cannot be masked by the month-end assertion, and neither touches the year rules. A single
+    // month-to-month or year-to-year case would have been reddened by any of the four mutations and
+    // could not have said which one. The expected day counts are literals, computed independently of
+    // the implementation.
 
     [Fact]
     public void A_month_precision_start_counts_from_the_first_of_that_month()
@@ -114,6 +116,30 @@ public class DateRangeTests
         range.DurationInDays(new DateOnly(2026, 8, 9)).Should().Be(1354);
     }
 
+    [Fact]
+    public void A_year_precision_start_counts_from_the_first_of_january()
+    {
+        var range = DateRange.Create(
+            PartialDate.FromYear(2015),
+            PartialDate.FromDate(new DateOnly(2019, 2, 20)));
+
+        range.StartsOn.Should().Be(new DateOnly(2015, 1, 1));
+        range.DurationInDays(new DateOnly(2026, 8, 9)).Should().Be(1511);
+    }
+
+    [Fact]
+    public void A_year_precision_end_counts_to_the_thirty_first_of_december()
+    {
+        var range = DateRange.Create(
+            PartialDate.FromDate(new DateOnly(2015, 6, 15)),
+            PartialDate.FromYear(2019));
+
+        range.EndsOn.Should().Be(new DateOnly(2019, 12, 31));
+        range.DurationInDays(new DateOnly(2026, 8, 9)).Should().Be(1660);
+    }
+
+    // Both year rules at once, which is the shape a CV that says "2015 - 2019" actually produces. Kept
+    // beside the two above rather than instead of them: this one alone could not say which end moved.
     [Fact]
     public void A_year_precision_range_spans_january_first_to_december_thirty_first()
     {
