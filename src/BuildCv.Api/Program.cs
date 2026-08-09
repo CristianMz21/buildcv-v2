@@ -165,8 +165,8 @@ builder.Services.AddHealthChecks()
         tags: [DatabaseHealthCheck.ReadinessTag]);
 
 // The transformer is the only configuration here, and it exists because the default document states a
-// union this API cannot produce; see FiniteNumberSchemaTransformer.
-builder.Services.AddOpenApi(options => options.AddSchemaTransformer<FiniteNumberSchemaTransformer>());
+// union this API cannot produce; see NumericSchemaTransformer.
+builder.Services.AddOpenApi(options => options.AddSchemaTransformer<NumericSchemaTransformer>());
 
 var app = builder.Build();
 

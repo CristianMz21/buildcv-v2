@@ -18,7 +18,7 @@ public sealed class OpenApiDocumentTests
     // a percentage bar from a string. FiniteNumberSchemaTransformer removes it; this is what keeps it
     // removed, including for the fields nobody has added yet.
     [Fact]
-    public async Task NoSchemaOffersANumberAsAStringToo()
+    public async Task NoSchemaOffersANumberOrAnIntegerAsAStringToo()
     {
         using var document = await FetchAsync();
 
@@ -106,8 +106,15 @@ public sealed class OpenApiDocumentTests
             if (element.TryGetProperty("type", out var type) && type.ValueKind == JsonValueKind.Array)
             {
                 var members = type.EnumerateArray().Select(entry => entry.GetString()).ToArray();
-                if (members.Contains("number") && members.Contains("string"))
+
+                // BOTH numeric kinds. The first version of this test checked only "number" and passed
+                // while every `int32` in the document — including the entry `id` that DELETE
+                // /v1/resumes/{id}/{section}/{itemId} takes — was still typed `number | string`.
+                if (members.Contains("string")
+                    && (members.Contains("number") || members.Contains("integer")))
+                {
                     offenders.Add(path);
+                }
             }
 
             foreach (var property in element.EnumerateObject())
