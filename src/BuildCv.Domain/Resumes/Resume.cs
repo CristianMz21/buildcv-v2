@@ -16,8 +16,47 @@ public sealed class Resume
     private readonly List<Interest> _interests = [];
     private readonly List<Reference> _references = [];
 
+    /// <summary>
+    /// The maximum length of <see cref="Name"/>.
+    /// </summary>
+    /// <remarks>
+    /// PRODUCT POLICY, NOT A PERSISTENCE NECESSITY, and the difference is worth stating so nobody
+    /// cites the wrong precedent. <c>Language.Name</c> is capped because it is the one PLAINTEXT
+    /// BOUNDED column in the resume graph and a longer value reaches SQL Server as error 2628. This
+    /// column is an encrypted <c>varbinary(max)</c>: it cannot overflow, and no rule here is holding
+    /// back a truncation error. The cap exists because a label is a label — something that fits in a
+    /// picker row — and because unbounded free text on a field nothing reads is storage a candidate
+    /// can grow without limit.
+    /// </remarks>
+    public const int NameMaxLength = 120;
+
     public ResumeId Id { get; }
     public AccountId OwnerId { get; }
+
+    /// <summary>
+    /// What the candidate calls this CV — "Backend roles", "CV para Google" — or null when they have
+    /// not named it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// IT EXISTS BECAUSE NOTHING ELSE DISTINGUISHES TWO CVs OF ONE PERSON. Every other candidate for a
+    /// label is either identical across them (the contact name) or absent from the list projection
+    /// (the most recent job title, which lives in a collection <c>GET /v1/resumes</c> does not carry).
+    /// A picker showing the same words on every row is the failure this closes.
+    /// </para>
+    /// <para>
+    /// NULLABLE, and a CV with no name is not second-class: every CV that exists today has none, and
+    /// naming one is a convenience rather than a step. Callers fall back to the contact name.
+    /// </para>
+    /// <para>
+    /// Encrypted at rest. It is free text a candidate writes about themselves and their search —
+    /// "CV para la entrevista en Globant" names an employer they have told nobody — and it passes the
+    /// test this repository actually applies to the question: nothing queries it. No engine reads it,
+    /// no index needs it, and no analytics groups by it.
+    /// </para>
+    /// </remarks>
+    public string? Name { get; private set; }
+
     public ContactInformation ContactInformation { get; private set; }
 
     /// <summary>
@@ -301,6 +340,30 @@ public sealed class Resume
             throw new EntryNotFoundException($"{entryName} not found in resume.");
 
         items.RemoveAt(index);
+        Touch();
+    }
+
+    /// <summary>
+    /// Names this CV, or clears the name when given null or blank.
+    /// </summary>
+    /// <remarks>
+    /// BLANK CLEARS RATHER THAN STORES. "Not named" and "named the empty string" would be two states
+    /// a candidate cannot tell apart on screen and every caller would have to collapse anyway, so the
+    /// aggregate collapses them once. Surrounding whitespace goes with it: a name is a label, and a
+    /// trailing space is not part of one.
+    /// </remarks>
+    public void Rename(string? name)
+    {
+        var trimmed = name?.Trim();
+
+        if (trimmed?.Length > NameMaxLength)
+        {
+            // NAMES THE LIMIT, NOT THE VALUE. This message reaches a 400 body and the application
+            // log, and the value is a candidate's own words about their job search.
+            throw new InvalidResumeNameException($"Name exceeds {NameMaxLength} characters.");
+        }
+
+        Name = string.IsNullOrWhiteSpace(trimmed) ? null : trimmed;
         Touch();
     }
 

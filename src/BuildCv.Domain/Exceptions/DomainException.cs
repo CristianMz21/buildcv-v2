@@ -40,6 +40,11 @@ public sealed class InvalidLanguageException : DomainException
     public InvalidLanguageException(string message) : base(message) { }
 }
 
+public sealed class InvalidResumeNameException : DomainException
+{
+    public InvalidResumeNameException(string message) : base(message) { }
+}
+
 public sealed class InvalidAccountException : DomainException
 {
     public InvalidAccountException(string message) : base(message) { }

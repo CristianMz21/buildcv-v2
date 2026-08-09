@@ -71,6 +71,12 @@ public sealed class ModelConfigurationTests
         // structural twins Education.Degree and Education.Grade were already here; it was not.
         ["Language.Fluency"] = "Language.Fluency",
 
+        // What the candidate calls this CV among their others -- "CV para la entrevista en Globant"
+        // names an employer they may have told nobody. It passes the test this repository actually
+        // applies rather than the one it looks like: nothing queries it. No engine reads it, no index
+        // needs it, no analytics groups by it, so sealing it costs no query.
+        ["Resume.Name"] = "Resume.Name",
+
         ["Award.Title"] = "Award.Title",
         ["Award.Awarder"] = "Award.Awarder",
         ["Award.Summary"] = "Award.Summary",

@@ -30,6 +30,7 @@ using BuildCv.Domain.Resumes;
 public sealed record ResumeResponse(
     Guid Id,
     Guid OwnerId,
+    string? Name,
     ContactInformationResponse ContactInformation,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
@@ -60,6 +61,7 @@ public sealed record ResumeResponse(
         return new ResumeResponse(
             resume.Id.Value,
             resume.OwnerId.Value,
+            resume.Name,
             ContactInformationResponse.From(resume.ContactInformation),
             resume.CreatedAt,
             resume.UpdatedAt,
@@ -123,6 +125,12 @@ public sealed record ResumeResponse(
 public sealed record ResumeSummaryResponse(
     Guid Id,
     Guid OwnerId,
+    /// <summary>
+    /// What the candidate calls this CV, or null when they have not named one. It is the ONLY field
+    /// on this row that differs between two CVs of one person — the contact name is identical across
+    /// them by definition — so a picker leads with this and falls back to the contact name.
+    /// </summary>
+    string? Name,
     string FullName,
     string Email,
     string? Location,
@@ -137,6 +145,7 @@ public sealed record ResumeSummaryResponse(
         return new ResumeSummaryResponse(
             resume.Id.Value,
             resume.OwnerId.Value,
+            resume.Name,
             resume.ContactInformation.FullName.Value,
             resume.ContactInformation.Email.Value,
             resume.ContactInformation.Location,

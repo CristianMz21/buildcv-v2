@@ -788,6 +788,32 @@ public static class ResumeEndpoints
         .ProducesResultProblems()
         .ProducesAuthProblems();
 
+        // A route of its own rather than a field on the contact update: a name is what the candidate
+        // calls this CV among their others, not information about the person, and folding it in would
+        // make renaming require resending an email address.
+        group.MapPut("/{id:guid}/name", async (
+            Guid id,
+            RenameResumeRequest request,
+            HttpContext httpContext,
+            ICommandHandler<RenameResumeCommand, Result<Resume>> handler,
+            CancellationToken cancellationToken) =>
+        {
+            var result = await handler.Handle(
+                new RenameResumeCommand(httpContext.User.GetAccountId(), new ResumeId(id), request.Name),
+                cancellationToken);
+
+            return result.ToHttpResult(resume => Results.Ok(ResumeSummaryResponse.From(resume)));
+        })
+        .Produces<ResumeSummaryResponse>(StatusCodes.Status200OK)
+        .ProducesResultProblems()
+        .ProducesAuthProblems()
+        .WithSummary("Names a CV, or clears the name.")
+        .WithDescription(
+            "A null or blank `name` CLEARS it rather than storing an empty one — a candidate cannot "
+            + "tell \"not named\" from \"named nothing\", so the two are one state. Surrounding "
+            + "whitespace is trimmed. Names are capped at 120 characters, which is product policy "
+            + "rather than a column width: the column is encrypted and cannot overflow.");
+
         MapItemDeletes(group);
 
         return group;
