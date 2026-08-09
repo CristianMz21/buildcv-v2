@@ -1,0 +1,197 @@
+/*
+ * Design tokens lifted from the Claude Design source (BuildCV Analysis.dc.html). That file carries
+ * every value as an inline style because its runtime requires it; here they are named once so a
+ * palette change is one edit rather than two hundred.
+ */
+:root {
+  --bg: #f8fafc;
+  --surface: #ffffff;
+  --border: #e5e7eb;
+  --border-soft: #f1f5f9;
+
+  --fg: #111827;
+  --fg-muted: #6b7280;
+  --fg-faint: #9ca3af;
+  --fg-body: #374151;
+
+  --primary: #2563eb;
+  --primary-hover: #1d4ed8;
+  --primary-bg: #eff6ff;
+  --primary-ring: rgba(37, 99, 235, 0.3);
+  --primary-ring-soft: rgba(37, 99, 235, 0.15);
+
+  --good: #16a34a;
+  --good-strong: #059669;
+  --good-bg: #ecfdf5;
+  --good-fg: #065f46;
+  --good-border: #d1fae5;
+
+  --warn: #d97706;
+  --warn-bg: #fffbeb;
+
+  --bad: #dc2626;
+  --bad-bg: #fef2f2;
+  --bad-fg: #991b1b;
+  --bad-border: #fecaca;
+
+  --shadow-card: 0 1px 2px rgba(16, 24, 40, 0.04);
+  --font: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font);
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: var(--primary);
+  text-decoration: none;
+}
+
+a:hover {
+  color: var(--primary-hover);
+}
+
+textarea::placeholder,
+input::placeholder {
+  color: var(--fg-faint);
+}
+
+button {
+  font-family: inherit;
+}
+
+:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--primary-ring-soft);
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/*
+ * Every animation in the source design is decoration. A reader who has asked their OS to stop moving
+ * things gets the same screens without the motion — the source could not express this, a real
+ * stylesheet can.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ── Shared primitives ─────────────────────────────────────────────────────── */
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: var(--shadow-card);
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 38px;
+  padding: 0 16px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--fg);
+  font: 500 13px var(--font);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--bg);
+}
+
+.btn:disabled {
+  cursor: not-allowed;
+}
+
+.btnPrimary {
+  border: none;
+  background: var(--primary);
+  color: #fff;
+  font-weight: 600;
+  font-size: 13.5px;
+}
+
+.btnPrimary:hover:not(:disabled) {
+  background: var(--primary-hover);
+}
+
+.btnPrimary:disabled {
+  background: var(--border);
+  color: var(--fg-faint);
+}
+
+.btnPrimary:focus-visible {
+  box-shadow: 0 0 0 3px var(--primary-ring);
+}
+
+.btnGhost {
+  border: none;
+  background: transparent;
+  color: var(--fg-muted);
+}
+
+.btnGhost:hover:not(:disabled) {
+  background: var(--border-soft);
+  color: var(--fg);
+}
+
+.btnLarge {
+  width: 100%;
+  height: 44px;
+  font-size: 14px;
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
