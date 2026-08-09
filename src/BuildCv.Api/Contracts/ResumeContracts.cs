@@ -9,6 +9,12 @@ public sealed record CreateResumeRequest(
     string? Location,
     string? Summary);
 
+/// <summary>
+/// Names a CV. A null or blank <paramref name="Name"/> CLEARS the name rather than storing an empty
+/// one — "not named" and "named nothing" are the same state to a candidate.
+/// </summary>
+public sealed record RenameResumeRequest(string? Name);
+
 public sealed record UpdateContactRequest(
     string FullName,
     string Email,

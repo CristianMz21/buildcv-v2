@@ -150,4 +150,45 @@ public class RegisterAccountHandlerTests
         result.IsSuccess.Should().BeFalse();
         result.Error.Should().Be("Role is not available for self-registration.");
     }
+
+    [Theory]
+    [InlineData("a")]
+    [InlineData("hunter2")]
+    [InlineData("11character")]
+    public async Task Register_weak_password_fails_and_persists_nothing(string weak)
+    {
+        var result = await _handler.Handle(new RegisterAccountCommand("weak@example.com", weak));
+
+        result.IsSuccess.Should().BeFalse();
+        result.Error.Should().Be($"Password must be at least {PasswordPolicy.MinLength} characters.");
+        (await _accounts.GetByEmailAsync(Email.Create("weak@example.com"))).Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Register_weak_password_error_never_echoes_the_password()
+    {
+        const string weak = "hunter2";
+
+        var result = await _handler.Handle(new RegisterAccountCommand("weak@example.com", weak));
+
+        // Assert the failure FIRST. Without it, a build that stopped rejecting weak passwords
+        // returns a null Error, NotContain passes vacuously, and this test reports green while
+        // proving nothing — it would survive the very regression it exists to catch.
+        result.IsSuccess.Should().BeFalse();
+        result.Error.Should().NotBeNullOrEmpty().And.NotContain(weak);
+    }
+
+    [Fact]
+    public async Task Register_rejects_the_weak_password_before_hashing_it()
+    {
+        // Argon2id is deliberately expensive. A password the policy will refuse must not be
+        // allowed to buy that work — otherwise the cheapest request on the API is the one that
+        // fails. Counting hasher calls is what makes this assertion falsifiable: validating
+        // after the hash would still return the same error and still persist nothing.
+        var before = _hasher.HashCount;
+
+        await _handler.Handle(new RegisterAccountCommand("weak@example.com", "a"));
+
+        _hasher.HashCount.Should().Be(before);
+    }
 }

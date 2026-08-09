@@ -528,12 +528,8 @@ public static class ResumeEndpoints
         .ProducesResultProblems()
         .ProducesAuthProblems();
 
-        group.MapPost("/{id:guid}/skills", async Task<IResult> (
-            Guid id,
-            AddSkillRequest request,
-            HttpContext httpContext,
-            ICommandHandler<AddSkillCommand, Result<Resume>> handler,
-            CancellationToken cancellationToken) =>
+        MapItemWrites<AddSkillRequest, AddSkillCommand>(group, "skills", async (
+            id, replacingItemId, request, httpContext, handler, cancellationToken) =>
         {
             // IsDefined for the reason spelled out in full on the languages endpoint below: TryParse
             // accepts ANY numeric string, and skill.Level is mapped to tinyint with an unchecked
@@ -562,19 +558,13 @@ public static class ResumeEndpoints
                 new ResumeId(id),
                 request.SkillName,
                 level,
-                request.YearsOfExperience), cancellationToken);
+                request.YearsOfExperience,
+                replacingItemId), cancellationToken);
             return result.ToHttpResult(resume => Results.Ok(ResumeSummaryResponse.From(resume)));
-        })
-        .Produces<ResumeSummaryResponse>(StatusCodes.Status200OK)
-        .ProducesResultProblems()
-        .ProducesAuthProblems();
+        });
 
-        group.MapPost("/{id:guid}/experiences", async Task<IResult> (
-            Guid id,
-            AddExperienceRequest request,
-            HttpContext httpContext,
-            ICommandHandler<AddExperienceCommand, Result<Resume>> handler,
-            CancellationToken cancellationToken) =>
+        MapItemWrites<AddExperienceRequest, AddExperienceCommand>(group, "experiences", async (
+            id, replacingItemId, request, httpContext, handler, cancellationToken) =>
         {
             // Same guard, same reason as the skills endpoint above: experience.Type is tinyint and the
             // conversion is unchecked, so an undefined value is stored rather than refused.
@@ -597,19 +587,13 @@ public static class ResumeEndpoints
                 request.Position,
                 request.Start,
                 request.End,
-                request.Summary), cancellationToken);
+                request.Summary,
+                replacingItemId), cancellationToken);
             return result.ToHttpResult(resume => Results.Ok(ResumeSummaryResponse.From(resume)));
-        })
-        .Produces<ResumeSummaryResponse>(StatusCodes.Status200OK)
-        .ProducesResultProblems()
-        .ProducesAuthProblems();
+        });
 
-        group.MapPost("/{id:guid}/educations", async Task<IResult> (
-            Guid id,
-            AddEducationRequest request,
-            HttpContext httpContext,
-            ICommandHandler<AddEducationCommand, Result<Resume>> handler,
-            CancellationToken cancellationToken) =>
+        MapItemWrites<AddEducationRequest, AddEducationCommand>(group, "educations", async (
+            id, replacingItemId, request, httpContext, handler, cancellationToken) =>
         {
             // IsDefined for the same reason as the languages endpoint below: TryParse accepts any
             // numeric string and the tinyint conversion is unchecked, so "-1" would land as 255 —
@@ -632,19 +616,13 @@ public static class ResumeEndpoints
                 request.Start,
                 request.End,
                 request.Grade,
-                level), cancellationToken);
+                level,
+                replacingItemId), cancellationToken);
             return result.ToHttpResult(resume => Results.Ok(ResumeSummaryResponse.From(resume)));
-        })
-        .Produces<ResumeSummaryResponse>(StatusCodes.Status200OK)
-        .ProducesResultProblems()
-        .ProducesAuthProblems();
+        });
 
-        group.MapPost("/{id:guid}/certificates", async (
-            Guid id,
-            AddCertificateRequest request,
-            HttpContext httpContext,
-            ICommandHandler<AddCertificateCommand, Result<Resume>> handler,
-            CancellationToken cancellationToken) =>
+        MapItemWrites<AddCertificateRequest, AddCertificateCommand>(group, "certificates", async (
+            id, replacingItemId, request, httpContext, handler, cancellationToken) =>
         {
             var result = await handler.Handle(new AddCertificateCommand(
                 httpContext.User.GetAccountId(),
@@ -654,19 +632,13 @@ public static class ResumeEndpoints
                 request.CredentialId,
                 request.CredentialUrl,
                 request.ValidityStart,
-                request.ValidityEnd), cancellationToken);
+                request.ValidityEnd,
+                replacingItemId), cancellationToken);
             return result.ToHttpResult(resume => Results.Ok(ResumeSummaryResponse.From(resume)));
-        })
-        .Produces<ResumeSummaryResponse>(StatusCodes.Status200OK)
-        .ProducesResultProblems()
-        .ProducesAuthProblems();
+        });
 
-        group.MapPost("/{id:guid}/projects", async (
-            Guid id,
-            AddProjectRequest request,
-            HttpContext httpContext,
-            ICommandHandler<AddProjectCommand, Result<Resume>> handler,
-            CancellationToken cancellationToken) =>
+        MapItemWrites<AddProjectRequest, AddProjectCommand>(group, "projects", async (
+            id, replacingItemId, request, httpContext, handler, cancellationToken) =>
         {
             var result = await handler.Handle(new AddProjectCommand(
                 httpContext.User.GetAccountId(),
@@ -678,12 +650,10 @@ public static class ResumeEndpoints
                 request.RepositoryUrl,
                 request.LiveDemoUrl,
                 request.Technologies,
-                request.Highlights), cancellationToken);
+                request.Highlights,
+                replacingItemId), cancellationToken);
             return result.ToHttpResult(resume => Results.Ok(ResumeSummaryResponse.From(resume)));
-        })
-        .Produces<ResumeSummaryResponse>(StatusCodes.Status200OK)
-        .ProducesResultProblems()
-        .ProducesAuthProblems();
+        });
 
         // Level is parsed here and rejected with a 400 BEFORE the handler runs, matching how
         // AddSkillRequest.Level is already handled. Fluency is passed straight through untouched:
@@ -717,12 +687,8 @@ public static class ResumeEndpoints
         // guard bounds it (the stored value is always a real member, so PR 3 can never read "above
         // Native", which was the actual danger) but does not close it. It exists identically on the
         // four pre-existing parse sites and belongs in the same follow-up.
-        group.MapPost("/{id:guid}/languages", async Task<IResult> (
-            Guid id,
-            AddLanguageRequest request,
-            HttpContext httpContext,
-            ICommandHandler<AddLanguageCommand, Result<Resume>> handler,
-            CancellationToken cancellationToken) =>
+        MapItemWrites<AddLanguageRequest, AddLanguageCommand>(group, "languages", async (
+            id, replacingItemId, request, httpContext, handler, cancellationToken) =>
         {
             LanguageProficiency? level = null;
             if (request.Level is not null)
@@ -738,19 +704,13 @@ public static class ResumeEndpoints
                 new ResumeId(id),
                 request.Name,
                 request.Fluency,
-                level), cancellationToken);
+                level,
+                replacingItemId), cancellationToken);
             return result.ToHttpResult(resume => Results.Ok(ResumeSummaryResponse.From(resume)));
-        })
-        .Produces<ResumeSummaryResponse>(StatusCodes.Status200OK)
-        .ProducesResultProblems()
-        .ProducesAuthProblems();
+        });
 
-        group.MapPost("/{id:guid}/awards", async (
-            Guid id,
-            AddAwardRequest request,
-            HttpContext httpContext,
-            ICommandHandler<AddAwardCommand, Result<Resume>> handler,
-            CancellationToken cancellationToken) =>
+        MapItemWrites<AddAwardRequest, AddAwardCommand>(group, "awards", async (
+            id, replacingItemId, request, httpContext, handler, cancellationToken) =>
         {
             var result = await handler.Handle(new AddAwardCommand(
                 httpContext.User.GetAccountId(),
@@ -758,19 +718,13 @@ public static class ResumeEndpoints
                 request.Title,
                 request.Awarder,
                 request.Date,
-                request.Summary), cancellationToken);
+                request.Summary,
+                replacingItemId), cancellationToken);
             return result.ToHttpResult(resume => Results.Ok(ResumeSummaryResponse.From(resume)));
-        })
-        .Produces<ResumeSummaryResponse>(StatusCodes.Status200OK)
-        .ProducesResultProblems()
-        .ProducesAuthProblems();
+        });
 
-        group.MapPost("/{id:guid}/publications", async (
-            Guid id,
-            AddPublicationRequest request,
-            HttpContext httpContext,
-            ICommandHandler<AddPublicationCommand, Result<Resume>> handler,
-            CancellationToken cancellationToken) =>
+        MapItemWrites<AddPublicationRequest, AddPublicationCommand>(group, "publications", async (
+            id, replacingItemId, request, httpContext, handler, cancellationToken) =>
         {
             var result = await handler.Handle(new AddPublicationCommand(
                 httpContext.User.GetAccountId(),
@@ -779,37 +733,25 @@ public static class ResumeEndpoints
                 request.Publisher,
                 request.Url,
                 request.ReleaseDate,
-                request.Summary), cancellationToken);
+                request.Summary,
+                replacingItemId), cancellationToken);
             return result.ToHttpResult(resume => Results.Ok(ResumeSummaryResponse.From(resume)));
-        })
-        .Produces<ResumeSummaryResponse>(StatusCodes.Status200OK)
-        .ProducesResultProblems()
-        .ProducesAuthProblems();
+        });
 
-        group.MapPost("/{id:guid}/interests", async (
-            Guid id,
-            AddInterestRequest request,
-            HttpContext httpContext,
-            ICommandHandler<AddInterestCommand, Result<Resume>> handler,
-            CancellationToken cancellationToken) =>
+        MapItemWrites<AddInterestRequest, AddInterestCommand>(group, "interests", async (
+            id, replacingItemId, request, httpContext, handler, cancellationToken) =>
         {
             var result = await handler.Handle(new AddInterestCommand(
                 httpContext.User.GetAccountId(),
                 new ResumeId(id),
                 request.Name,
-                request.Keywords), cancellationToken);
+                request.Keywords,
+                replacingItemId), cancellationToken);
             return result.ToHttpResult(resume => Results.Ok(ResumeSummaryResponse.From(resume)));
-        })
-        .Produces<ResumeSummaryResponse>(StatusCodes.Status200OK)
-        .ProducesResultProblems()
-        .ProducesAuthProblems();
+        });
 
-        group.MapPost("/{id:guid}/references", async (
-            Guid id,
-            AddReferenceRequest request,
-            HttpContext httpContext,
-            ICommandHandler<AddReferenceCommand, Result<Resume>> handler,
-            CancellationToken cancellationToken) =>
+        MapItemWrites<AddReferenceRequest, AddReferenceCommand>(group, "references", async (
+            id, replacingItemId, request, httpContext, handler, cancellationToken) =>
         {
             var result = await handler.Handle(new AddReferenceCommand(
                 httpContext.User.GetAccountId(),
@@ -819,12 +761,10 @@ public static class ResumeEndpoints
                 request.Company,
                 request.Email,
                 request.PhoneNumber,
-                request.ReferenceText), cancellationToken);
+                request.ReferenceText,
+                replacingItemId), cancellationToken);
             return result.ToHttpResult(resume => Results.Ok(ResumeSummaryResponse.From(resume)));
-        })
-        .Produces<ResumeSummaryResponse>(StatusCodes.Status200OK)
-        .ProducesResultProblems()
-        .ProducesAuthProblems();
+        });
 
         group.MapDelete("/{id:guid}", async (
             Guid id,
@@ -839,6 +779,32 @@ public static class ResumeEndpoints
         .Produces(StatusCodes.Status204NoContent)
         .ProducesResultProblems()
         .ProducesAuthProblems();
+
+        // A route of its own rather than a field on the contact update: a name is what the candidate
+        // calls this CV among their others, not information about the person, and folding it in would
+        // make renaming require resending an email address.
+        group.MapPut("/{id:guid}/name", async (
+            Guid id,
+            RenameResumeRequest request,
+            HttpContext httpContext,
+            ICommandHandler<RenameResumeCommand, Result<Resume>> handler,
+            CancellationToken cancellationToken) =>
+        {
+            var result = await handler.Handle(
+                new RenameResumeCommand(httpContext.User.GetAccountId(), new ResumeId(id), request.Name),
+                cancellationToken);
+
+            return result.ToHttpResult(resume => Results.Ok(ResumeSummaryResponse.From(resume)));
+        })
+        .Produces<ResumeSummaryResponse>(StatusCodes.Status200OK)
+        .ProducesResultProblems()
+        .ProducesAuthProblems()
+        .WithSummary("Names a CV, or clears the name.")
+        .WithDescription(
+            "A null or blank `name` CLEARS it rather than storing an empty one — a candidate cannot "
+            + "tell \"not named\" from \"named nothing\", so the two are one state. Surrounding "
+            + "whitespace is trimmed. Names are capped at 120 characters, which is product policy "
+            + "rather than a column width: the column is encrypted and cannot overflow.");
 
         MapItemDeletes(group);
 
@@ -867,6 +833,63 @@ public static class ResumeEndpoints
         ("interests", ResumeSection.Interests),
         ("references", ResumeSection.References)
     ];
+
+    /// <summary>
+    /// Registers the two ways an entry gets into one of a CV's collections: <c>POST /{id}/{segment}</c>
+    /// appends one, <c>PUT /{id}/{segment}/{itemId}</c> replaces one.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// ONE DELEGATE FOR BOTH VERBS, which is the whole point of registering them together. Four of
+    /// these collections refuse an out-of-range enum before the handler runs, and those guards are the
+    /// most consequential lines in this file — an undefined <c>LanguageProficiency</c> wraps to 255 in
+    /// the tinyint column and reads as above Native. A separate PUT lambda would have been a second
+    /// copy of each, and a copy that drifts is a route where the guard quietly does not apply.
+    /// </para>
+    /// <para>
+    /// The generic parameters are closed at every call site, so the delegate minimal APIs actually see
+    /// carries concrete types and binds the body exactly as a hand-written lambda would.
+    /// </para>
+    /// </remarks>
+    private static void MapItemWrites<TRequest, TCommand>(
+        RouteGroupBuilder group,
+        string segment,
+        Func<Guid, int?, TRequest, HttpContext, ICommandHandler<TCommand, Result<Resume>>, CancellationToken, Task<IResult>> write)
+        where TCommand : ICommand<Result<Resume>>
+    {
+        group.MapPost($"/{{id:guid}}/{segment}", (
+            Guid id,
+            TRequest request,
+            HttpContext httpContext,
+            ICommandHandler<TCommand, Result<Resume>> handler,
+            CancellationToken cancellationToken) =>
+                write(id, null, request, httpContext, handler, cancellationToken))
+        .Produces<ResumeSummaryResponse>(StatusCodes.Status200OK)
+        .ProducesResultProblems()
+        .ProducesAuthProblems()
+        .WithSummary($"Appends an entry to a CV's {segment}.");
+
+        group.MapPut($"/{{id:guid}}/{segment}/{{itemId:int}}", (
+            Guid id,
+            int itemId,
+            TRequest request,
+            HttpContext httpContext,
+            ICommandHandler<TCommand, Result<Resume>> handler,
+            CancellationToken cancellationToken) =>
+                write(id, itemId, request, httpContext, handler, cancellationToken))
+        .Produces<ResumeSummaryResponse>(StatusCodes.Status200OK)
+        .ProducesResultProblems()
+        .ProducesAuthProblems()
+        .WithSummary($"Replaces one entry of a CV's {segment}.")
+        .WithDescription(
+            "The body is the same as the POST that appends: this REPLACES the entry outright rather "
+            + "than patching the fields you send, so omitting one clears it. `itemId` is the `id` that "
+            + "entry carries in `GET /v1/resumes/{id}` — not its position in the array — and one that "
+            + "names no entry of this CV answers 404. Prefer this over DELETE followed by POST: it is "
+            + "one transaction, so a rejected replacement leaves the entry exactly as it was, and it "
+            + "is the only form that works on the collections which refuse a duplicate name. The "
+            + "replacement is a NEW entry with a NEW id; re-fetch the CV before addressing it again.");
+    }
 
     // Ten routes, one handler. Everything a per-collection copy could get wrong — the ownership check
     // above all — lives in RemoveResumeItemHandler and is written once.

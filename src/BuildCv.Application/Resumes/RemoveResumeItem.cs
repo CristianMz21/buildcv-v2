@@ -23,8 +23,8 @@ public sealed record RemoveResumeItemCommand(
 /// reason is that the ten differ in exactly one expression. Everything that could actually be got
 /// wrong — loading with ids, the ownership check, resolving an id that belongs to no entry, refusing
 /// to touch the store when it does not — is identical, and ten copies of it is how one of them
-/// silently loses the ownership check. The switch is exhaustive over a closed enum, so a collection
-/// added to the aggregate without a case here does not compile.
+/// silently loses the ownership check. That one expression is <see cref="ResumeItems.RemoveAt"/>,
+/// shared with the replace path so the two cannot address an entry differently.
 /// </para>
 /// <para>
 /// AN UNKNOWN ID IS "not found", NEVER "forbidden", and it is resolved against the aggregate the
@@ -53,10 +53,7 @@ public sealed class RemoveResumeItemHandler(IResumeRepository resumeRepository)
             if (position is null)
                 return Result<Resume>.Failure($"{command.Section} entry not found.");
 
-            // BY POSITION, not by value. Six of these collections accept duplicates, and removing by
-            // value takes the first match — which would delete an entry the caller never named while
-            // leaving the one it did. See the remarks on Resume.RemoveAt.
-            Remove(resume, command.Section, position.Value);
+            ResumeItems.RemoveAt(resume, command.Section, position.Value);
 
             await resumeRepository.UpdateAsync(resume, cancellationToken);
             return Result<Resume>.Success(resume);
@@ -68,24 +65,6 @@ public sealed class RemoveResumeItemHandler(IResumeRepository resumeRepository)
         catch (ArgumentException ex)
         {
             return Result<Resume>.Failure(ex.Message);
-        }
-    }
-
-    private static void Remove(Resume resume, ResumeSection section, int position)
-    {
-        switch (section)
-        {
-            case ResumeSection.Experiences: resume.RemoveExperienceAt(position); break;
-            case ResumeSection.Educations: resume.RemoveEducationAt(position); break;
-            case ResumeSection.Skills: resume.RemoveSkillAt(position); break;
-            case ResumeSection.Projects: resume.RemoveProjectAt(position); break;
-            case ResumeSection.Certificates: resume.RemoveCertificateAt(position); break;
-            case ResumeSection.Languages: resume.RemoveLanguageAt(position); break;
-            case ResumeSection.Awards: resume.RemoveAwardAt(position); break;
-            case ResumeSection.Publications: resume.RemovePublicationAt(position); break;
-            case ResumeSection.Interests: resume.RemoveInterestAt(position); break;
-            case ResumeSection.References: resume.RemoveReferenceAt(position); break;
-            default: throw new ArgumentOutOfRangeException(nameof(section), section, "Unknown section.");
         }
     }
 }

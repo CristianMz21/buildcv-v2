@@ -130,9 +130,9 @@ public class ResumeContractTests
         var root = json.RootElement;
 
         NamesOf(root).Should().Equal(
-            "id", "ownerId", "contactInformation", "createdAt", "updatedAt", "experiences", "educations",
-            "skills", "projects", "certificates", "languages", "awards", "publications", "interests",
-            "references");
+            "id", "ownerId", "name", "contactInformation", "createdAt", "updatedAt", "experiences",
+            "educations", "skills", "projects", "certificates", "languages", "awards", "publications",
+            "interests", "references");
 
         NamesOf(root.GetProperty("contactInformation")).Should().Equal(
             "fullName", "email", "phoneNumber", "location", "website", "summary", "profiles");
@@ -217,8 +217,11 @@ public class ResumeContractTests
             JsonSerializer.Serialize(ResumeSummaryResponse.From(BuildFullResume()), WebOptions));
         var root = json.RootElement;
 
+        // `name` leads, because it is the only field on this row that differs between two CVs of one
+        // person — the contact name is identical across them by definition.
         NamesOf(root).Should().Equal(
-            "id", "ownerId", "fullName", "email", "location", "createdAt", "updatedAt", "counts");
+            "id", "ownerId", "name", "fullName", "email", "location", "createdAt", "updatedAt",
+            "counts");
 
         foreach (var section in Enum.GetValues<ResumeSection>())
         {

@@ -30,6 +30,12 @@ public sealed class RegisterAccountHandler(
 
             var email = Email.Create(command.Email);
 
+            // BEFORE the duplicate check and before hashing. Password wraps a hash, so it cannot
+            // police the plaintext — by the time it is called the expensive part is already paid
+            // and the value it could have judged is gone. Argon2id is deliberately costly, and a
+            // password this will refuse must not be able to buy that work.
+            PasswordPolicy.Validate(command.Password);
+
             if (await accountRepository.ExistsByEmailAsync(email, cancellationToken))
                 return Result<AccountDto>.Failure("Email is already registered.");
 

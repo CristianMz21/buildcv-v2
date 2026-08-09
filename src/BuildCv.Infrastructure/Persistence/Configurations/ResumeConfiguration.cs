@@ -41,6 +41,17 @@ internal sealed class ResumeConfiguration : IEntityTypeConfiguration<Resume>
         builder.HasKeysetSequence();
 
         builder.Property(resume => resume.OwnerId).IsRequired();
+
+        // CONFIDENTIAL. It is free text a candidate writes about their own job search — "CV para la
+        // entrevista en Globant" names an employer they may have told nobody — and it passes the test
+        // this repository actually applies: nothing queries it. No engine reads it, no index needs it,
+        // and no analytics groups by it, so sealing it costs no query.
+        //
+        // No HasMaxLength: an encrypted column is varbinary(max) and a length here would bound the
+        // CIPHERTEXT rather than the text. The 120-character rule lives in the Domain, where it is
+        // product policy rather than a truncation guard.
+        builder.Property(resume => resume.Name)
+            .IsEncryptedText(_encryptor, "Resume.Name");
         builder.Property(resume => resume.CreatedAt).IsRequired();
         builder.Property(resume => resume.UpdatedAt).IsRequired();
 

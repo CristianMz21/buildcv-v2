@@ -127,4 +127,84 @@ public class ResumeTests
         resume1.Should().NotBe(resume2);
         resume1.Equals(resume1).Should().BeTrue();
     }
+
+    // A CV starts unnamed and that is the ordinary state, not a gap to fill: every CV that existed
+    // before this field did, and naming one is a convenience.
+    [Fact]
+    public void Rename_NewResume_StartsWithNoName()
+    {
+        Minimal().Name.Should().BeNull();
+    }
+
+    [Fact]
+    public void Rename_WithAName_StoresItTrimmed()
+    {
+        var resume = Minimal();
+
+        resume.Rename("  Backend roles  ");
+
+        resume.Name.Should().Be("Backend roles", "a trailing space is not part of a label");
+    }
+
+    // BLANK CLEARS RATHER THAN STORES. "Not named" and "named the empty string" are two states a
+    // candidate cannot tell apart on screen, so the aggregate collapses them once instead of leaving
+    // every caller to.
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void Rename_WithNothing_ClearsTheName(string? blank)
+    {
+        var resume = Minimal();
+        resume.Rename("Backend roles");
+
+        resume.Rename(blank);
+
+        resume.Name.Should().BeNull();
+    }
+
+    [Fact]
+    public void Rename_AtTheLimit_IsAccepted()
+    {
+        var resume = Minimal();
+
+        resume.Rename(new string('a', Resume.NameMaxLength));
+
+        resume.Name.Should().HaveLength(Resume.NameMaxLength);
+    }
+
+    // The message names the LIMIT and never the value: it reaches a 400 body and the application log,
+    // and the value is a candidate's own words about their job search.
+    [Fact]
+    public void Rename_OverTheLimit_IsRefusedWithoutQuotingTheValue()
+    {
+        var resume = Minimal();
+        var tooLong = new string('a', Resume.NameMaxLength + 1);
+
+        var rename = () => resume.Rename(tooLong);
+
+        rename.Should().Throw<InvalidResumeNameException>()
+            .Which.Message.Should().Contain(Resume.NameMaxLength.ToString())
+            .And.NotContain(tooLong);
+    }
+
+    // Renaming is an edit, so it moves UpdatedAt like every other mutation on this aggregate. Without
+    // it a rename would be invisible to the "edited" line every list row shows.
+    [Fact]
+    public void Rename_TouchesTheAggregate()
+    {
+        var resume = Minimal();
+        var before = resume.UpdatedAt;
+
+        resume.Rename("Backend roles");
+
+        resume.UpdatedAt.Should().BeOnOrAfter(before);
+    }
+
+    private static Resume Minimal() =>
+        Resume.Create(
+            AccountId.New(),
+            new ContactInformation(
+                FullName: PersonName.Create("Cristian Arellano"),
+                Email: Email.Create("cristian@example.com")));
 }

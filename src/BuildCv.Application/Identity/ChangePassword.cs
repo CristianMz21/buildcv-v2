@@ -24,6 +24,13 @@ public sealed class ChangePasswordHandler(
             if (account is null)
                 return Result<AccountDto>.Failure("Account not found.");
 
+            // BEFORE the credential check below, for two reasons. Both hashes are Argon2id, so a
+            // request that cannot succeed should not buy either one. And a refused NEW password is
+            // a validation error, not a wrong guess at the current one — routing it through the
+            // lockout path would let a user lock themselves out of their own account by mistyping
+            // the password they are trying to choose.
+            PasswordPolicy.Validate(command.NewPassword);
+
             // Verifying the current password makes this a credential check, so it runs through the
             // same lockout path as LoginHandler. Without it the endpoint is a password oracle that
             // accepts unlimited guesses against an already-stolen session.

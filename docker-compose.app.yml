@@ -1,0 +1,92 @@
+# The whole product: SQL Server, the API, and the web client.
+#
+#   cp .env.example .env      # fill in every required value
+#   docker compose -f docker-compose.app.yml up --build
+#
+# docker-compose.yml beside this one is a DIFFERENT thing and stays that way: it runs SQL Server
+# alone, for `dotnet run` on the host and for `dotnet ef database update`. Merging them would mean a
+# migration command silently started an API container.
+#
+# The web client lives in a SEPARATE REPOSITORY and is expected as a sibling checkout, which is what
+# its README says. Change the build context if yours is elsewhere.
+
+services:
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-CU26-ubuntu-22.04
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD:?set MSSQL_SA_PASSWORD in .env}
+      MSSQL_PID: Developer
+    # No published port. The API reaches it over the compose network; publishing it would put a
+    # database on the host for the convenience of nobody in this file.
+    volumes:
+      - buildcv-app-sqlserver-data:/var/opt/mssql
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -C -Q 'SELECT 1' || exit 1",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      # Every one of these is REQUIRED with no default. The app validates the JWT key and the whole
+      # encryption ring at startup and refuses to run without them, which is the behaviour to keep —
+      # a default here would be a committed key that some deployment inherits.
+      ConnectionStrings__BuildCv: Server=sqlserver,1433;Database=BuildCv;User Id=sa;Password=${MSSQL_SA_PASSWORD};TrustServerCertificate=True;Encrypt=False
+      Jwt__SigningKey: ${BUILDCV_JWT_SIGNING_KEY:?set BUILDCV_JWT_SIGNING_KEY in .env, 32+ chars}
+      # THE KEY IDS ARE LITERALS, and they have to be: Compose does not substitute variables in a
+      # mapping KEY, only in a value. Written as `Encryption__Keys__${ID}__Aes` the name reached the
+      # container with the braces intact, the ring came up empty, and the API refused to start —
+      # measured with `docker compose config`, which prints the unsubstituted name.
+      #
+      # Rotating therefore means EDITING THIS FILE: add a second `Encryption__Keys__v2__Aes` line and
+      # move ActiveKeyId to v2. Do not repoint v1 at new material — every row already written under
+      # it still has to decrypt, which is why reads use every configured key and writes use only the
+      # active one.
+      Encryption__ActiveKeyId: v1
+      Encryption__Keys__v1__Aes: ${BUILDCV_ENCRYPTION_KEY:?set BUILDCV_ENCRYPTION_KEY in .env, base64 32 bytes}
+      Encryption__BlindIndex__ActiveKeyId: b1
+      Encryption__BlindIndex__Keys__b1: ${BUILDCV_BLIND_INDEX_KEY:?set BUILDCV_BLIND_INDEX_KEY in .env, base64 32 bytes}
+      # NOT SET, deliberately: Cors:AllowedOrigins stays empty because nothing talks to this API from
+      # a browser. The web container calls it server-side with a bearer token, so there is no
+      # cross-origin request to allow — and an origin listed here would be one that could be tried.
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+    # No published port either. The API is reachable only from the web container, which is the whole
+    # security argument for the BFF: no browser ever holds a BuildCv credential, and nothing outside
+    # this network can reach /v1 at all.
+    expose:
+      - "8080"
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ../buildcv-web
+      dockerfile: Dockerfile
+    environment:
+      # Service name, not localhost: inside the network the API is a peer container.
+      BUILDCV_API_ORIGIN: http://api:8080
+    depends_on:
+      - api
+    ports:
+      # The only thing on the host. Everything a user touches goes through here.
+      - "127.0.0.1:3000:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health || exit 1"]
+      interval: 15s
+      timeout: 3s
+      start_period: 15s
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  buildcv-app-sqlserver-data:
