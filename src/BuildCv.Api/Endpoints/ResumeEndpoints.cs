@@ -43,7 +43,10 @@ public static class ResumeEndpoints
                 request.Summary), cancellationToken);
             return result.ToHttpResult(resume =>
                 Results.Created($"/v1/resumes/{resume.Id.Value}", ResumeSummaryResponse.From(resume)));
-        });
+        })
+        .Produces<ResumeSummaryResponse>(StatusCodes.Status201Created)
+        .ProducesResultProblems()
+        .ProducesAuthProblems();
 
         // One whole CV in one request, in place of POST /v1/resumes plus up to fifteen per-section calls.
         // It is the endpoint a HUMAN REVIEW SCREEN posts to: extraction reaches roughly 65% field
@@ -118,6 +121,12 @@ public static class ResumeEndpoints
         // MiB is about three times the largest draft the caps can admit and one fifteenth of the
         // framework default.
         .WithMetadata(new RequestSizeLimitAttribute(ImportRequestSizeLimitBytes))
+        .Produces<ResumeSummaryResponse>(StatusCodes.Status201Created)
+        // The field-error shape: this route collects EVERY bad field in one pass and keys them by path
+        // (`experiences[2].endDate`), which is the only thing a forty-field review screen can attach to
+        // the right input.
+        .ProducesValidationProblem()
+        .ProducesAuthProblems()
         .WithSummary("Creates a complete resume from one reviewed draft.")
         .WithDescription(
             "Every field is sent as a STRING, including dates (yyyy-MM-dd), numbers and levels, so that no "
@@ -203,6 +212,9 @@ public static class ResumeEndpoints
         // something the framework validator would refuse. Do not add this route to
         // CsrfGuardMiddleware.ExemptPaths.
         .DisableAntiforgery()
+        .Produces<ExtractDocumentTextResponse>(StatusCodes.Status200OK)
+        .ProducesResultProblems()
+        .ProducesAuthProblems()
         .WithSummary("Extracts the raw text of an uploaded CV document.")
         .WithDescription(
             "Multipart upload with one `file` part: PDF, DOCX or plain text, at most 5 MiB for the "
@@ -278,6 +290,9 @@ public static class ResumeEndpoints
         // Do not add it to CsrfGuardMiddleware.ExemptPaths.
         .WithMetadata(new RequestSizeLimitAttribute(IDocumentTextExtractor.MaxDocumentBytes))
         .DisableAntiforgery()
+        .Produces<ProposeResumeDraftResponse>(StatusCodes.Status200OK)
+        .ProducesResultProblems()
+        .ProducesAuthProblems()
         .WithSummary("Proposes a best-effort resume draft from an uploaded CV document.")
         .WithDescription(
             "Multipart upload with one `file` part: PDF, DOCX or plain text, at most 5 MiB. Answers a "
@@ -312,7 +327,17 @@ public static class ResumeEndpoints
                 new GetResumesByOwnerQuery(requester, requester, limit, cursor), cancellationToken);
             return result.ToHttpResult(page => Results.Ok(new PagedResponse<ResumeSummaryResponse>(
                 [.. page.Items.Select(ResumeSummaryResponse.From)], page.NextCursor)));
-        });
+        })
+        .Produces<PagedResponse<ResumeSummaryResponse>>(StatusCodes.Status200OK)
+        .ProducesResultProblems()
+        .ProducesAuthProblems()
+        .WithSummary("Lists the caller's CVs, newest first, keyset paginated.")
+        .WithDescription(
+            "A SUMMARY PER ROW: contact basics, timestamps and the SIZE of each section — never the "
+            + "entries themselves, and therefore no entry ids. Fetch `GET /v1/resumes/{id}` for the CV a "
+            + "candidate is about to edit; that is the only route that hands out the ids `DELETE "
+            + "/v1/resumes/{id}/{section}/{itemId}` takes. `nextCursor` is null on the last page and is "
+            + "the only supported way to ask for more.");
 
         group.MapGet("/{id:guid}", async (
             Guid id,
@@ -324,6 +349,9 @@ public static class ResumeEndpoints
                 new GetResumeQuery(httpContext.User.GetAccountId(), new ResumeId(id)), cancellationToken);
             return result.ToHttpResult(loaded => Results.Ok(ResumeResponse.From(loaded)));
         })
+        .Produces<ResumeResponse>(StatusCodes.Status200OK)
+        .ProducesResultProblems()
+        .ProducesAuthProblems()
         .WithSummary("Returns one CV in full, every entry carrying the id that addresses it.")
         .WithDescription(
             "THE ONLY ROUTE THAT CARRIES ENTRY IDS. Each item of each collection has an `id` that is "
@@ -360,6 +388,9 @@ public static class ResumeEndpoints
             return result.ToHttpResult(page => Results.Ok(new PagedResponse<AnalysisResponse>(
                 [.. page.Items.Select(view => AnalysisResponse.From(view.Analysis, view.IsStale))], page.NextCursor)));
         })
+        .Produces<PagedResponse<AnalysisResponse>>(StatusCodes.Status200OK)
+        .ProducesResultProblems()
+        .ProducesAuthProblems()
         .WithSummary("Returns this resume's score history, OLDEST FIRST, keyset paginated.")
         .WithDescription(
             "The one list in this API that pages oldest first: a score history is read forwards, so "
@@ -398,6 +429,9 @@ public static class ResumeEndpoints
 
             return result.ToHttpResult(report => Results.Ok(ReadabilityResponse.From(report)));
         })
+        .Produces<ReadabilityResponse>(StatusCodes.Status200OK)
+        .ProducesResultProblems()
+        .ProducesAuthProblems()
         .WithSummary("Scores how readable this resume is on its own, with no job posting involved.")
         .WithDescription(
             "THE OTHER HALF OF THE SCORE, and the one that needs no job offer: this measures the CV "
@@ -439,7 +473,10 @@ public static class ResumeEndpoints
                 request.Location,
                 request.Summary), cancellationToken);
             return result.ToHttpResult(resume => Results.Ok(ResumeSummaryResponse.From(resume)));
-        });
+        })
+        .Produces<ResumeSummaryResponse>(StatusCodes.Status200OK)
+        .ProducesResultProblems()
+        .ProducesAuthProblems();
 
         group.MapPost("/{id:guid}/skills", async Task<IResult> (
             Guid id,
@@ -477,7 +514,10 @@ public static class ResumeEndpoints
                 level,
                 request.YearsOfExperience), cancellationToken);
             return result.ToHttpResult(resume => Results.Ok(ResumeSummaryResponse.From(resume)));
-        });
+        })
+        .Produces<ResumeSummaryResponse>(StatusCodes.Status200OK)
+        .ProducesResultProblems()
+        .ProducesAuthProblems();
 
         group.MapPost("/{id:guid}/experiences", async Task<IResult> (
             Guid id,
@@ -509,7 +549,10 @@ public static class ResumeEndpoints
                 request.End,
                 request.Summary), cancellationToken);
             return result.ToHttpResult(resume => Results.Ok(ResumeSummaryResponse.From(resume)));
-        });
+        })
+        .Produces<ResumeSummaryResponse>(StatusCodes.Status200OK)
+        .ProducesResultProblems()
+        .ProducesAuthProblems();
 
         group.MapPost("/{id:guid}/educations", async Task<IResult> (
             Guid id,
@@ -541,7 +584,10 @@ public static class ResumeEndpoints
                 request.Grade,
                 level), cancellationToken);
             return result.ToHttpResult(resume => Results.Ok(ResumeSummaryResponse.From(resume)));
-        });
+        })
+        .Produces<ResumeSummaryResponse>(StatusCodes.Status200OK)
+        .ProducesResultProblems()
+        .ProducesAuthProblems();
 
         group.MapPost("/{id:guid}/certificates", async (
             Guid id,
@@ -560,7 +606,10 @@ public static class ResumeEndpoints
                 request.ValidityStart,
                 request.ValidityEnd), cancellationToken);
             return result.ToHttpResult(resume => Results.Ok(ResumeSummaryResponse.From(resume)));
-        });
+        })
+        .Produces<ResumeSummaryResponse>(StatusCodes.Status200OK)
+        .ProducesResultProblems()
+        .ProducesAuthProblems();
 
         group.MapPost("/{id:guid}/projects", async (
             Guid id,
@@ -581,7 +630,10 @@ public static class ResumeEndpoints
                 request.Technologies,
                 request.Highlights), cancellationToken);
             return result.ToHttpResult(resume => Results.Ok(ResumeSummaryResponse.From(resume)));
-        });
+        })
+        .Produces<ResumeSummaryResponse>(StatusCodes.Status200OK)
+        .ProducesResultProblems()
+        .ProducesAuthProblems();
 
         // Level is parsed here and rejected with a 400 BEFORE the handler runs, matching how
         // AddSkillRequest.Level is already handled. Fluency is passed straight through untouched:
@@ -629,7 +681,10 @@ public static class ResumeEndpoints
                 request.Fluency,
                 level), cancellationToken);
             return result.ToHttpResult(resume => Results.Ok(ResumeSummaryResponse.From(resume)));
-        });
+        })
+        .Produces<ResumeSummaryResponse>(StatusCodes.Status200OK)
+        .ProducesResultProblems()
+        .ProducesAuthProblems();
 
         group.MapPost("/{id:guid}/awards", async (
             Guid id,
@@ -646,7 +701,10 @@ public static class ResumeEndpoints
                 request.Date,
                 request.Summary), cancellationToken);
             return result.ToHttpResult(resume => Results.Ok(ResumeSummaryResponse.From(resume)));
-        });
+        })
+        .Produces<ResumeSummaryResponse>(StatusCodes.Status200OK)
+        .ProducesResultProblems()
+        .ProducesAuthProblems();
 
         group.MapPost("/{id:guid}/publications", async (
             Guid id,
@@ -664,7 +722,10 @@ public static class ResumeEndpoints
                 request.ReleaseDate,
                 request.Summary), cancellationToken);
             return result.ToHttpResult(resume => Results.Ok(ResumeSummaryResponse.From(resume)));
-        });
+        })
+        .Produces<ResumeSummaryResponse>(StatusCodes.Status200OK)
+        .ProducesResultProblems()
+        .ProducesAuthProblems();
 
         group.MapPost("/{id:guid}/interests", async (
             Guid id,
@@ -679,7 +740,10 @@ public static class ResumeEndpoints
                 request.Name,
                 request.Keywords), cancellationToken);
             return result.ToHttpResult(resume => Results.Ok(ResumeSummaryResponse.From(resume)));
-        });
+        })
+        .Produces<ResumeSummaryResponse>(StatusCodes.Status200OK)
+        .ProducesResultProblems()
+        .ProducesAuthProblems();
 
         group.MapPost("/{id:guid}/references", async (
             Guid id,
@@ -698,7 +762,10 @@ public static class ResumeEndpoints
                 request.PhoneNumber,
                 request.ReferenceText), cancellationToken);
             return result.ToHttpResult(resume => Results.Ok(ResumeSummaryResponse.From(resume)));
-        });
+        })
+        .Produces<ResumeSummaryResponse>(StatusCodes.Status200OK)
+        .ProducesResultProblems()
+        .ProducesAuthProblems();
 
         group.MapDelete("/{id:guid}", async (
             Guid id,
@@ -709,7 +776,10 @@ public static class ResumeEndpoints
             var result = await handler.Handle(
                 new DeleteResumeCommand(httpContext.User.GetAccountId(), new ResumeId(id)), cancellationToken);
             return result.ToHttpResult(_ => Results.NoContent());
-        });
+        })
+        .Produces(StatusCodes.Status204NoContent)
+        .ProducesResultProblems()
+        .ProducesAuthProblems();
 
         MapItemDeletes(group);
 
@@ -763,6 +833,9 @@ public static class ResumeEndpoints
 
                 return result.ToHttpResult(_ => Results.NoContent());
             })
+            .Produces(StatusCodes.Status204NoContent)
+            .ProducesResultProblems()
+            .ProducesAuthProblems()
             .WithSummary($"Removes one entry from a CV's {segment}.")
             .WithDescription(
                 "`itemId` is the `id` that entry carries in `GET /v1/resumes/{id}` — the only route "

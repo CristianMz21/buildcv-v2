@@ -61,7 +61,14 @@ public static class AuthEndpoints
             return result.ToHttpResult(dto => Results.Created($"/v1/auth/accounts/{dto.Id}", dto));
         })
         .AllowAnonymous()
-        .RequireRateLimiting(RateLimitPolicies.Auth);
+        .RequireRateLimiting(RateLimitPolicies.Auth)
+        // AccountDto is an Application type on the wire, which this repository's own rules forbid. It
+        // was already there; stating it here documents the wire as it IS rather than as it should be,
+        // and makes the debt visible to anyone reading the document instead of only to anyone reading
+        // this file.
+        .Produces<AccountDto>(StatusCodes.Status201Created)
+        .ProducesResultProblems()
+        .ProducesProblem(StatusCodes.Status429TooManyRequests);
 
         group.MapPost("/login", async Task<IResult> (
             LoginRequest request,
@@ -84,7 +91,10 @@ public static class AuthEndpoints
             return Results.Ok(new TokenResponse(result.Value!.AccessToken, jwt.Value.AccessTokenMinutes * 60));
         })
         .AllowAnonymous()
-        .RequireRateLimiting(RateLimitPolicies.Auth);
+        .RequireRateLimiting(RateLimitPolicies.Auth)
+        .Produces<TokenResponse>(StatusCodes.Status200OK)
+        .ProducesResultProblems()
+        .ProducesProblem(StatusCodes.Status429TooManyRequests);
 
         group.MapPost("/refresh", async Task<IResult> (
             HttpContext httpContext,
@@ -112,7 +122,13 @@ public static class AuthEndpoints
             return Results.Ok(new TokenResponse(result.Value!.AccessToken, jwt.Value.AccessTokenMinutes * 60));
         })
         .AllowAnonymous()
-        .RequireRateLimiting(RateLimitPolicies.Auth);
+        .RequireRateLimiting(RateLimitPolicies.Auth)
+        .Produces<TokenResponse>(StatusCodes.Status200OK)
+        // 401 is returned by this route DIRECTLY, not through ToHttpResult: a request arriving with no
+        // refresh cookie is refused before any handler runs.
+        .ProducesProblem(StatusCodes.Status401Unauthorized)
+        .ProducesResultProblems()
+        .ProducesProblem(StatusCodes.Status429TooManyRequests);
 
         // AllowAnonymous is deliberate. The fallback authorization policy would answer 401 the
         // moment the access token expired, which is precisely when a user wants out — and a 401
@@ -168,7 +184,13 @@ public static class AuthEndpoints
             return Results.NoContent();
         })
         .AllowAnonymous()
-        .RequireRateLimiting(RateLimitPolicies.Logout);
+        .RequireRateLimiting(RateLimitPolicies.Logout)
+        .Produces(StatusCodes.Status204NoContent)
+        // 500 is a real, documented answer here, not an accident: a revocation that FAILS leaves the
+        // cookies in place and says so, because a store that cannot revoke is exactly when a false
+        // "you are logged out" is most dangerous.
+        .ProducesProblem(StatusCodes.Status500InternalServerError)
+        .ProducesProblem(StatusCodes.Status429TooManyRequests);
 
         // Throttled per account instead of through the per-IP auth window: see
         // PasswordChangeRateLimiter for why sharing that window was both unfair and useless here.
@@ -211,7 +233,10 @@ public static class AuthEndpoints
             }
 
             return result.ToHttpResult();
-        });
+        })
+        .Produces<AccountDto>(StatusCodes.Status200OK)
+        .ProducesResultProblems()
+        .ProducesAuthProblems();
 
         group.MapGet("/me", async (
             HttpContext httpContext,
@@ -221,7 +246,10 @@ public static class AuthEndpoints
             var requester = httpContext.User.GetAccountId();
             var result = await handler.Handle(new GetAccountQuery(requester, requester), cancellationToken);
             return result.ToHttpResult();
-        });
+        })
+        .Produces<AccountDto>(StatusCodes.Status200OK)
+        .ProducesResultProblems()
+        .ProducesAuthProblems();
 
         // Client contract: fetch this token AFTER logging in, and re-fetch it whenever the
         // principal this API sees for your requests changes — login, logout, account switch, AND
@@ -243,6 +271,8 @@ public static class AuthEndpoints
             var tokens = antiforgery.GetAndStoreTokens(httpContext);
             return Results.Ok(new AntiforgeryTokenResponse(tokens.RequestToken!));
         })
+        .Produces<AntiforgeryTokenResponse>(StatusCodes.Status200OK)
+        .ProducesProblem(StatusCodes.Status429TooManyRequests)
         .WithSummary("Issues a CSRF request token bound to the caller's current principal.")
         .WithDescription(
             "Re-fetch after every change of principal: login, logout, account switch, and access-token "

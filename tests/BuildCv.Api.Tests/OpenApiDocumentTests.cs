@@ -55,6 +55,50 @@ public sealed class OpenApiDocumentTests
             .Should().Be("#/components/schemas/ProblemDetails");
     }
 
+    // The coverage guard, and the reason this whole pass exists: an operation that declares no body is
+    // indistinguishable, to a generator, from one that returns nothing. Every route here returns
+    // IResult, so nothing infers it and nothing else in this suite notices when a new endpoint forgets.
+    //
+    // Success only. The error shapes are asserted per route where they differ; what must never regress
+    // is that a caller can find out what a successful call gives back.
+    [Fact]
+    public async Task EveryV1OperationDeclaresWhatASuccessReturns()
+    {
+        using var document = await FetchAsync();
+
+        var undeclared = new List<string>();
+        var examined = 0;
+
+        foreach (var route in document.RootElement.GetProperty("paths").EnumerateObject())
+        {
+            if (!route.Name.StartsWith("/v1/", StringComparison.Ordinal))
+                continue;
+
+            foreach (var operation in route.Value.EnumerateObject())
+            {
+                examined++;
+                var responses = operation.Value.GetProperty("responses");
+
+                var declaresSuccess = responses.EnumerateObject().Any(response =>
+                    response.Name.StartsWith('2')
+                    // 204 is a complete answer on its own: it says there is no body, which is a
+                    // statement rather than an omission.
+                    && (response.Name == "204" || response.Value.TryGetProperty("content", out _)));
+
+                if (!declaresSuccess)
+                    undeclared.Add($"{operation.Name.ToUpperInvariant()} {route.Name}");
+            }
+        }
+
+        // WITHOUT THIS THE TEST CANNOT FAIL. A route prefix that stops matching — a version bump, a
+        // group rename — empties the loop, and an empty `undeclared` reads exactly like full coverage.
+        // The floor is well under the real count so it pins the mechanism rather than the inventory.
+        examined.Should().BeGreaterThan(40, "the walk must actually have reached the v1 operations");
+
+        undeclared.Should().BeEmpty(
+            "every v1 operation must state its success shape — nothing can infer it from IResult");
+    }
+
     private static void Walk(JsonElement element, string path, List<string> offenders)
     {
         if (element.ValueKind == JsonValueKind.Object)
