@@ -85,6 +85,12 @@ public static class DependencyInjection
         services.AddSingleton<AccountEmailIndex>();
         services.AddSingleton<RefreshTokenIndex>();
 
+        // The third owner of a blind-index context string, and the only one that is not a lookup: it
+        // signs the import-evidence token rather than indexing a column, and it is registered behind its
+        // port because the Application layer verifies through it. Same reason the two above are concrete
+        // — it owns its AAD context — except that this one has a port to sit behind.
+        services.AddSingleton<IImportEvidenceProtector, ImportEvidenceProtector>();
+
         // TryAdd so the Api can register an HttpContext-backed principal without removing this one.
         // Nothing in Application consumes ICurrentUser yet; the audit interceptor does.
         services.TryAddSingleton<ICurrentUser, UnknownCurrentUser>();
