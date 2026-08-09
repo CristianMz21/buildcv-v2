@@ -247,3 +247,13 @@ Tests tagged `[Trait("Category", "Integration")]` require a running local Docker
 - Almost every type is `sealed`; prefer private constructor + static factory over public constructors.
 - File-scoped namespaces, `var` preferred, expression-bodied members and switch expressions preferred (see `.editorconfig`).
 - Conventional commits scoped by layer (`feat(domain): ...`, `feat(infrastructure): ...`); PRs are merged per layer/feature slice.
+
+## Agent skills — project skills win
+
+`.claude/skills/` holds two kinds of skill, and they are not peers.
+
+**`new-endpoint` and `new-use-case` are this repository's own** and take precedence over every generic .NET/ASP.NET skill for the work they cover. The generic ones are stack-level advice; they know nothing about `Result<T>`, `ToHttpResult()`, the dedicated-wire-DTO rule, the fallback authorization policy, or the encrypted-column classification. Reach for a generic skill only for something the project skills genuinely do not cover.
+
+The rest are installed by `npx autoskills`, which detects the stack (.NET, C#, ASP.NET Core, Minimal API) and installs by technology, not by convention. That detection is coarse in one direction that matters: **it installs every C# test-framework skill it knows** — NUnit, MSTest, TUnit — into a repository that uses xUnit exclusively. Those three, plus `dotnet-upgrade` (the SDK is pinned to `10.0.100`), do not apply here and are denied by a `PreToolUse` hook on the `Skill` tool in `.claude/settings.json`; the same hook asks before `aspnet-core`, `aspnet-minimal-api-openapi`, `minimal-api-file-upload` and `containerize-aspnetcore`, which propose writing structure this repo has already decided (see the `IFormFile`-vs-`ReadFormAsync` measurement on the extract route, and the `Dockerfile`'s live-not-ready `HEALTHCHECK`).
+
+Re-running `npx autoskills` reinstalls the denied ones — it installs by technology and cannot know the convention. The hook is what makes that harmless, so **delete the symlink and leave the hook alone**. `.claude/` and `.agents/` are both gitignored, so the hook is per-machine and this paragraph is the part your team actually receives.
