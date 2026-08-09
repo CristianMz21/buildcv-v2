@@ -34,6 +34,17 @@ cp .env.example .env                                  # then replace every place
 docker compose -f docker-compose.app.yml up --build    # SQL Server + API + web client
 ```
 
+Migrations run off `BuildCvDbContextFactory` (an `IDesignTimeDbContextFactory`) in Infrastructure, so **`dotnet ef` takes `BuildCv.Infrastructure` as both project and startup project**. `--startup-project src/BuildCv.Api` is the invocation everyone reaches for and it fails — the Api project does not reference `Microsoft.EntityFrameworkCore.Design`.
+
+```bash
+EF="--project src/BuildCv.Infrastructure --startup-project src/BuildCv.Infrastructure"
+dotnet ef migrations has-pending-model-changes $EF   # run before AND after scaffolding
+dotnet ef migrations add <Name> $EF
+dotnet ef database update $EF
+```
+
+`BuildCvDbContextFactory.DefaultConnectionString` matches `docker-compose.yml`, so `docker compose up -d` then `database update` needs no further setup. Target another instance with **`BUILDCV_MIGRATIONS_CONNECTION`** — deliberately its own variable rather than `ConnectionStrings__BuildCv`, because pointing the migration tooling somewhere is a different decision from pointing the running application somewhere, and conflating them is how a migration reaches the wrong database.
+
 `.env` is required by `docker-compose.app.yml` and **its committed placeholders must be replaced even on a laptop**: they are printed in a tracked file, so anything left as-is is a key an attacker already has. `Jwt:SigningKey` needs 32+ characters; the two encryption keys are base64 32 bytes (`openssl rand -base64 32`). The app validates all of them at startup and refuses to boot rather than inventing a default, which is the behaviour to keep. `docker compose -f docker-compose.app.yml config` resolves every `${VAR:?}` and is the cheapest check that `.env` is complete.
 
 ## Architecture
