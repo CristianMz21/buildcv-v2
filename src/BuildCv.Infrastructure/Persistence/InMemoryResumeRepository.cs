@@ -16,7 +16,9 @@ namespace BuildCv.Infrastructure.Persistence;
 // Assigned on ADD only. An UPDATE does not move a row in the clustered index, so it must not move one
 // here either: otherwise editing an old resume would teleport it to the top of the list, past a cursor
 // a client was already walking.
-public sealed class InMemoryResumeRepository(InMemoryAnalysisRepository analyses) : IResumeRepository
+public sealed class InMemoryResumeRepository(
+    InMemoryAnalysisRepository analyses,
+    InMemoryReadabilityReportRepository readabilityReports) : IResumeRepository
 {
     private readonly ConcurrentDictionary<Guid, KeysetRow<Resume>> _resumes = new();
     private readonly ConcurrentDictionary<Guid, ItemIdMap> _itemIds = new();
@@ -106,12 +108,20 @@ public sealed class InMemoryResumeRepository(InMemoryAnalysisRepository analyses
     // green on a privacy promise, since "delete my resume" is documented to take everything derived from
     // it. Both endpoints that read an analysis happen to load the resume first today, which is the only
     // reason nothing observed it.
+    //
+    // READABILITY REPORTS TOO, and that half became observable the moment IReadabilityReportRepository
+    // grew a read. ResumeRepository.CascadeToReadabilityReportsAsync has tombstoned them since they
+    // landed; this store dropped nothing, and nothing noticed because no port method could ask. Every
+    // future aggregate keyed by ResumeId belongs on BOTH sides of this pair — there is no foreign key
+    // for either provider to cascade through, and a readability recommendation quotes the candidate's
+    // own bullet points and job titles back at them.
     public Task DeleteAsync(ResumeId id, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         _resumes.TryRemove(id.Value, out _);
         _itemIds.TryRemove(id.Value, out _);
         analyses.RemoveAllDerivedFrom(id);
+        readabilityReports.RemoveAllDerivedFrom(id);
         return Task.CompletedTask;
     }
 

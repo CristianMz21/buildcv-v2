@@ -238,6 +238,7 @@ v1.MapJobEndpoints();
 v1.MapJobOfferEndpoints();
 v1.MapOrganizationEndpoints();
 v1.MapScoringEndpoints();
+v1.MapReadabilityEndpoints();
 
 app.Run();
 

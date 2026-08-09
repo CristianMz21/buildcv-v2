@@ -2,6 +2,7 @@ using System.Text.RegularExpressions;
 using BuildCv.Application.Common.Pagination;
 using BuildCv.Domain.Identity;
 using BuildCv.Domain.Jobs;
+using BuildCv.Domain.Readability;
 using BuildCv.Domain.Resumes;
 using BuildCv.Domain.Scoring;
 using BuildCv.Infrastructure.Persistence;
@@ -161,6 +162,8 @@ public sealed class KeysetQueryTranslationTests
         var resumes = context.Resumes.NewestFirstProbe(PageRequests.Of(20)).AsSingleQuery().ToQueryString();
         var jobs = context.JobPostings.NewestFirstProbe(PageRequests.Of(20)).AsSingleQuery().ToQueryString();
         var analyses = context.Analyses.OldestFirstProbe(PageRequests.Of(20)).AsSingleQuery().ToQueryString();
+        var reports = context.ReadabilityReports
+            .OldestFirstProbe(PageRequests.Of(20)).AsSingleQuery().ToQueryString();
 
         JoinsIn(resumes).Should().Be(
             OwnedCollectionsOn(context, typeof(Resume)),
@@ -174,6 +177,15 @@ public sealed class KeysetQueryTranslationTests
             OwnedCollectionsOn(context, typeof(Analysis)),
             "the counterfactual has to be real for the zero below to be evidence");
         OwnedCollectionsOn(context, typeof(Analysis)).Should().Be(1, "Analysis owns Recommendations");
+
+        // ReadabilityReport is the second entity paged oldest first, and it arrived owning a collection
+        // rather than growing one later — so it is the case where "splitting is inert for this entity"
+        // was never even briefly true.
+        JoinsIn(reports).Should().Be(
+            OwnedCollectionsOn(context, typeof(ReadabilityReport)),
+            "the counterfactual has to be real for the zero below to be evidence");
+        OwnedCollectionsOn(context, typeof(ReadabilityReport)).Should().Be(
+            1, "ReadabilityReport owns Recommendations; Breakdown is table-split and costs no join");
     }
 
     // ToQueryString renders only the FIRST statement of a split query and appends a note saying so, so
@@ -193,6 +205,43 @@ public sealed class KeysetQueryTranslationTests
         JoinsIn(sql).Should().Be(0, "the owned collection has to be fetched by its own statement");
         RowCapIn(sql).Should().Be(21, "splitting must not cost the cap that bounds the principals");
         sql.Should().Contain("split-query mode");
+    }
+
+    // THE SAME ASSERTION FOR READABILITY HISTORY, and it is not redundant with the analysis one above.
+    //
+    // A page-shape assertion passes either way — EF de-duplicates on materialization — so the join count
+    // is the only place the difference exists, and it is a per-entity property: AsSplitQuery lives in
+    // the shared probe today, but a repository that composed its own query, or a future
+    // `if (typeof(T) == ...)` in Probe, would leave exactly one of these two green. ReadabilityReport
+    // owns Recommendations, and nothing caps how many pieces of advice a run emits, so a page of twenty
+    // reports is unbounded rows off the wire in the single-query shape.
+    //
+    // The direction is re-checked here too, because it is the one thing about this list a reader is most
+    // likely to "correct" toward the repo's newest-first convention.
+    [Fact]
+    public void OldestFirstProbe_OverReadabilityReports_FetchesTheRecommendationsInASeparateStatement()
+    {
+        using var context = PersistenceTestContext.ModelOnly();
+
+        var sql = context.ReadabilityReports.OldestFirstProbe(PageRequests.Of(20)).ToQueryString();
+
+        JoinsIn(sql).Should().Be(0, "the owned collection has to be fetched by its own statement");
+        RowCapIn(sql).Should().Be(21, "splitting must not cost the cap that bounds the principals");
+        sql.Should().Contain("split-query mode");
+        sql.Should().NotContain("DESC", "a readability history is read forwards, like a score history");
+    }
+
+    // The soft-delete filter reaches this list too. It is what makes
+    // ResumeRepository.CascadeToReadabilityReportsAsync observable, and a paged list is where a
+    // tombstoned row reappearing would be least noticed — the page would simply be one row different.
+    [Fact]
+    public void OldestFirstProbe_OverReadabilityReports_StillCarriesTheSoftDeleteFilter()
+    {
+        using var context = PersistenceTestContext.ModelOnly();
+
+        var sql = context.ReadabilityReports.OldestFirstProbe(PageRequests.Of(20)).ToQueryString();
+
+        sql.Should().Contain("[DeletedAt] IS NULL");
     }
 
     private static int JoinsIn(string sql) => sql.Split("JOIN", StringSplitOptions.None).Length - 1;

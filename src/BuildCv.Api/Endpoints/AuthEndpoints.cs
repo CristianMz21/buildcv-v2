@@ -58,7 +58,23 @@ public static class AuthEndpoints
             if (result.IsSuccess)
                 AuditLog.Log(logger, "register_success", new AccountId(result.Value!.Id), httpContext, request.Email);
 
-            return result.ToHttpResult(dto => Results.Created($"/v1/auth/accounts/{dto.Id}", dto));
+            // /v1/auth/me, NOT /v1/auth/accounts/{id}. The old Location named a route that is mapped
+            // nowhere, so a client following the 201 convention got a routing 404 — and it is a ROUTING
+            // 404, which looks exactly like a handler's, which is why nothing in the suite noticed.
+            //
+            // Pointed at the existing route rather than fixed by mapping the missing one. The only
+            // account a caller of this endpoint can be following the header for is the one it just
+            // created, and /v1/auth/me IS that resource: GetAccountQuery takes a requester and a target
+            // and this route passes the same id for both. A by-id route would be a second way to say
+            // that, with its own authorization to keep right — GetAccountHandler already admits
+            // Role.Admin reading someone else, so the by-id surface would be strictly wider than the
+            // 201 that pointed at it, for no caller that exists.
+            //
+            // THE ACCEPTED COST: following the header immediately answers 401, because registering does
+            // not log you in — no cookie is set here and no token is returned. That is the honest
+            // failure of an unauthenticated read, and a caller acts on it by calling /v1/auth/login,
+            // whereas the 404 it replaces named a resource that did not exist at any credential.
+            return result.ToHttpResult(dto => Results.Created("/v1/auth/me", dto));
         })
         .AllowAnonymous()
         .RequireRateLimiting(RateLimitPolicies.Auth)
