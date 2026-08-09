@@ -1,5 +1,7 @@
 using System.Text.Json;
 using BuildCv.Api.Contracts;
+using BuildCv.Application.Common.Repositories;
+using BuildCv.Application.Resumes;
 using BuildCv.Domain.Common.ValueObjects;
 using BuildCv.Domain.Identity;
 using BuildCv.Domain.Resumes;
@@ -23,7 +25,7 @@ public class ResumeContractTests
     public void From_MapsEveryFieldOfTheAggregateToItsOwnPlaceOnTheWire()
     {
         using var json = JsonDocument.Parse(
-            JsonSerializer.Serialize(ResumeResponse.From(BuildFullResume()), WebOptions));
+            JsonSerializer.Serialize(ResumeResponse.From(WithIds(BuildFullResume())), WebOptions));
         var root = json.RootElement;
 
         root.GetProperty("id").GetGuid().Should().NotBeEmpty();
@@ -124,7 +126,7 @@ public class ResumeContractTests
     public void Serialized_CarriesExactlyTheDocumentedFieldsAtEveryLevel()
     {
         using var json = JsonDocument.Parse(
-            JsonSerializer.Serialize(ResumeResponse.From(BuildFullResume()), WebOptions));
+            JsonSerializer.Serialize(ResumeResponse.From(WithIds(BuildFullResume())), WebOptions));
         var root = json.RootElement;
 
         NamesOf(root).Should().Equal(
@@ -136,25 +138,134 @@ public class ResumeContractTests
             "fullName", "email", "phoneNumber", "location", "website", "summary", "profiles");
         NamesOf(root.GetProperty("contactInformation").GetProperty("profiles")[0]).Should().Equal(
             "network", "username", "url");
+        // `id` leads every entry of every collection, and it is the field DELETE /{section}/{itemId}
+        // addresses. It is here in the exhaustive list rather than only in a per-field assertion so
+        // that dropping it from one collection — the way a mapper refactor drops things — fails.
         NamesOf(root.GetProperty("experiences")[0]).Should().Equal(
-            "type", "organization", "position", "period", "summary", "highlights");
+            "id", "type", "organization", "position", "period", "summary", "highlights");
         NamesOf(root.GetProperty("experiences")[0].GetProperty("period")).Should().Equal("start", "end");
         NamesOf(root.GetProperty("educations")[0]).Should().Equal(
-            "institution", "degree", "fieldOfStudy", "period", "grade", "level");
+            "id", "institution", "degree", "fieldOfStudy", "period", "grade", "level");
         NamesOf(root.GetProperty("skills")[0]).Should().Equal(
-            "name", "level", "yearsOfExperience", "keywords");
+            "id", "name", "level", "yearsOfExperience", "keywords");
         NamesOf(root.GetProperty("projects")[0]).Should().Equal(
-            "name", "period", "description", "repositoryUrl", "liveDemoUrl", "technologies", "highlights");
+            "id", "name", "period", "description", "repositoryUrl", "liveDemoUrl", "technologies",
+            "highlights");
         NamesOf(root.GetProperty("certificates")[0]).Should().Equal(
-            "name", "issuer", "credentialId", "credentialUrl", "validityPeriod");
-        NamesOf(root.GetProperty("languages")[0]).Should().Equal("name", "fluency", "level");
-        NamesOf(root.GetProperty("awards")[0]).Should().Equal("title", "awarder", "date", "summary");
+            "id", "name", "issuer", "credentialId", "credentialUrl", "validityPeriod");
+        NamesOf(root.GetProperty("languages")[0]).Should().Equal("id", "name", "fluency", "level");
+        NamesOf(root.GetProperty("awards")[0]).Should().Equal(
+            "id", "title", "awarder", "date", "summary");
         NamesOf(root.GetProperty("publications")[0]).Should().Equal(
-            "title", "publisher", "url", "releaseDate", "summary");
-        NamesOf(root.GetProperty("interests")[0]).Should().Equal("name", "keywords");
+            "id", "title", "publisher", "url", "releaseDate", "summary");
+        NamesOf(root.GetProperty("interests")[0]).Should().Equal("id", "name", "keywords");
         NamesOf(root.GetProperty("references")[0]).Should().Equal(
-            "name", "position", "company", "email", "phoneNumber", "referenceText");
+            "id", "name", "position", "company", "email", "phoneNumber", "referenceText");
     }
+
+    // The mapper must pair each entry with ITS OWN id, and the failure it can have is an off-by-one or
+    // a transposition between two collections — which every assertion above would survive, because they
+    // read one entry of each. So this one gives the ten collections DISJOINT id ranges and checks that
+    // every entry came back with the id its position was handed.
+    [Fact]
+    public void From_PairsEveryEntryWithItsOwnId()
+    {
+        var resume = BuildFullResume();
+        var ids = DisjointIds(resume);
+
+        using var json = JsonDocument.Parse(
+            JsonSerializer.Serialize(
+                ResumeResponse.From(new ResumeWithItemIds(resume, ids)), WebOptions));
+        var root = json.RootElement;
+
+        foreach (var section in Enum.GetValues<ResumeSection>())
+        {
+            var expected = ids.For(section);
+            var actual = root.GetProperty(JsonName(section)).EnumerateArray()
+                .Select(entry => entry.GetProperty("id").GetInt32());
+
+            actual.Should().Equal(expected, $"{section} entries must carry their own ids");
+        }
+    }
+
+    // A misalignment is a repository bug and cannot be caused by any request, so the response must not
+    // be assembled from it — Enumerable.Zip would have silently dropped the unmatched entry, taking a
+    // skill off a candidate's own CV with no error anywhere.
+    [Fact]
+    public void From_RefusesToBuildAResponseWhenIdsAndEntriesDisagree()
+    {
+        var resume = BuildFullResume();
+        var short_ = new Dictionary<ResumeSection, IReadOnlyList<int>>();
+        foreach (var section in Enum.GetValues<ResumeSection>())
+            short_[section] = [];
+
+        var build = () => ResumeResponse.From(
+            new ResumeWithItemIds(resume, new ResumeItemIds(short_)));
+
+        build.Should().Throw<InvalidOperationException>().WithMessage("*misaligned*");
+    }
+
+    // The list shape, pinned in both directions: what it carries, and what it deliberately does not.
+    //
+    // The absence is the load-bearing half. GET /v1/resumes used to answer with the whole aggregate for
+    // every row on the page, and the only thing stopping that from coming back is a test that fails
+    // when it does — a per-field assertion on the fields that ARE there would pass either way.
+    [Fact]
+    public void Summary_CarriesTheCountsAndNoneOfTheEntries()
+    {
+        using var json = JsonDocument.Parse(
+            JsonSerializer.Serialize(ResumeSummaryResponse.From(BuildFullResume()), WebOptions));
+        var root = json.RootElement;
+
+        NamesOf(root).Should().Equal(
+            "id", "ownerId", "fullName", "email", "location", "createdAt", "updatedAt", "counts");
+
+        foreach (var section in Enum.GetValues<ResumeSection>())
+        {
+            root.TryGetProperty(JsonName(section), out _).Should().BeFalse(
+                $"a list row must not carry the {section} entries themselves");
+        }
+
+        var counts = root.GetProperty("counts");
+        NamesOf(counts).Should().Equal(
+            "experiences", "educations", "skills", "projects", "certificates", "languages", "awards",
+            "publications", "interests", "references");
+
+        // Read off the aggregate this test built, so a mapper that wired two counts to the same
+        // collection fails rather than reporting a plausible number twice.
+        counts.GetProperty("experiences").GetInt32().Should().Be(1);
+        counts.GetProperty("skills").GetInt32().Should().Be(1);
+        counts.GetProperty("references").GetInt32().Should().Be(1);
+    }
+
+    private static string JsonName(ResumeSection section) =>
+        char.ToLowerInvariant(section.ToString()[0]) + section.ToString()[1..];
+
+    // Sequential within a section, and a different hundred per section, so an id can only match if it
+    // travelled with its own entry.
+    private static ResumeItemIds DisjointIds(Resume resume)
+    {
+        var counts = new Dictionary<ResumeSection, int>
+        {
+            [ResumeSection.Experiences] = resume.Experiences.Count,
+            [ResumeSection.Educations] = resume.Educations.Count,
+            [ResumeSection.Skills] = resume.Skills.Count,
+            [ResumeSection.Projects] = resume.Projects.Count,
+            [ResumeSection.Certificates] = resume.Certificates.Count,
+            [ResumeSection.Languages] = resume.Languages.Count,
+            [ResumeSection.Awards] = resume.Awards.Count,
+            [ResumeSection.Publications] = resume.Publications.Count,
+            [ResumeSection.Interests] = resume.Interests.Count,
+            [ResumeSection.References] = resume.References.Count
+        };
+
+        return new ResumeItemIds(counts.ToDictionary(
+            entry => entry.Key,
+            entry => (IReadOnlyList<int>)[.. Enumerable.Range(
+                ((int)entry.Key + 1) * 100, entry.Value)]));
+    }
+
+    private static ResumeWithItemIds WithIds(Resume resume) => new(resume, DisjointIds(resume));
 
     // Absent optional data must read as absent. The levels are the ones that matter: EducationLevel 0
     // is HighSchool and SkillLevel 0 is a real member too, so a mapper defaulting instead of preserving
@@ -175,7 +286,7 @@ public class ResumeContractTests
             "AWS Solutions Architect", OrganizationName.Create("Amazon"), null, null, null));
 
         using var json = JsonDocument.Parse(
-            JsonSerializer.Serialize(ResumeResponse.From(resume), WebOptions));
+            JsonSerializer.Serialize(ResumeResponse.From(WithIds(resume)), WebOptions));
         var root = json.RootElement;
 
         var contact = root.GetProperty("contactInformation");

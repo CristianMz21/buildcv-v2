@@ -2,6 +2,7 @@ namespace BuildCv.Application.Tests.Fakes;
 
 using BuildCv.Application.Common.Pagination;
 using BuildCv.Application.Common.Repositories;
+using BuildCv.Application.Resumes;
 using BuildCv.Domain.Identity;
 using BuildCv.Domain.Resumes;
 
@@ -34,6 +35,41 @@ public sealed class FakeResumeRepository : IResumeRepository
     {
         ReadCount++;
         return Task.FromResult(_resumes.FirstOrDefault(row => row.Item.Id == id)?.Item);
+    }
+
+    // Ids are handed out by POSITION here, and that is a deliberate simplification rather than the
+    // behaviour either real store has. Both of those keep an id attached to an entry across a removal;
+    // this one renumbers, so a handler test must not assert what an id is worth after a delete. What it
+    // does buy — and all these tests need — is that resolving an id lands on the entry the caller meant
+    // within one request, which is the property every Remove/Replace handler is written against.
+    //
+    // Seeded at 1 so a zero can never be mistaken for an id, matching the other two stores.
+    public Task<ResumeWithItemIds?> GetByIdWithItemIdsAsync(
+        ResumeId id, CancellationToken cancellationToken = default)
+    {
+        ReadCount++;
+
+        var resume = _resumes.FirstOrDefault(row => row.Item.Id == id)?.Item;
+        if (resume is null)
+            return Task.FromResult<ResumeWithItemIds?>(null);
+
+        static IReadOnlyList<int> Positions(int count) => [.. Enumerable.Range(1, count)];
+
+        return Task.FromResult<ResumeWithItemIds?>(new ResumeWithItemIds(
+            resume,
+            new ResumeItemIds(new Dictionary<ResumeSection, IReadOnlyList<int>>
+            {
+                [ResumeSection.Experiences] = Positions(resume.Experiences.Count),
+                [ResumeSection.Educations] = Positions(resume.Educations.Count),
+                [ResumeSection.Skills] = Positions(resume.Skills.Count),
+                [ResumeSection.Projects] = Positions(resume.Projects.Count),
+                [ResumeSection.Certificates] = Positions(resume.Certificates.Count),
+                [ResumeSection.Languages] = Positions(resume.Languages.Count),
+                [ResumeSection.Awards] = Positions(resume.Awards.Count),
+                [ResumeSection.Publications] = Positions(resume.Publications.Count),
+                [ResumeSection.Interests] = Positions(resume.Interests.Count),
+                [ResumeSection.References] = Positions(resume.References.Count)
+            })));
     }
 
     public Task<Page<Resume>> GetPageByOwnerIdAsync(

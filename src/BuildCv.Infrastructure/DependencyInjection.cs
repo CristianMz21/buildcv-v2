@@ -146,7 +146,7 @@ public static class DependencyInjection
         services.AddScoped<ICommandHandler<CreateResumeFromDraftCommand, ResumeImportResult>, CreateResumeFromDraftHandler>();
         services.AddScoped<ICommandHandler<ExtractDocumentTextCommand, Result<DocumentExtraction>>, ExtractDocumentTextHandler>();
         services.AddScoped<ICommandHandler<ProposeResumeDraftFromDocumentCommand, Result<ResumeDraftProposal>>, ProposeResumeDraftFromDocumentHandler>();
-        services.AddScoped<IQueryHandler<GetResumeQuery, Result<Resume>>, GetResumeHandler>();
+        services.AddScoped<IQueryHandler<GetResumeQuery, Result<ResumeWithItemIds>>, GetResumeHandler>();
         services.AddScoped<IQueryHandler<GetResumesByOwnerQuery, Result<Page<Resume>>>, GetResumesByOwnerHandler>();
         services.AddScoped<ICommandHandler<DeleteResumeCommand, Result<ResumeId>>, DeleteResumeHandler>();
         services.AddScoped<ICommandHandler<UpdateContactInformationCommand, Result<Resume>>, UpdateContactInformationHandler>();

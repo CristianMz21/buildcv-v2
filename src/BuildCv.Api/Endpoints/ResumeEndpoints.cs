@@ -4,6 +4,7 @@ using BuildCv.Api.Security;
 using BuildCv.Application.Common.Abstractions;
 using BuildCv.Application.Common.Observability;
 using BuildCv.Application.Common.Pagination;
+using BuildCv.Application.Common.Repositories;
 using BuildCv.Application.Common.Services;
 using BuildCv.Application.Readability;
 using BuildCv.Application.Resumes;
@@ -41,7 +42,7 @@ public static class ResumeEndpoints
                 request.Location,
                 request.Summary), cancellationToken);
             return result.ToHttpResult(resume =>
-                Results.Created($"/v1/resumes/{resume.Id.Value}", ResumeResponse.From(resume)));
+                Results.Created($"/v1/resumes/{resume.Id.Value}", ResumeSummaryResponse.From(resume)));
         });
 
         // One whole CV in one request, in place of POST /v1/resumes plus up to fifteen per-section calls.
@@ -90,7 +91,7 @@ public static class ResumeEndpoints
 
             return result.IsSuccess
                 ? Results.Created(
-                    $"/v1/resumes/{result.Resume!.Id.Value}", ResumeResponse.From(result.Resume))
+                    $"/v1/resumes/{result.Resume!.Id.Value}", ResumeSummaryResponse.From(result.Resume))
                 : result.FieldErrors.ToValidationProblem();
         })
         // THE ONLY REQUEST-SIZE LIMIT IN THIS API, and the first endpoint that needed one. Kestrel's
@@ -309,20 +310,30 @@ public static class ResumeEndpoints
             var requester = httpContext.User.GetAccountId();
             var result = await handler.Handle(
                 new GetResumesByOwnerQuery(requester, requester, limit, cursor), cancellationToken);
-            return result.ToHttpResult(page => Results.Ok(new PagedResponse<ResumeResponse>(
-                [.. page.Items.Select(ResumeResponse.From)], page.NextCursor)));
+            return result.ToHttpResult(page => Results.Ok(new PagedResponse<ResumeSummaryResponse>(
+                [.. page.Items.Select(ResumeSummaryResponse.From)], page.NextCursor)));
         });
 
         group.MapGet("/{id:guid}", async (
             Guid id,
             HttpContext httpContext,
-            IQueryHandler<GetResumeQuery, Result<Resume>> handler,
+            IQueryHandler<GetResumeQuery, Result<ResumeWithItemIds>> handler,
             CancellationToken cancellationToken) =>
         {
             var result = await handler.Handle(
                 new GetResumeQuery(httpContext.User.GetAccountId(), new ResumeId(id)), cancellationToken);
-            return result.ToHttpResult(resume => Results.Ok(ResumeResponse.From(resume)));
-        });
+            return result.ToHttpResult(loaded => Results.Ok(ResumeResponse.From(loaded)));
+        })
+        .WithSummary("Returns one CV in full, every entry carrying the id that addresses it.")
+        .WithDescription(
+            "THE ONLY ROUTE THAT CARRIES ENTRY IDS. Each item of each collection has an `id` that is "
+            + "stable for as long as that entry exists, and it is what `DELETE "
+            + "/v1/resumes/{id}/{section}/{itemId}` takes. Ids are unique within one CV and opaque "
+            + "otherwise: they are not dense, not ordered, and an entry deleted and re-added gets a new "
+            + "one. Do not address an entry by its position in these arrays — the store returns each "
+            + "collection as a set, so a position can name a different entry between two reads. "
+            + "`GET /v1/resumes` deliberately does NOT carry the collections or their ids; fetch this "
+            + "route for the CV a candidate is about to edit.");
 
         // Score history hangs off the CV that owns it, not off /scoring, for the same reason
         // /{id}/skills does: it is part of this resource, and the ownership check is the one every
@@ -427,7 +438,7 @@ public static class ResumeEndpoints
                 request.PhoneNumber,
                 request.Location,
                 request.Summary), cancellationToken);
-            return result.ToHttpResult(resume => Results.Ok(ResumeResponse.From(resume)));
+            return result.ToHttpResult(resume => Results.Ok(ResumeSummaryResponse.From(resume)));
         });
 
         group.MapPost("/{id:guid}/skills", async Task<IResult> (
@@ -465,7 +476,7 @@ public static class ResumeEndpoints
                 request.SkillName,
                 level,
                 request.YearsOfExperience), cancellationToken);
-            return result.ToHttpResult(resume => Results.Ok(ResumeResponse.From(resume)));
+            return result.ToHttpResult(resume => Results.Ok(ResumeSummaryResponse.From(resume)));
         });
 
         group.MapPost("/{id:guid}/experiences", async Task<IResult> (
@@ -497,7 +508,7 @@ public static class ResumeEndpoints
                 request.Start,
                 request.End,
                 request.Summary), cancellationToken);
-            return result.ToHttpResult(resume => Results.Ok(ResumeResponse.From(resume)));
+            return result.ToHttpResult(resume => Results.Ok(ResumeSummaryResponse.From(resume)));
         });
 
         group.MapPost("/{id:guid}/educations", async Task<IResult> (
@@ -529,7 +540,7 @@ public static class ResumeEndpoints
                 request.End,
                 request.Grade,
                 level), cancellationToken);
-            return result.ToHttpResult(resume => Results.Ok(ResumeResponse.From(resume)));
+            return result.ToHttpResult(resume => Results.Ok(ResumeSummaryResponse.From(resume)));
         });
 
         group.MapPost("/{id:guid}/certificates", async (
@@ -548,7 +559,7 @@ public static class ResumeEndpoints
                 request.CredentialUrl,
                 request.ValidityStart,
                 request.ValidityEnd), cancellationToken);
-            return result.ToHttpResult(resume => Results.Ok(ResumeResponse.From(resume)));
+            return result.ToHttpResult(resume => Results.Ok(ResumeSummaryResponse.From(resume)));
         });
 
         group.MapPost("/{id:guid}/projects", async (
@@ -569,7 +580,7 @@ public static class ResumeEndpoints
                 request.LiveDemoUrl,
                 request.Technologies,
                 request.Highlights), cancellationToken);
-            return result.ToHttpResult(resume => Results.Ok(ResumeResponse.From(resume)));
+            return result.ToHttpResult(resume => Results.Ok(ResumeSummaryResponse.From(resume)));
         });
 
         // Level is parsed here and rejected with a 400 BEFORE the handler runs, matching how
@@ -617,7 +628,7 @@ public static class ResumeEndpoints
                 request.Name,
                 request.Fluency,
                 level), cancellationToken);
-            return result.ToHttpResult(resume => Results.Ok(ResumeResponse.From(resume)));
+            return result.ToHttpResult(resume => Results.Ok(ResumeSummaryResponse.From(resume)));
         });
 
         group.MapPost("/{id:guid}/awards", async (
@@ -634,7 +645,7 @@ public static class ResumeEndpoints
                 request.Awarder,
                 request.Date,
                 request.Summary), cancellationToken);
-            return result.ToHttpResult(resume => Results.Ok(ResumeResponse.From(resume)));
+            return result.ToHttpResult(resume => Results.Ok(ResumeSummaryResponse.From(resume)));
         });
 
         group.MapPost("/{id:guid}/publications", async (
@@ -652,7 +663,7 @@ public static class ResumeEndpoints
                 request.Url,
                 request.ReleaseDate,
                 request.Summary), cancellationToken);
-            return result.ToHttpResult(resume => Results.Ok(ResumeResponse.From(resume)));
+            return result.ToHttpResult(resume => Results.Ok(ResumeSummaryResponse.From(resume)));
         });
 
         group.MapPost("/{id:guid}/interests", async (
@@ -667,7 +678,7 @@ public static class ResumeEndpoints
                 new ResumeId(id),
                 request.Name,
                 request.Keywords), cancellationToken);
-            return result.ToHttpResult(resume => Results.Ok(ResumeResponse.From(resume)));
+            return result.ToHttpResult(resume => Results.Ok(ResumeSummaryResponse.From(resume)));
         });
 
         group.MapPost("/{id:guid}/references", async (
@@ -686,7 +697,7 @@ public static class ResumeEndpoints
                 request.Email,
                 request.PhoneNumber,
                 request.ReferenceText), cancellationToken);
-            return result.ToHttpResult(resume => Results.Ok(ResumeResponse.From(resume)));
+            return result.ToHttpResult(resume => Results.Ok(ResumeSummaryResponse.From(resume)));
         });
 
         group.MapDelete("/{id:guid}", async (
