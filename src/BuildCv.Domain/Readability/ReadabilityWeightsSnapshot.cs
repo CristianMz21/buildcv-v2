@@ -22,7 +22,19 @@ public sealed record ReadabilityWeightsSnapshot
     //
     // The reference date is the one input that changes a report WITHOUT being a model change: it is data
     // about when the report was taken, and it is carried per row by ReadabilityReport.EvaluatedAt.
-    public const int CurrentSchemaVersion = 1;
+    //
+    // v2 IS THE DATE-PRECISION CONVENTION. Chronology reads Experience.Period, and a period may now be
+    // stated only to the month or the year; DateRange resolves such a period to the longest interval its
+    // precision allows, so both the coverage a role contributes and the size of the gap after it are
+    // answers this engine could not previously give. The convention and its error bound are on DateRange.
+    //
+    // The same two qualifications the scoring version carries apply here: no report that exists today
+    // would score differently, because every persisted DateRange is full precision and the convention
+    // reduces to the old arithmetic there, and yet a v2 report on an imported resume is explained by a
+    // formula v1 did not have. Nothing REUSES a stored report -- EvaluateResumeReadability writes a row
+    // per request and de-duplicates nothing -- so unlike the scoring bump this one costs no re-run; it
+    // only stamps new rows honestly.
+    public const int CurrentSchemaVersion = 2;
 
     public double Completeness { get; }
     public double Contact { get; }

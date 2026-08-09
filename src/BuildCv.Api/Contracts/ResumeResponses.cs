@@ -244,7 +244,16 @@ public sealed record ReferenceResponse(
 // Declared here rather than left to DateRange's own serialization, which already produced exactly
 // {start, end} — stating it means a Domain change to that record cannot silently reshape three
 // collections and the certificate validity window at once.
-public sealed record DateRangeResponse(DateOnly Start, DateOnly? End)
+//
+// STRINGS RATHER THAN DateOnly, because an endpoint carries only as much precision as its source stated
+// and a DateOnly cannot express "June 2015" without inventing a day — the same reason the Domain does
+// not use one. The JSON is unchanged for every date that already exists: System.Text.Json writes a
+// DateOnly as the ISO full date, and PartialDate.ToIsoString writes exactly those ten characters for a
+// full-precision value. A partial one is the same field, shorter: "2015-06" or "2015". A client that
+// parses this with a strict yyyy-MM-dd reader keeps working for every resume typed by hand and has to
+// widen for one imported from a month/year CV, which is the whole point of the change.
+public sealed record DateRangeResponse(string Start, string? End)
 {
-    public static DateRangeResponse From(DateRange period) => new(period.Start, period.End);
+    public static DateRangeResponse From(DateRange period) =>
+        new(period.Start.ToIsoString(), period.End?.ToIsoString());
 }
