@@ -52,6 +52,48 @@ public sealed class AuthFlowTests
         login.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
+    // Its own factory for the same reason as the test above: the shared 5/min auth window would
+    // otherwise turn a real failure into a 429 and read as "rejected" either way.
+    [Theory]
+    [InlineData("a")]
+    [InlineData("hunter2")]
+    [InlineData("11character")]
+    [InlineData("")]
+    public async Task Register_WithAWeakPassword_IsRejectedAndCreatesNoAccount(string weak)
+    {
+        using var factory = new ApiTestFactory();
+        using var client = factory.CreateClient();
+
+        var register = await client.PostAsJsonAsync(
+            "/v1/auth/register", new { email = "weak@example.com", password = weak });
+
+        register.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        register.Content.Headers.ContentType!.MediaType.Should().Be("application/problem+json");
+
+        var login = await client.PostAsJsonAsync(
+            "/v1/auth/login", new { email = "weak@example.com", password = weak });
+        login.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task Register_WithAWeakPassword_DoesNotEchoItIntoTheResponseBody()
+    {
+        // The refusal must not put the credential into a body that ends up in a browser console,
+        // a proxy log or an error tracker. The sentinel is distinctive on purpose: asserting this
+        // against a one-character password would fail on the word "at" in the message itself and
+        // prove nothing about echoing.
+        const string weak = "zzqqxxjj";
+
+        using var factory = new ApiTestFactory();
+        using var client = factory.CreateClient();
+
+        var register = await client.PostAsJsonAsync(
+            "/v1/auth/register", new { email = "weak-echo@example.com", password = weak });
+
+        register.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await register.Content.ReadAsStringAsync()).Should().NotContain(weak);
+    }
+
     [Theory]
     [InlineData("Candidate")]
     [InlineData("Recruiter")]

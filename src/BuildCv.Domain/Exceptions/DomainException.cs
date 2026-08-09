@@ -50,6 +50,20 @@ public sealed class InvalidAccountException : DomainException
     public InvalidAccountException(string message) : base(message) { }
 }
 
+/// <summary>
+/// A proposed password that does not meet <see cref="Identity.PasswordPolicy"/>.
+/// </summary>
+/// <remarks>
+/// Its own type rather than <see cref="InvalidAccountException"/> because the two say different
+/// things to a caller: one means "this account is malformed", the other means "choose another
+/// password and try again". Every message it carries names the limit and never the value — it
+/// reaches a 400 body and the application log, and the value is a credential.
+/// </remarks>
+public sealed class WeakPasswordException : DomainException
+{
+    public WeakPasswordException(string message) : base(message) { }
+}
+
 public sealed class InvalidMembershipException : DomainException
 {
     public InvalidMembershipException(string message) : base(message) { }

@@ -155,4 +155,50 @@ public class ChangePasswordHandlerTests
         result.IsSuccess.Should().BeFalse();
         result.Error.Should().Be("Account not found.");
     }
+
+    [Fact]
+    public async Task ChangePassword_weak_new_password_fails_and_leaves_the_old_one_working()
+    {
+        var account = await SeedAccountAsync();
+
+        var result = await _handler.Handle(new ChangePasswordCommand(account.Id, CurrentPassword, "hunter2"));
+
+        result.IsSuccess.Should().BeFalse();
+        result.Error.Should().Be($"Password must be at least {PasswordPolicy.MinLength} characters.");
+
+        var persisted = await _accounts.GetByIdAsync(account.Id);
+        _hasher.Verify(CurrentPassword, persisted!.Password.Hash).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ChangePassword_weak_new_password_does_not_count_as_a_failed_credential_attempt()
+    {
+        // Choosing a password the policy refuses is a validation error, not a wrong guess at the
+        // current one. Letting it reach RecordFailedLogin would let a user lock themselves out
+        // of their own account by mistyping the NEW password five times.
+        var account = await SeedAccountAsync();
+
+        for (var attempt = 0; attempt < 10; attempt++)
+            await _handler.Handle(new ChangePasswordCommand(account.Id, CurrentPassword, "short"));
+
+        var persisted = await _accounts.GetByIdAsync(account.Id);
+        persisted!.IsLocked.Should().BeFalse();
+
+        var afterwards = await _handler.Handle(
+            new ChangePasswordCommand(account.Id, CurrentPassword, NewPassword));
+        afterwards.IsSuccess.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ChangePassword_rejects_the_weak_password_before_verifying_the_current_one()
+    {
+        // Both hashes are Argon2id. Refusing the new password first means a request that cannot
+        // succeed never buys either one.
+        var account = await SeedAccountAsync();
+        var before = _hasher.HashCount;
+
+        await _handler.Handle(new ChangePasswordCommand(account.Id, CurrentPassword, "short"));
+
+        _hasher.HashCount.Should().Be(before);
+    }
 }
