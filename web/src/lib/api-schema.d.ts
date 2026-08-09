@@ -511,7 +511,7 @@ export interface paths {
         get: {
             parameters: {
                 query?: {
-                    limit?: number | string;
+                    limit?: number;
                     cursor?: string;
                 };
                 header?: never;
@@ -663,7 +663,7 @@ export interface paths {
         put?: never;
         /**
          * Creates a complete resume from one reviewed draft.
-         * @description Every field is sent as a STRING, including dates (yyyy-MM-dd), numbers and levels, so that no VALUE can be rejected at model binding: a malformed date or an unknown level comes back as a field error rather than as a framework 400 naming nothing. Malformed JSON, a null body and a body over 2 MiB are still refused by the server before validation runs. Validation is all-or-nothing and collects EVERY bad field in one pass: a rejected draft answers 400 with the standard ProblemDetails `errors` object, keyed by JSON field path (`experiences[2].end`, `contact.phoneNumber`), and creates nothing. A null array element is reported at its own index. Levels accept the enum name or its number. Duplicate skills, certificates, languages and interests are reported against the LATER occurrence — that is the line to delete — including when that item has another bad field as well. `importEvidence` is the opaque token POST /v1/resumes/import/propose returned inside the draft it proposed: send it back UNCHANGED to have the readability engine grade the document you uploaded, or omit it entirely — a draft typed by hand needs none, and its ATS-parseability section is then renormalized out rather than scored zero. A token that is malformed, was issued to another account, or is older than two hours is reported as a field error at `importEvidence` alongside any other bad field, and nothing is created; resubmitting without it succeeds. The token describes the DOCUMENT it was minted for, not the draft you send with it: nothing stops you posting it beside a different resume of your own, and the signals will then describe a file that resume did not come from.
+         * @description Every field is sent as a STRING, including dates, numbers and levels, so that no VALUE can be rejected at model binding: a malformed date or an unknown level comes back as a field error rather than as a framework 400 naming nothing. Malformed JSON, a null body and a body over 2 MiB are still refused by the server before validation runs. Validation is all-or-nothing and collects EVERY bad field in one pass: a rejected draft answers 400 with the standard ProblemDetails `errors` object, keyed by JSON field path (`experiences[2].end`, `contact.phoneNumber`), and creates nothing. A null array element is reported at its own index. Levels accept the enum name or its number. Duplicate skills, certificates, languages and interests are reported against the LATER occurrence — that is the line to delete — including when that item has another bad field as well. PERIOD DATES CARRY THE PRECISION YOU HAVE: the `start` and `end` of an experience, an education, a project and a certificate's validity accept `yyyy-MM-dd`, `yyyy-MM` or `yyyy`, so a CV that says "June 2015" needs no invented day and comes back as `2015-06` wherever it is read. A date you state fully stays fully precise — nothing is widened. The single-day fields (`awards[].date`, `publications[].releaseDate`) are still `yyyy-MM-dd`. `importEvidence` is the opaque token POST /v1/resumes/import/propose returned inside the draft it proposed: send it back UNCHANGED to have the readability engine grade the document you uploaded, or omit it entirely — a draft typed by hand needs none, and its ATS-parseability section is then renormalized out rather than scored zero. A token that is malformed, was issued to another account, or is older than two hours is reported as a field error at `importEvidence` alongside any other bad field, and nothing is created; resubmitting without it succeeds. The token describes the DOCUMENT it was minted for, not the draft you send with it: nothing stops you posting it beside a different resume of your own, and the signals will then describe a file that resume did not come from.
          */
         post: {
             parameters: {
@@ -823,7 +823,7 @@ export interface paths {
         put?: never;
         /**
          * Proposes a best-effort resume draft from an uploaded CV document.
-         * @description Multipart upload with one `file` part: PDF, DOCX or plain text, at most 5 MiB. Answers a populated draft — the same shape POST /v1/resumes/import accepts — and a SEPARATE confidence structure the review screen uses and does NOT post back. Extraction is best-effort: a field the parser could not read confidently is left empty and flagged (confidence `NotExtracted`), never guessed; levels, experience type and end dates are never invented; and a two-column layout is warned about rather than silently reordered. Nothing is stored — correct the draft, then submit it to POST /v1/resumes/import, the only endpoint that creates a resume. The draft carries an `importEvidence` token: a signed, opaque record of what the uploaded document looked like to a parser — its column layout, whether it had a text layer, its page count — bound to your account and valid for two hours. Post it back unchanged with the draft and the readability engine can grade the document's ATS-parseability; drop it and that section is renormalized out of the report instead. It is signed because it feeds a score, so a client-asserted copy would be a score the client could set. Nothing about the document's CONTENT is in it, and the file itself is never stored — which is also why the evidence describes the upload rather than the resume as it later stands.
+         * @description Multipart upload with one `file` part: PDF, DOCX or plain text, at most 5 MiB. Answers a populated draft — the same shape POST /v1/resumes/import accepts — and a SEPARATE confidence structure the review screen uses and does NOT post back. Extraction is best-effort: a field the parser could not read confidently is left empty and flagged (confidence `NotExtracted`), never guessed; levels, experience type and end dates are never invented; a date arrives at the precision the document stated it in, so "June 2015" comes back as `2015-06` rather than as a blank or as an invented first of the month; and a two-column layout is warned about rather than silently reordered. Nothing is stored — correct the draft, then submit it to POST /v1/resumes/import, the only endpoint that creates a resume. The draft carries an `importEvidence` token: a signed, opaque record of what the uploaded document looked like to a parser — its column layout, whether it had a text layer, its page count — bound to your account and valid for two hours. Post it back unchanged with the draft and the readability engine can grade the document's ATS-parseability; drop it and that section is renormalized out of the report instead. It is signed because it feeds a score, so a client-asserted copy would be a score the client could set. Nothing about the document's CONTENT is in it, and the file itself is never stored — which is also why the evidence describes the upload rather than the resume as it later stands.
          */
         post: {
             parameters: {
@@ -1066,7 +1066,7 @@ export interface paths {
         get: {
             parameters: {
                 query?: {
-                    limit?: number | string;
+                    limit?: number;
                     cursor?: string;
                 };
                 header?: never;
@@ -4148,7 +4148,7 @@ export interface components {
             skillName: string;
             level: null | string;
             /** Format: int32 */
-            yearsOfExperience: null | number | string;
+            yearsOfExperience: null | number;
         };
         AnalysisResponse: {
             /** Format: uuid */
@@ -4162,7 +4162,7 @@ export interface components {
             scoredAt: string;
             recommendations: components["schemas"]["RecommendationResponse"][];
             /** Format: int32 */
-            overallScore: number | string;
+            overallScore: number;
             band: string;
             isStale: boolean;
         };
@@ -4171,7 +4171,7 @@ export interface components {
         };
         AwardResponse: {
             /** Format: int32 */
-            id: number | string;
+            id: number;
             title: string;
             awarder: null | string;
             /** Format: date */
@@ -4180,7 +4180,7 @@ export interface components {
         };
         CertificateResponse: {
             /** Format: int32 */
-            id: number | string;
+            id: number;
             name: string;
             issuer: string;
             credentialId: null | string;
@@ -4229,7 +4229,7 @@ export interface components {
         };
         EducationResponse: {
             /** Format: int32 */
-            id: number | string;
+            id: number;
             institution: string;
             degree: null | string;
             fieldOfStudy: null | string;
@@ -4239,7 +4239,7 @@ export interface components {
         };
         ExperienceResponse: {
             /** Format: int32 */
-            id: number | string;
+            id: number;
             type: string;
             organization: string;
             position: string;
@@ -4250,7 +4250,7 @@ export interface components {
         ExtractDocumentTextResponse: {
             text: string;
             /** Format: int32 */
-            pageCount: null | number | string;
+            pageCount: null | number;
             warnings: string[];
         };
         ExtractJobOfferRequirementsRequest: {
@@ -4268,7 +4268,7 @@ export interface components {
             type?: null | string;
             title?: null | string;
             /** Format: int32 */
-            status?: null | number | string;
+            status?: null | number;
             detail?: null | string;
             instance?: null | string;
             errors?: {
@@ -4387,7 +4387,7 @@ export interface components {
         };
         InterestResponse: {
             /** Format: int32 */
-            id: number | string;
+            id: number;
             name: string;
             keywords: string[];
         };
@@ -4427,7 +4427,7 @@ export interface components {
         };
         LanguageResponse: {
             /** Format: int32 */
-            id: number | string;
+            id: number;
             name: string;
             fluency: null | string;
             level: null | string;
@@ -4467,7 +4467,7 @@ export interface components {
             type?: null | string;
             title?: null | string;
             /** Format: int32 */
-            status?: null | number | string;
+            status?: null | number;
             detail?: null | string;
             instance?: null | string;
         };
@@ -4478,7 +4478,7 @@ export interface components {
         };
         ProjectResponse: {
             /** Format: int32 */
-            id: number | string;
+            id: number;
             name: string;
             period: components["schemas"]["DateRangeResponse"];
             description: null | string;
@@ -4498,7 +4498,7 @@ export interface components {
         };
         PublicationResponse: {
             /** Format: int32 */
-            id: number | string;
+            id: number;
             title: string;
             publisher: null | string;
             url: null | string;
@@ -4540,7 +4540,7 @@ export interface components {
             evaluatedAt: string;
             recommendations: components["schemas"]["ReadabilityRecommendationResponse"][];
             /** Format: int32 */
-            readabilityScore: number | string;
+            readabilityScore: number;
             band: string;
         };
         ReadabilitySectionScoreResponse: {
@@ -4562,7 +4562,7 @@ export interface components {
             /** Format: double */
             atsParseability: number;
             /** Format: int32 */
-            schemaVersion: number | string;
+            schemaVersion: number;
         };
         RecommendationResponse: {
             section: string;
@@ -4574,7 +4574,7 @@ export interface components {
         };
         ReferenceResponse: {
             /** Format: int32 */
-            id: number | string;
+            id: number;
             name: string;
             position: null | string;
             company: null | string;
@@ -4613,25 +4613,25 @@ export interface components {
         };
         ResumeSectionCounts: {
             /** Format: int32 */
-            experiences: number | string;
+            experiences: number;
             /** Format: int32 */
-            educations: number | string;
+            educations: number;
             /** Format: int32 */
-            skills: number | string;
+            skills: number;
             /** Format: int32 */
-            projects: number | string;
+            projects: number;
             /** Format: int32 */
-            certificates: number | string;
+            certificates: number;
             /** Format: int32 */
-            languages: number | string;
+            languages: number;
             /** Format: int32 */
-            awards: number | string;
+            awards: number;
             /** Format: int32 */
-            publications: number | string;
+            publications: number;
             /** Format: int32 */
-            interests: number | string;
+            interests: number;
             /** Format: int32 */
-            references: number | string;
+            references: number;
         };
         ResumeSummaryResponse: {
             /** Format: uuid */
@@ -4685,7 +4685,7 @@ export interface components {
             /** Format: double */
             languages: number;
             /** Format: int32 */
-            schemaVersion: number | string;
+            schemaVersion: number;
         };
         SectionScoreResponse: {
             section: string;
@@ -4696,17 +4696,17 @@ export interface components {
         };
         SkillResponse: {
             /** Format: int32 */
-            id: number | string;
+            id: number;
             name: string;
             level: null | string;
             /** Format: int32 */
-            yearsOfExperience: null | number | string;
+            yearsOfExperience: null | number;
             keywords: string[];
         };
         TokenResponse: {
             accessToken: string;
             /** Format: int32 */
-            expiresIn: number | string;
+            expiresIn: number;
         };
         UpdateContactRequest: {
             fullName: string;
