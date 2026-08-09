@@ -160,7 +160,8 @@ public class ScoreBreakdownTests
         // number: v3 is a FORMULA change — IsSatisfiedBy consults a skill lexicon — so two analyses can
         // report identical weights and still not be comparable, which is the case a version meaning
         // "the weighting" could not express.
-        DefaultWeights.SchemaVersion.Should().Be(3, "the matching rule moved, so the version has to say so");
+        DefaultWeights.SchemaVersion.Should().Be(4,
+            "the duration convention moved, so the version has to say so — v3 was the skill lexicon");
     }
 
     // The SHAPE of the v1 → v2 redistribution, which is stronger than the per-weight assertion above.

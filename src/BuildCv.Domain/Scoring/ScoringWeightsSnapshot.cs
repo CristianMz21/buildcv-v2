@@ -93,7 +93,32 @@ public sealed record ScoringWeightsSnapshot
     // scoring.Recommendations table and Analyses.LanguagesScore, which is irrecoverable data loss on
     // every row rather than a parse failure a reader can be rebuilt around. That migration is
     // forward-only in practice; the reasoning is stated on its Down().
-    public const int CurrentSchemaVersion = 3;
+    //
+    // v4 IS THE DATE-PRECISION CONVENTION, and it is a formula change with no weight change, exactly as
+    // v3 was. DateRange now holds a start or an end stated only to the month or the year, and
+    // DurationInDays reads such a range as the LONGEST interval its precision allows -- so
+    // ProfessionalDays, UnmarkedExperienceDays and ValidCertificateCount all answer a question they could
+    // not previously be asked. The convention and its measured error bound are on DateRange itself.
+    //
+    // WHAT IT MEANS FOR STORED ANALYSES, stated precisely because the two obvious phrasings overclaim:
+    //
+    //   - NO EXISTING ROW'S SCORE CHANGES. Every DateRange any deployment has ever persisted is full
+    //     precision (the previous stored format could express nothing else), and at full precision the
+    //     new convention reduces to the old arithmetic day for day. FullPrecisionEquivalenceTests
+    //     executes that against a verbatim copy of the old rule rather than asserting it here.
+    //   - EVERY STORED ANALYSIS IS STILL RE-SCORED ONCE. ScoreResume.ScoredUnderTheSameConditions
+    //     compares the stored SchemaVersion against this constant, so every v3 row stops being reusable
+    //     and each (resume, posting) pair gains one extra history entry the first time it is scored
+    //     after the deploy. The new entry will hold the same numbers as the v3 one beside it. Expected,
+    //     not a bug.
+    //   - ACROSS THE BUMP THE NUMBERS ARE STILL NOT COMPARABLE, and that is not a contradiction of the
+    //     first point. A v3 analysis was taken by an engine that could not read a month-precision date;
+    //     a v4 analysis of a resume imported from "June 2015 - February 2019" is explained by a formula
+    //     v3 did not have. The version answers "same model", and the model did change.
+    //
+    // v4 DOES NOT MOVE THE ONE-WAY DOOR EITHER: it changes a number and no member. The door below is
+    // still about the Languages MEMBER.
+    public const int CurrentSchemaVersion = 4;
 
     public double Skills { get; }
     public double Experience { get; }

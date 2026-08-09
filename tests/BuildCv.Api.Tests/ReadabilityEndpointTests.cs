@@ -151,7 +151,8 @@ public sealed class ReadabilityEndpointTests
         var weights = breakdown.GetProperty("weights");
         weights.EnumerateObject().Select(property => property.Name).Should().Equal(
             "completeness", "contact", "achievements", "chronology", "atsParseability", "schemaVersion");
-        weights.GetProperty("schemaVersion").GetInt32().Should().Be(1);
+        weights.GetProperty("schemaVersion").GetInt32().Should().Be(2,
+            "v2 is the release in which Chronology started reading a period stated to the month or the year");
 
         var sections = breakdown.GetProperty("sections").EnumerateArray().ToList();
         sections.Select(section => section.GetProperty("section").GetString()).Should().Equal(

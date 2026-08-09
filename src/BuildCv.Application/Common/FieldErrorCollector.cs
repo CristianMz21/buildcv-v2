@@ -31,6 +31,7 @@ public static class FieldErrorCollector
     public const string RequiredMessage = "Value is required.";
     public const string ControlCharacterMessage = "Value must not contain control characters.";
     public const string InvalidDateMessage = "Invalid date. Expected yyyy-MM-dd.";
+    public const string InvalidPartialDateMessage = "Invalid date. Expected yyyy-MM-dd, yyyy-MM or yyyy.";
     public const string InvalidNumberMessage = "Invalid number.";
 
     // Walks one section, or refuses to. Over-cap returns WITHOUT iterating — building a hundred thousand
@@ -196,6 +197,26 @@ public static class FieldErrorCollector
         return null;
     }
 
+    // THE PERIOD FIELDS PARSE THIS, AND ONLY THE PERIOD FIELDS. Month/year is the dominant date format on
+    // real CVs, so an experience or an education has to be able to say "June 2015" without the candidate
+    // inventing a day for it — see PartialDate. Award.Date and Publication.ReleaseDate keep ParseDate
+    // above: they are single days on the wire as DateOnly through the per-section routes, and widening
+    // them would be a contract change nothing has asked for.
+    //
+    // The grammar is PartialDate's, called rather than restated, so what the importer accepts is exactly
+    // what the column stores and what the response answers.
+    public static PartialDate? ParsePartialDate(string path, string? value, List<FieldError> errors)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+
+        if (PartialDate.TryParse(value, out var parsed) && parsed is not null)
+            return parsed;
+
+        errors.Add(new FieldError(path, InvalidPartialDateMessage));
+        return null;
+    }
+
     public static int? ParseInt(string path, string? value, List<FieldError> errors)
     {
         if (string.IsNullOrWhiteSpace(value))
@@ -211,8 +232,8 @@ public static class FieldErrorCollector
     public static DateRange? BuildRequiredPeriod(
         string startPath, string? start, string endPath, string? end, List<FieldError> errors)
     {
-        var startDate = ParseDate(startPath, start, errors);
-        var endDate = ParseDate(endPath, end, errors);
+        var startDate = ParsePartialDate(startPath, start, errors);
+        var endDate = ParsePartialDate(endPath, end, errors);
 
         if (startDate is null)
         {
@@ -231,14 +252,14 @@ public static class FieldErrorCollector
 
         // "End date must be null or on/after start date." is DateRange.Create's own message, reported at
         // the END path because that is the input a review screen can usefully highlight.
-        return Build(endPath, errors, () => DateRange.Create(startDate.Value, endDate));
+        return Build(endPath, errors, () => DateRange.Create(startDate, endDate));
     }
 
     public static DateRange? BuildOptionalPeriod(
         string startPath, string? start, string endPath, string? end, List<FieldError> errors)
     {
-        var startDate = ParseDate(startPath, start, errors);
-        var endDate = ParseDate(endPath, end, errors);
+        var startDate = ParsePartialDate(startPath, start, errors);
+        var endDate = ParsePartialDate(endPath, end, errors);
 
         if (startDate is null)
         {
@@ -253,7 +274,7 @@ public static class FieldErrorCollector
         if (endDate is null && !string.IsNullOrWhiteSpace(end))
             return null;
 
-        return Build(endPath, errors, () => DateRange.Create(startDate.Value, endDate));
+        return Build(endPath, errors, () => DateRange.Create(startDate, endDate));
     }
 
     public static TEnum? ParseRequiredEnum<TEnum>(

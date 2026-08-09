@@ -13,8 +13,8 @@ public class DateRangeTests
             DateOnly.Parse("2022-01-01"),
             DateOnly.Parse("2023-06-30"));
 
-        range.Start.Should().Be(DateOnly.Parse("2022-01-01"));
-        range.End.Should().Be(DateOnly.Parse("2023-06-30"));
+        range.StartsOn.Should().Be(DateOnly.Parse("2022-01-01"));
+        range.EndsOn.Should().Be(DateOnly.Parse("2023-06-30"));
     }
 
     [Fact]
@@ -22,8 +22,9 @@ public class DateRangeTests
     {
         var range = DateRange.Create(DateOnly.Parse("2022-01-01"));
 
-        range.Start.Should().Be(DateOnly.Parse("2022-01-01"));
+        range.StartsOn.Should().Be(DateOnly.Parse("2022-01-01"));
         range.End.Should().BeNull();
+        range.EndsOn.Should().BeNull();
         range.IsCurrent.Should().BeTrue();
     }
 
@@ -66,7 +67,7 @@ public class DateRangeTests
             DateOnly.Parse("2023-06-30"));
 
         range1.Should().Be(range2);
-        range2.End.Should().Be(DateOnly.Parse("2023-06-30"));
+        range2.EndsOn.Should().Be(DateOnly.Parse("2023-06-30"));
     }
 
     [Fact]
@@ -80,5 +81,94 @@ public class DateRangeTests
             DateOnly.Parse("2023-06-30"));
 
         range1.Should().Be(range2);
+    }
+
+    // ---------------------------------------------------------------- the duration convention
+    //
+    // Each of the three below isolates ONE endpoint of the convention, so a mutation to one cannot be
+    // covered by another's assertion: the month-start case pairs a month with a FULL end, the month-end
+    // case pairs a full start with a month, and the year case is the only one where either end is a bare
+    // year. The expected day counts are literals, computed independently of the implementation.
+
+    [Fact]
+    public void A_month_precision_start_counts_from_the_first_of_that_month()
+    {
+        var range = DateRange.Create(
+            PartialDate.FromYearMonth(2015, 6),
+            PartialDate.FromDate(new DateOnly(2019, 2, 20)));
+
+        range.StartsOn.Should().Be(new DateOnly(2015, 6, 1));
+        range.EndsOn.Should().Be(new DateOnly(2019, 2, 20));
+        range.DurationInDays(new DateOnly(2026, 8, 9)).Should().Be(1360);
+    }
+
+    [Fact]
+    public void A_month_precision_end_counts_to_the_last_day_of_that_month()
+    {
+        var range = DateRange.Create(
+            PartialDate.FromDate(new DateOnly(2015, 6, 15)),
+            PartialDate.FromYearMonth(2019, 2));
+
+        range.StartsOn.Should().Be(new DateOnly(2015, 6, 15));
+        range.EndsOn.Should().Be(new DateOnly(2019, 2, 28));
+        range.DurationInDays(new DateOnly(2026, 8, 9)).Should().Be(1354);
+    }
+
+    [Fact]
+    public void A_year_precision_range_spans_january_first_to_december_thirty_first()
+    {
+        var range = DateRange.Create(PartialDate.FromYear(2015), PartialDate.FromYear(2019));
+
+        range.StartsOn.Should().Be(new DateOnly(2015, 1, 1));
+        range.EndsOn.Should().Be(new DateOnly(2019, 12, 31));
+        range.DurationInDays(new DateOnly(2026, 8, 9)).Should().Be(1825);
+    }
+
+    // The last day of a month is the calendar's answer, not a constant: February 2016 ends on the 29th.
+    // A convention hard-coded to the 28th, or to 30, would answer this one wrong and the three above
+    // right.
+    [Fact]
+    public void A_month_precision_end_in_a_leap_february_counts_to_the_twenty_ninth()
+    {
+        var range = DateRange.Create(
+            PartialDate.FromYearMonth(2016, 2),
+            PartialDate.FromYearMonth(2016, 2));
+
+        range.EndsOn.Should().Be(new DateOnly(2016, 2, 29));
+        range.DurationInDays(new DateOnly(2026, 8, 9)).Should().Be(28);
+    }
+
+    // An open-ended partial start still runs to the reference date, exactly as an open-ended full one
+    // does: "Present" is data about when the question was asked, not about the precision of the answer.
+    [Fact]
+    public void An_open_ended_month_precision_range_runs_from_the_first_to_the_reference_date()
+    {
+        var range = DateRange.Create(PartialDate.FromYearMonth(2015, 6));
+
+        range.IsCurrent.Should().BeTrue();
+        range.DurationInDays(new DateOnly(2026, 8, 9)).Should().Be(4087);
+    }
+
+    // The ordering rule is about whether the period can run forwards under ANY reading its precision
+    // allows, which is why an end stated more coarsely than the start is not automatically a violation.
+    [Fact]
+    public void A_range_that_could_run_forwards_under_its_stated_precision_is_accepted()
+    {
+        var act = () => DateRange.Create(
+            PartialDate.FromDate(new DateOnly(2020, 3, 15)),
+            PartialDate.FromYear(2020));
+
+        act.Should().NotThrow();
+    }
+
+    [Fact]
+    public void A_range_that_cannot_run_forwards_under_any_reading_is_refused()
+    {
+        var act = () => DateRange.Create(
+            PartialDate.FromYearMonth(2020, 4),
+            PartialDate.FromYearMonth(2020, 3));
+
+        act.Should().Throw<InvalidDateRangeException>()
+            .WithMessage("End date must be null or on/after start date.");
     }
 }
