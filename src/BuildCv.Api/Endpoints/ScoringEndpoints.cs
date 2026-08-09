@@ -80,6 +80,14 @@ public static class ScoringEndpoints
             return result.ToHttpResult(view => Results.Ok(AnalysisResponse.From(view.Analysis, view.IsStale)));
         })
         .Produces<AnalysisResponse>(StatusCodes.Status200OK)
+        // 400 IS REACHABLE AGAIN, and it was not when this list was written. The handler still makes no
+        // Domain-factory call, so nothing can hand ToHttpResult a message that falls to its else-arm —
+        // but `new AnalysisId(analysisId)` above runs BEFORE the handler, and the empty guid the `:guid`
+        // constraint happily matches now throws EmptyIdentifierException, which DomainExceptionHandler
+        // answers as a 400. It used to escape as a bare ArgumentException and answer 500 with a C#
+        // parameter name in the detail; see EmptyIdentifierException for why the fix is a 400 rather
+        // than a route constraint.
+        .ProducesProblem(StatusCodes.Status400BadRequest)
         .ProducesProblem(StatusCodes.Status403Forbidden)
         .ProducesProblem(StatusCodes.Status404NotFound)
         .WithSummary("Returns one stored analysis, readable only by the owner of the resume it scored.")

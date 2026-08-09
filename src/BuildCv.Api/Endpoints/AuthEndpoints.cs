@@ -74,15 +74,11 @@ public static class AuthEndpoints
             // not log you in — no cookie is set here and no token is returned. That is the honest
             // failure of an unauthenticated read, and a caller acts on it by calling /v1/auth/login,
             // whereas the 404 it replaces named a resource that did not exist at any credential.
-            return result.ToHttpResult(dto => Results.Created("/v1/auth/me", dto));
+            return result.ToHttpResult(dto => Results.Created("/v1/auth/me", AccountResponse.From(dto)));
         })
         .AllowAnonymous()
         .RequireRateLimiting(RateLimitPolicies.Auth)
-        // AccountDto is an Application type on the wire, which this repository's own rules forbid. It
-        // was already there; stating it here documents the wire as it IS rather than as it should be,
-        // and makes the debt visible to anyone reading the document instead of only to anyone reading
-        // this file.
-        .Produces<AccountDto>(StatusCodes.Status201Created)
+        .Produces<AccountResponse>(StatusCodes.Status201Created)
         .ProducesResultProblems()
         .ProducesProblem(StatusCodes.Status429TooManyRequests);
 
@@ -248,9 +244,9 @@ public static class AuthEndpoints
                 AuditLog.Log(logger, "password_changed", new AccountId(result.Value!.Id), httpContext);
             }
 
-            return result.ToHttpResult();
+            return result.ToHttpResult(dto => Results.Ok(AccountResponse.From(dto)));
         })
-        .Produces<AccountDto>(StatusCodes.Status200OK)
+        .Produces<AccountResponse>(StatusCodes.Status200OK)
         .ProducesResultProblems()
         .ProducesAuthProblems();
 
@@ -261,9 +257,9 @@ public static class AuthEndpoints
         {
             var requester = httpContext.User.GetAccountId();
             var result = await handler.Handle(new GetAccountQuery(requester, requester), cancellationToken);
-            return result.ToHttpResult();
+            return result.ToHttpResult(dto => Results.Ok(AccountResponse.From(dto)));
         })
-        .Produces<AccountDto>(StatusCodes.Status200OK)
+        .Produces<AccountResponse>(StatusCodes.Status200OK)
         .ProducesResultProblems()
         .ProducesAuthProblems();
 

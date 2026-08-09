@@ -70,7 +70,7 @@ builder.Services.AddAuthorizationBuilder()
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
-    options.OnRejected = (context, _) =>
+    options.OnRejected = async (context, cancellationToken) =>
     {
         RateLimitResponse.SetRetryAfter(context.HttpContext.Response, context.Lease);
 
@@ -87,7 +87,13 @@ builder.Services.AddRateLimiter(options =>
             ?? ThrottlePolicies.Global;
         context.HttpContext.RequestServices.GetRequiredService<BuildCvMetrics>().ThrottleRejection(policy);
 
-        return ValueTask.CompletedTask;
+        // LAST, and after the header and the metric on purpose: this starts the response, and nothing
+        // that follows a body write may touch the status code or a header. Before it, this callback set
+        // Retry-After and returned — so the global, `auth` and `logout` limiters answered 429 with an
+        // EMPTY body while the three account-scoped limiters answered ProblemDetails, which is one class
+        // of refusal with two shapes. See RateLimitResponse.WriteProblemAsync for why this one was an
+        // omission rather than a third platform-imposed exception.
+        await RateLimitResponse.WriteProblemAsync(context.HttpContext.Response, cancellationToken);
     };
     // Both limiters partition on the peer address, which is only the real client when the app is
     // either directly exposed or running with Network:ForwardedHeaders configured for its proxies.

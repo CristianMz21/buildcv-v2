@@ -1,3 +1,5 @@
+using BuildCv.Domain.Exceptions;
+
 namespace BuildCv.Domain.Resumes;
 
 public sealed record ResumeId
@@ -7,7 +9,7 @@ public sealed record ResumeId
     public ResumeId(Guid value)
     {
         if (value == Guid.Empty)
-            throw new ArgumentException("ResumeId must not be empty.", nameof(value));
+            throw new EmptyIdentifierException("ResumeId must not be empty.");
         Value = value;
     }
 

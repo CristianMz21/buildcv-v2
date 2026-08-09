@@ -109,10 +109,16 @@ public sealed class OpenApiDocumentTests
     //     That route creates a resume the caller owns by construction, so no other owner can forbid it
     //     and no existing entity can be missing; its failures are field errors that never reach
     //     ToHttpResult. A 400-only operation is a complete statement, not an omission.
-    //   - Demanding 400 alongside 403/404 then failed GET /v1/scoring/{analysisId}, also correctly.
-    //     Its handler makes no Domain-factory calls, so nothing can produce a message that falls to
-    //     ToHttpResult's else-arm. Declaring a 400 there would be documenting a response the route
-    //     cannot give, which is the same defect as omitting one it can.
+    //   - Demanding 400 alongside 403/404 then failed GET /v1/scoring/{analysisId}, correctly AT THE
+    //     TIME. Its handler makes no Domain-factory calls, so nothing the handler returns can fall to
+    //     ToHttpResult's else-arm, and declaring a 400 would have documented a response the route could
+    //     not give — the same defect as omitting one it can.
+    //     THAT ROUTE DECLARES 400 NOW, and the reason is worth keeping: the 400 never came from the
+    //     handler and still does not. `new AnalysisId(analysisId)` runs first, and the empty guid the
+    //     `:guid` constraint matches used to escape as a bare ArgumentException and answer 500 with a C#
+    //     parameter name in the body. It is EmptyIdentifierException — a DomainException — since then,
+    //     so the refusal is an ordinary 400. Reachability is decided per route by what the whole lambda
+    //     can produce, never by the handler alone; ByIdRouteTests pins the answer end to end.
     //
     // This exists because POST /v1/scoring/score did not. It was hand-annotated before that helper
     // existed, was not swept when the helper landed, and shipped declaring {200, 400, 404} while the

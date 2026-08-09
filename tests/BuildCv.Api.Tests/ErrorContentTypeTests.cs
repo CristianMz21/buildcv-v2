@@ -149,6 +149,114 @@ public sealed class ErrorContentTypeTests
         body.RootElement.GetProperty("detail").GetString().Should().Contain("JSON");
     }
 
+    // THE THIRD UNSHAPED REFUSAL, which was an omission rather than a platform limit.
+    //
+    // options.OnRejected set Retry-After, recorded a metric and returned, so every 429 from the
+    // rate-limiting MIDDLEWARE — the global 100/min limiter and the `auth` and `logout` policies — came
+    // back with Content-Length: 0 and no content type, while the three account-scoped limiters answered
+    // real ProblemDetails from inside their endpoints. One class of refusal, two bodies.
+    //
+    // THE BODY IS ASSERTED, NOT THE STATUS. A 429 that is never emitted and a 429 with an empty body are
+    // the same observable to a test that reads the status code alone, which is why the previous
+    // rate-limit tests could not have caught this. The Retry-After header is asserted beside it because
+    // writing a body starts the response, and anything that touched a header afterwards would be lost.
+    [Fact]
+    public async Task AThrottledRequest_IsTypedAsProblemJson()
+    {
+        using var factory = new ApiTestFactory();
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+
+        HttpResponseMessage? throttled = null;
+        for (var i = 0; i < 6 && throttled is null; i++)
+        {
+            var attempt = await client.PostAsJsonAsync("/v1/auth/login",
+                new { email = "nobody@example.com", password = "wrong-password" });
+            if (attempt.StatusCode == HttpStatusCode.TooManyRequests)
+                throttled = attempt;
+        }
+
+        throttled.Should().NotBeNull("the 5/min auth window must refuse the sixth attempt");
+
+        // 429 AND a parsed body together is also the measurement that the middleware applies
+        // RejectionStatusCode BEFORE invoking OnRejected. Were the order reversed, the write below would
+        // have started the response and the later assignment would throw — this would read 500.
+        throttled!.StatusCode.Should().Be(HttpStatusCode.TooManyRequests);
+        throttled.Headers.Should().Contain(h => h.Key == "Retry-After",
+            "the header is set before the body write and must survive it");
+
+        // Asserted BEFORE the media type, because a body-less response has no ContentType at all and
+        // dereferencing it would fail this test with a NullReferenceException — which says nothing about
+        // what went wrong. This is the regression's own signature: Content-Length 0, no content type.
+        (await throttled.Content.ReadAsStringAsync()).Should().NotBeEmpty(
+            "a 429 with an empty body is the omission this test exists to catch");
+        throttled.Content.Headers.ContentType.Should().NotBeNull(
+            "an unshaped 429 carries no content type at all");
+        throttled.Content.Headers.ContentType!.MediaType.Should().Be("application/problem+json",
+            "a throttled caller must be able to recognise the refusal by media type like every other one");
+
+        using var body = JsonDocument.Parse(await throttled.Content.ReadAsStringAsync());
+        body.RootElement.GetProperty("title").GetString().Should().Be("Too Many Requests");
+        body.RootElement.GetProperty("status").GetInt32().Should().Be(429);
+        body.RootElement.GetProperty("detail").GetString().Should().Be("Too many requests.",
+            "the middleware callback cannot name the limiter that refused, so the detail is generic");
+    }
+
+    // The two 429 WRITERS, compared against each other rather than each pinned alone. The middleware one
+    // and the account-scoped one are written by different code — OnRejected talks to HttpResponse
+    // directly, the endpoints call Results.Problem — so "both are ProblemDetails" is a claim about two
+    // implementations agreeing, and only a comparison can hold them together.
+    //
+    // The DETAILS differ on purpose and are not compared: an endpoint limiter knows which account it
+    // refused and says so, while OnRejectedContext carries only the HttpContext and the failed lease.
+    [Fact]
+    public async Task TheMiddlewareThrottleAndTheAccountThrottle_AnswerTheSameShape()
+    {
+        using var factory = new ApiTestFactory();
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+
+        // Two of the five auth-window permits, spent here so the loop below can exhaust the rest.
+        var (_, token) = await client.RegisterAndLoginAsync(TestHelpers.CandidateEmail);
+
+        HttpResponseMessage? accountThrottled = null;
+        for (var i = 0; i < 6 && accountThrottled is null; i++)
+        {
+            using var request = ChangePasswordRequest(token, "wrong-password");
+            var attempt = await client.SendAsync(request);
+            if (attempt.StatusCode == HttpStatusCode.TooManyRequests)
+                accountThrottled = attempt;
+        }
+
+        HttpResponseMessage? middlewareThrottled = null;
+        for (var i = 0; i < 6 && middlewareThrottled is null; i++)
+        {
+            var attempt = await client.PostAsJsonAsync("/v1/auth/login",
+                new { email = TestHelpers.CandidateEmail, password = "wrong-password" });
+            if (attempt.StatusCode == HttpStatusCode.TooManyRequests)
+                middlewareThrottled = attempt;
+        }
+
+        accountThrottled.Should().NotBeNull("PasswordChangeRateLimiter must refuse the sixth attempt");
+        middlewareThrottled.Should().NotBeNull("the auth window must refuse once its permits are spent");
+
+        foreach (var response in new[] { accountThrottled!, middlewareThrottled! })
+        {
+            response.Content.Headers.ContentType.Should().NotBeNull(
+                "an unshaped 429 carries no content type at all");
+            response.Content.Headers.ContentType!.MediaType.Should().Be("application/problem+json");
+
+            using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            body.RootElement.GetProperty("title").GetString().Should().Be("Too Many Requests");
+            body.RootElement.GetProperty("status").GetInt32().Should().Be(429);
+            body.RootElement.GetProperty("detail").GetString().Should().NotBeNullOrWhiteSpace();
+        }
+    }
+
+    private static HttpRequestMessage ChangePasswordRequest(string accessToken, string currentPassword) =>
+        new HttpRequestMessage(HttpMethod.Post, "/v1/auth/change-password")
+        {
+            Content = JsonContent.Create(new { currentPassword, newPassword = "An0ther!Password#2026" })
+        }.WithBearer(accessToken);
+
     private static async Task<HttpResponseMessage> UploadAsync(HttpClient client, string token)
     {
         using var content = new MultipartFormDataContent();

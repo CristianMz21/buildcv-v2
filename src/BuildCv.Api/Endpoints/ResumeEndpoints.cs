@@ -697,9 +697,18 @@ public static class ResumeEndpoints
         // they meet a requirement they do not. IsDefined runs on the CLR value before that conversion,
         // which is what closes all three.
         //
-        // It must stay IsDefined rather than "reject numeric input": GET returns level as a NUMBER
-        // (no JsonStringEnumConverter is configured), so a read-modify-write client legitimately POSTs
-        // 4 back. Valid numbers keep working; only undefined ones do not.
+        // It must stay IsDefined rather than "reject numeric input", and the REASON changed with v1
+        // while the conclusion did not. This used to read "GET returns level as a NUMBER", which was
+        // true when the route answered the Domain aggregate and no JsonStringEnumConverter was
+        // configured: a read-modify-write client had to be able to POST 4 back because 4 was what it
+        // had just been given. GET answers the NAME now — LanguageResponse.From calls ToString(), and
+        // ResumeContractTests asserts GetString() — so a round-tripping client sends "Native" and never
+        // needs the tolerance.
+        //
+        // The tolerance stays anyway, for every caller written against the old shape: refusing a number
+        // would be a behaviour change nobody asked for, and it would break them for no gain. What
+        // IsDefined still has to do is separate 0 and 4, which are real members, from 99, 300 and -1,
+        // which are not — and that job never depended on how GET renders the field.
         //
         // What this does NOT do is narrow the input space to the enum's own names. TryParse
         // OR-combines COMMA-SEPARATED members whether or not the type is [Flags], and the result is

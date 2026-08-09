@@ -2,6 +2,9 @@ using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading.RateLimiting;
+using BuildCv.Api.Common;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.WebUtilities;
 
 namespace BuildCv.Api.Security;
 
@@ -68,9 +71,25 @@ public static class RateLimitPartitions
     }
 }
 
+/// <summary>
+/// The 429 this API answers, written in one place so the middleware limiters and the account-scoped
+/// ones cannot drift into two different refusals for one class of event.
+/// </summary>
 public static class RateLimitResponse
 {
     private const string FallbackRetryAfterSeconds = "60";
+
+    /// <summary>
+    /// The detail carried by the 429 the rate-limiting MIDDLEWARE writes — the global 100/min limiter
+    /// and the <c>auth</c> and <c>logout</c> policies.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately generic. <c>OnRejectedContext</c> carries only the <c>HttpContext</c> and the failed
+    /// lease, so the callback cannot name the limiter that refused (the same reason the metric tag is
+    /// derived from endpoint metadata rather than from the lease). The three account-scoped limiters are
+    /// acquired inside their endpoints, where the caller IS known, so those keep their specific details.
+    /// </remarks>
+    public const string ThrottledDetail = "Too many requests.";
 
     public static void SetRetryAfter(HttpResponse response, RateLimitLease lease)
     {
@@ -80,5 +99,46 @@ public static class RateLimitResponse
         response.Headers.RetryAfter = lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter)
             ? ((int)Math.Ceiling(retryAfter.TotalSeconds)).ToString(CultureInfo.InvariantCulture)
             : FallbackRetryAfterSeconds;
+    }
+
+    /// <summary>
+    /// Writes the ProblemDetails body for a middleware-rejected request.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// WITHOUT THIS, <c>options.OnRejected</c> set a header and returned, so a 429 from the global,
+    /// <c>auth</c> or <c>logout</c> limiter carried <c>Content-Length: 0</c> and no content type, while
+    /// the three account-scoped limiters answered real ProblemDetails through <c>Results.Problem</c> —
+    /// one class of refusal, two bodies. It was an OMISSION, not one of the two refusals this API
+    /// documents as unshapeable: the 413 and the unterminated-multipart 400 are torn down inside Kestrel
+    /// and minimal-API form binding respectively, before any code here can run. This one had somewhere
+    /// to run all along.
+    /// </para>
+    /// <para>
+    /// The status code is NOT assigned here. <c>RateLimiterOptions.RejectionStatusCode</c> is the single
+    /// place it is stated, and the middleware applies it BEFORE invoking <c>OnRejected</c> — measured, by
+    /// asserting the status alongside a parsed body: were the order the other way round, writing here
+    /// would start the response and the later assignment would throw, turning the 429 into a 500.
+    /// </para>
+    /// <para>
+    /// <c>contentType</c> is passed to <c>WriteAsJsonAsync</c> rather than assigned to
+    /// <c>Response.ContentType</c> first, for the reason <see cref="ProblemDetailsContentType"/> records:
+    /// the overload without it overwrites the assignment with <c>application/json</c>.
+    /// </para>
+    /// </remarks>
+    public static Task WriteProblemAsync(HttpResponse response, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(response);
+
+        return response.WriteAsJsonAsync(
+            new ProblemDetails
+            {
+                Title = ReasonPhrases.GetReasonPhrase(StatusCodes.Status429TooManyRequests),
+                Detail = ThrottledDetail,
+                Status = StatusCodes.Status429TooManyRequests
+            },
+            options: null,
+            contentType: ProblemDetailsContentType.Value,
+            cancellationToken);
     }
 }
