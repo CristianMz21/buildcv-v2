@@ -153,6 +153,8 @@ public static class DependencyInjection
         services.AddScoped<ICommandHandler<AddExperienceCommand, Result<Resume>>, AddExperienceHandler>();
         services.AddScoped<ICommandHandler<AddEducationCommand, Result<Resume>>, AddEducationHandler>();
         services.AddScoped<ICommandHandler<AddSkillCommand, Result<Resume>>, AddSkillHandler>();
+        // One registration behind all ten DELETE routes; the section travels on the command.
+        services.AddScoped<ICommandHandler<RemoveResumeItemCommand, Result<Resume>>, RemoveResumeItemHandler>();
         services.AddScoped<ICommandHandler<AddProjectCommand, Result<Resume>>, AddProjectHandler>();
         services.AddScoped<ICommandHandler<AddCertificateCommand, Result<Resume>>, AddCertificateHandler>();
         services.AddScoped<ICommandHandler<AddLanguageCommand, Result<Resume>>, AddLanguageHandler>();

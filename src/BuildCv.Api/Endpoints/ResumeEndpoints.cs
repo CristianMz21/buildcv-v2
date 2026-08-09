@@ -711,6 +711,66 @@ public static class ResumeEndpoints
             return result.ToHttpResult(_ => Results.NoContent());
         });
 
+        MapItemDeletes(group);
+
         return group;
+    }
+
+    /// <summary>
+    /// The URL segment each collection is addressed by, paired with the section it names.
+    /// </summary>
+    /// <remarks>
+    /// The segments are the property names <c>ResumeResponse</c> uses and the ones the existing POST
+    /// routes already carry, so one CV renders from `GET /{id}`, and every entry's delete URL is its
+    /// own array's name plus its own id. Stated once as a table because ten hand-written route strings
+    /// is where the typo lives, and a typo here fails OPEN — the route simply never exists.
+    /// </remarks>
+    private static readonly (string Segment, ResumeSection Section)[] ItemSections =
+    [
+        ("experiences", ResumeSection.Experiences),
+        ("educations", ResumeSection.Educations),
+        ("skills", ResumeSection.Skills),
+        ("projects", ResumeSection.Projects),
+        ("certificates", ResumeSection.Certificates),
+        ("languages", ResumeSection.Languages),
+        ("awards", ResumeSection.Awards),
+        ("publications", ResumeSection.Publications),
+        ("interests", ResumeSection.Interests),
+        ("references", ResumeSection.References)
+    ];
+
+    // Ten routes, one handler. Everything a per-collection copy could get wrong — the ownership check
+    // above all — lives in RemoveResumeItemHandler and is written once.
+    //
+    // 204, not the resume. Every other write on this resource answers with the summary; a delete has
+    // nothing to describe, and returning the CV would invite a client to re-render from a body whose
+    // entry ids it must re-read anyway. Re-fetch GET /{id} when the ids matter.
+    private static void MapItemDeletes(RouteGroupBuilder group)
+    {
+        foreach (var (segment, section) in ItemSections)
+        {
+            group.MapDelete($"/{{id:guid}}/{segment}/{{itemId:int}}", async (
+                Guid id,
+                int itemId,
+                HttpContext httpContext,
+                ICommandHandler<RemoveResumeItemCommand, Result<Resume>> handler,
+                CancellationToken cancellationToken) =>
+            {
+                var result = await handler.Handle(
+                    new RemoveResumeItemCommand(
+                        httpContext.User.GetAccountId(), new ResumeId(id), section, itemId),
+                    cancellationToken);
+
+                return result.ToHttpResult(_ => Results.NoContent());
+            })
+            .WithSummary($"Removes one entry from a CV's {segment}.")
+            .WithDescription(
+                "`itemId` is the `id` that entry carries in `GET /v1/resumes/{id}` — the only route "
+                + "that hands them out. It is NOT the entry's position in the array: these collections "
+                + "come back from the store as sets, so a position can name a different entry between "
+                + "two reads. An id that names no entry of this CV answers 404, including one that is "
+                + "valid for a different CV. Answers 204 with no body; re-fetch the CV when you need "
+                + "the ids again, because an id is not reused after its entry is removed.");
+        }
     }
 }

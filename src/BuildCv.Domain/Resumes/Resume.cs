@@ -267,6 +267,43 @@ public sealed class Resume
         Touch();
     }
 
+    // ── Removal by position ───────────────────────────────────────────────────────────────────────
+    //
+    // THE Remove*(T) OVERLOADS ABOVE CANNOT DELETE THE ENTRY YOU MEAN when two hold the same value.
+    // They go through List.Remove, which removes the FIRST structurally-equal element, and six of these
+    // ten collections accept duplicates — only skills, certificates, languages and interests are
+    // name-unique. So asking to remove the second of two identical awards removes the first instead.
+    //
+    // The aggregate lands in the same state either way, which is why nothing here ever looked wrong.
+    // What differs is WHICH ROW the store deletes: EF removes the row of the instance that left the
+    // collection, so the surviving entry keeps the id the caller asked to delete. A client is then told
+    // its delete succeeded while the id it named is still in the next response, and the entry that
+    // vanished is one it never mentioned.
+    //
+    // Position is what the caller actually resolved — an id names an entry, and an entry sits at an
+    // index — so these take it directly. RemoveWorkExperience(int) already established the shape; it is
+    // left alone because its ArgumentOutOfRangeException is part of an existing contract, while an
+    // out-of-range index HERE means "no such entry", which is a not-found.
+    public void RemoveExperienceAt(int index) => RemoveAt(_experiences, index, "Experience");
+    public void RemoveEducationAt(int index) => RemoveAt(_educations, index, "Education");
+    public void RemoveSkillAt(int index) => RemoveAt(_skills, index, "Skill");
+    public void RemoveProjectAt(int index) => RemoveAt(_projects, index, "Project");
+    public void RemoveCertificateAt(int index) => RemoveAt(_certificates, index, "Certificate");
+    public void RemoveLanguageAt(int index) => RemoveAt(_languages, index, "Language");
+    public void RemoveAwardAt(int index) => RemoveAt(_awards, index, "Award");
+    public void RemovePublicationAt(int index) => RemoveAt(_publications, index, "Publication");
+    public void RemoveInterestAt(int index) => RemoveAt(_interests, index, "Interest");
+    public void RemoveReferenceAt(int index) => RemoveAt(_references, index, "Reference");
+
+    private void RemoveAt<T>(List<T> items, int index, string entryName)
+    {
+        if (index < 0 || index >= items.Count)
+            throw new EntryNotFoundException($"{entryName} not found in resume.");
+
+        items.RemoveAt(index);
+        Touch();
+    }
+
     public void UpdateContactInformation(ContactInformation contactInformation)
     {
         ArgumentNullException.ThrowIfNull(contactInformation);
