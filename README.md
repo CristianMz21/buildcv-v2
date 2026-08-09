@@ -4,6 +4,21 @@ Reconstrucción desde cero del analizador de hojas de vida — puntaje determini
 
 **Producto público gratuito** para buscadores de empleo hispanohablantes.
 
+## Los dos repositorios
+
+BuildCv v2 son dos repos separados, cada uno con su propio ciclo de vida:
+
+| Repo | Qué es |
+|---|---|
+| **`buildcv-v2`** (este) | La API. .NET 10, Clean Architecture, sin ninguna dependencia del cliente. |
+| **[`buildcv-v2-web`](https://github.com/CristianMz21/buildcv-v2-web)** | El cliente. Next.js, habla con esta API **server-side desde su BFF**, nunca desde el browser. |
+
+Están separados a propósito, y el costo está aceptado: **un cambio de contrato y el arreglo de su cliente ya no pueden ser un solo commit.** A cambio, cada uno despliega, versiona y falla por su cuenta.
+
+Lo que mantiene a los dos alineados es **[`docs/api-contract.md`](docs/api-contract.md)**: el contrato escrito para quien consume esta API, con la secuencia de autenticación, los límites de tamaño y frecuencia, y las trampas que OpenAPI no puede expresar. Sus números están afirmados contra las constantes del código por `ApiContractDocumentTests`, así que no pueden quedar obsoletos en silencio.
+
+Como el cliente usa un BFF, **CORS, `SameSite` y `Cross-Origin-Resource-Policy` no son problemas de este repo y no deben relajarse** — el tráfico servidor-a-servidor no está sujeto a ninguno de los tres.
+
 ## Stack
 
 - **Backend**: .NET 10, ASP.NET Core, Clean Architecture
