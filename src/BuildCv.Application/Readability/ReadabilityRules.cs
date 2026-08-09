@@ -223,9 +223,15 @@ internal static class ReadabilityRules
     {
         // Ordered by start, then by end, so the walk below reads the timeline forwards. The aggregate's
         // own list order is insertion order and says nothing about time.
+        // StartsOn and EndsOn throughout, never Start and End: those are PartialDates, which carry only
+        // as much precision as their source stated and are deliberately not orderable or subtractable.
+        // The two day-valued views ARE the convention on DateRange — a period runs from the first day its
+        // start could mean to the last day its end could mean — so a gap measured through them is the
+        // smallest one the document supports, which is the same direction every other judgement in these
+        // rules takes. A full-precision period is unaffected: both views are the stated day.
         var ordered = resume.Experiences
-            .OrderBy(experience => experience.Period.Start)
-            .ThenBy(experience => experience.Period.End ?? referenceDate)
+            .OrderBy(experience => experience.Period.StartsOn)
+            .ThenBy(experience => experience.Period.EndsOn ?? referenceDate)
             .ToList();
 
         List<EmploymentGap> gaps = [];
@@ -234,16 +240,16 @@ internal static class ReadabilityRules
 
         // An open-ended entry runs to the reference date, which is the same reading ScoringRules gives
         // DateRange.DurationInDays: "Present" means today, so a current role covers up to today.
-        var coverageEnd = ordered[0].Period.End ?? referenceDate;
+        var coverageEnd = ordered[0].Period.EndsOn ?? referenceDate;
 
         for (var index = 1; index < ordered.Count; index++)
         {
             var entry = ordered[index];
-            var gapDays = entry.Period.Start.DayNumber - coverageEnd.DayNumber;
+            var gapDays = entry.Period.StartsOn.DayNumber - coverageEnd.DayNumber;
             if (gapDays > MaxGapDays)
                 gaps.Add(new EmploymentGap(gapDays, entry));
 
-            var entryEnd = entry.Period.End ?? referenceDate;
+            var entryEnd = entry.Period.EndsOn ?? referenceDate;
             if (entryEnd > coverageEnd)
                 coverageEnd = entryEnd;
         }

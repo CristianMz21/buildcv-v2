@@ -177,11 +177,14 @@ internal static class ScoringRules
 
     internal static double CertificationsScore(double validCount) => Math.Clamp(validCount / CertificationCap, 0.0, 1.0);
 
+    // EndsOn, not End: an expiry the candidate stated only as a month expires on the LAST day of it,
+    // which is DateRange's convention everywhere and the reading that does not take a certificate away
+    // from someone whose card says "valid to 06/2027". A full date is unaffected — EndsOn is that day.
     internal static int ValidCertificateCount(Resume resume, DateOnly referenceDate) =>
         resume.Certificates.Count(c =>
             c.ValidityPeriod is null
             || c.ValidityPeriod.IsCurrent
-            || c.ValidityPeriod.End >= referenceDate);
+            || c.ValidityPeriod.EndsOn >= referenceDate);
 
     internal static double ProjectsScore(double qualifyingCount) => Math.Clamp(qualifyingCount / ProjectCap, 0.0, 1.0);
 

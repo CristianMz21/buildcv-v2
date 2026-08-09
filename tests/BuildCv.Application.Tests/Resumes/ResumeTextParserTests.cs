@@ -201,10 +201,11 @@ public sealed class ResumeTextParserTests
         draft.Experiences[0]!.End.Should().Be("2021-06-20");
     }
 
-    // A month-and-year or year-only date is recognised but left blank and flagged, with the raw snippet
-    // preserved so the candidate can complete it — no day is invented.
+    // A year-only date arrives as a YEAR, not as a blank and not as the first of January: the draft's
+    // date fields carry whatever precision their source stated. The source snippet is still preserved,
+    // because the candidate may want to make it more precise on the review screen.
     [Fact]
-    public void Parse_AYearOnlyDate_IsBlankAndFlaggedWithItsSource()
+    public void Parse_AYearOnlyDate_ArrivesAsAYearWithItsSource()
     {
         var (draft, confidence) = ResumeTextParser.Parse(
             """
@@ -217,10 +218,78 @@ public sealed class ResumeTextParserTests
             2019 - 2021
             """);
 
+        draft.Experiences![0]!.Start.Should().Be("2019");
+        draft.Experiences[0]!.End.Should().Be("2021");
+
+        var start = Provenance(confidence, "experiences[0].start")!;
+        start.Confidence.Should().Be(FieldConfidence.Medium);
+        start.SourceText.Should().Be("2019");
+    }
+
+    // THE FORMAT THIS WHOLE CHANGE EXISTS FOR, in the parser: a Spanish month name and a year, in both
+    // slots. It used to arrive blank and flagged on every job on the CV.
+    [Fact]
+    public void Parse_AMonthNameAndYearRange_ArrivesAsTwoMonthPrecisionDates()
+    {
+        var (draft, confidence) = ResumeTextParser.Parse(
+            """
+            Sam Doe
+            sam@example.com
+
+            EXPERIENCE
+            Engineer
+            Acme
+            junio 2015 - febrero 2019
+            """);
+
+        draft.Experiences![0]!.Start.Should().Be("2015-06");
+        draft.Experiences[0]!.End.Should().Be("2019-02");
+
+        Provenance(confidence, "experiences[0].start")!.Confidence.Should().Be(FieldConfidence.Medium);
+        Provenance(confidence, "experiences[0].start")!.SourceText.Should().Be("junio 2015");
+    }
+
+    // The numeric month/year shape, which is the other half of the dominant format. "06/2015" has a
+    // four-digit second field, so it is unambiguous even though the three-field numeric shapes are read
+    // day-first.
+    [Fact]
+    public void Parse_ANumericMonthAndYearRange_ArrivesAsTwoMonthPrecisionDates()
+    {
+        var (draft, _) = ResumeTextParser.Parse(
+            """
+            Sam Doe
+            sam@example.com
+
+            EXPERIENCE
+            Engineer
+            Acme
+            06/2015 - 02/2019
+            """);
+
+        draft.Experiences![0]!.Start.Should().Be("2015-06");
+        draft.Experiences[0]!.End.Should().Be("2019-02");
+    }
+
+    // Still blank and still flagged, and this is the rule that did NOT move: a two-digit year names no
+    // century, so there is nothing to resolve it to. Recognised so the job still appears.
+    [Fact]
+    public void Parse_ATwoDigitYearDate_IsStillBlankAndFlaggedWithItsSource()
+    {
+        var (draft, confidence) = ResumeTextParser.Parse(
+            """
+            Sam Doe
+            sam@example.com
+
+            EXPERIENCE
+            Engineer
+            Acme
+            03/95 - 06/98
+            """);
+
         draft.Experiences![0]!.Start.Should().BeNull();
         var start = Provenance(confidence, "experiences[0].start")!;
         start.Confidence.Should().Be(FieldConfidence.NotExtracted);
-        start.SourceText.Should().Be("2019");
+        start.SourceText.Should().Be("03/95");
     }
 
     [Fact]

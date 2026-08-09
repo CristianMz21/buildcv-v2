@@ -20,6 +20,13 @@ using BuildCv.Domain.Resumes;
 /// seconds; a wrong one they do not notice corrupts their score invisibly.
 /// </para>
 /// <para>
+/// A DATE ARRIVES AT THE PRECISION ITS SOURCE STATED, which is that rule rather than an exception to it:
+/// "June 2015" becomes <c>2015-06</c> and never <c>2015-06-01</c>, because the draft's date fields now
+/// hold a month or a year as readily as a day (see <c>PartialDate</c>). Before that was possible the same
+/// rule left the field empty and flagged, which was honest and cost the candidate a re-type on almost
+/// every job — month/year being the dominant format on real CVs.
+/// </para>
+/// <para>
 /// It extracts contact details, skills, languages and the date/organisation skeleton of experience and
 /// education — the fields a rule can reach with acceptable accuracy. Projects, certificates, awards,
 /// publications, interests and references are left for the candidate to fill, exactly as before this PR:
@@ -529,8 +536,10 @@ public static class ResumeTextParser
             return date.Value;
         }
 
-        // Recognised but incomplete (a month-and-year or a bare year): blank and flagged, with the raw
-        // snippet so the candidate can complete it.
+        // Recognised as a date attempt and resolving to nothing — a two-digit year, an impossible
+        // calendar date, a month outside 1..12. Blank and flagged, with the raw snippet so the candidate
+        // can complete it. A month-and-year or a bare year no longer lands here: it now carries its own
+        // precision and arrives above with a value, which is what CvDateParser's remarks describe.
         fields.Add(new FieldProvenance(path, FieldConfidence.NotExtracted, date.SourceText));
         return null;
     }

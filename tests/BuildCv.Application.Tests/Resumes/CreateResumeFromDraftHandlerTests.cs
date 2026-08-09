@@ -121,8 +121,8 @@ public class CreateResumeFromDraftHandlerTests
         experience.Type.Should().Be(ExperienceType.Professional);
         experience.Organization.Value.Should().Be("Mercado Libre");
         experience.Position.Should().Be("Senior Engineer");
-        experience.Period.Start.Should().Be(new DateOnly(2019, 3, 1));
-        experience.Period.End.Should().Be(new DateOnly(2023, 6, 30));
+        experience.Period.StartsOn.Should().Be(new DateOnly(2019, 3, 1));
+        experience.Period.EndsOn.Should().Be(new DateOnly(2023, 6, 30));
         experience.Summary.Should().Be("Payments platform.");
         experience.Highlights.Should().Equal("Cut latency in half");
 
@@ -130,8 +130,8 @@ public class CreateResumeFromDraftHandlerTests
         education.Institution.Value.Should().Be("Universidad de Buenos Aires");
         education.Degree.Should().Be("Ingeniero en Sistemas");
         education.FieldOfStudy.Should().Be("Software");
-        education.Period.Start.Should().Be(new DateOnly(2012, 3, 1));
-        education.Period.End.Should().Be(new DateOnly(2017, 12, 1));
+        education.Period.StartsOn.Should().Be(new DateOnly(2012, 3, 1));
+        education.Period.EndsOn.Should().Be(new DateOnly(2017, 12, 1));
         education.Grade.Should().Be("8.4");
         education.Level.Should().Be(EducationLevel.Bachelor);
 
@@ -142,8 +142,8 @@ public class CreateResumeFromDraftHandlerTests
 
         var project = stored.Projects.Should().ContainSingle().Subject;
         project.Name.Should().Be("buildcv");
-        project.Period.Start.Should().Be(new DateOnly(2024, 1, 1));
-        project.Period.End.Should().BeNull("an omitted end date means the project is current");
+        project.Period.StartsOn.Should().Be(new DateOnly(2024, 1, 1));
+        project.Period.EndsOn.Should().BeNull("an omitted end date means the project is current");
         project.Description.Should().Be("A CV scorer.");
         project.RepositoryUrl!.Value.Should().Be("https://github.com/janedev/buildcv");
         project.LiveDemoUrl!.Value.Should().Be("https://buildcv.example.com");
@@ -155,8 +155,8 @@ public class CreateResumeFromDraftHandlerTests
         certificate.Issuer.Value.Should().Be("Amazon");
         certificate.CredentialId.Should().Be("cred-123");
         certificate.CredentialUrl!.Value.Should().Be("https://aws.example.com/cred-123");
-        certificate.ValidityPeriod!.Start.Should().Be(new DateOnly(2024, 1, 1));
-        certificate.ValidityPeriod.End.Should().Be(new DateOnly(2027, 1, 1));
+        certificate.ValidityPeriod!.StartsOn.Should().Be(new DateOnly(2024, 1, 1));
+        certificate.ValidityPeriod.EndsOn.Should().Be(new DateOnly(2027, 1, 1));
 
         var language = stored.Languages.Should().ContainSingle().Subject;
         language.Name.Should().Be("Español");
@@ -613,7 +613,8 @@ public class CreateResumeFromDraftHandlerTests
 
         result.IsSuccess.Should().BeFalse();
         result.FieldErrors.Should().ContainSingle()
-            .Which.Should().Be(new FieldError("experiences[0].end", "Invalid date. Expected yyyy-MM-dd."));
+            .Which.Should().Be(new FieldError(
+                "experiences[0].end", "Invalid date. Expected yyyy-MM-dd, yyyy-MM or yyyy."));
     }
 
     // THE AGREEMENT TEST, and the reason the validator constructs instead of re-checking.

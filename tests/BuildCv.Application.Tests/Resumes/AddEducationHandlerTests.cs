@@ -30,7 +30,7 @@ public class AddEducationHandlerTests
         result.Value!.Educations.Should().HaveCount(1);
         result.Value.Educations[0].Institution.Value.Should().Be("MIT");
         result.Value.Educations[0].Degree.Should().Be("BSc");
-        result.Value.Educations[0].Period.End.Should().Be(new DateOnly(2022, 1, 1));
+        result.Value.Educations[0].Period.EndsOn.Should().Be(new DateOnly(2022, 1, 1));
         result.Value.Educations[0].Level.Should().Be(EducationLevel.Bachelor);
         (await _resumes.GetByIdAsync(resume.Id))!.Educations.Should().HaveCount(1);
     }

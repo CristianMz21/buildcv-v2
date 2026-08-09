@@ -23,13 +23,24 @@ namespace BuildCv.Infrastructure.Tests.Documents;
 // the number reflects the dominant real-world failure rather than hiding it.
 public sealed class ResumeExtractionCorpusTests
 {
-    // MEASURED at 95.7% (66/69) over 9 CVs after the parser-correctness fixes (findings A/B/C) added their
-    // three regression samples; the original six measured 94.2% (49/52). The three remaining misses are
-    // genuine (a two-column organisation that kept a leading "at", and a reversed employer/title order the
-    // parser swaps) — the corpus is not a parser grading itself. The corpus uses only Standard-14 PDF fonts
-    // and UTF-8 plain text, so extraction is deterministic across platforms and this floor is not flaky. A
-    // change that breaks several labels trips it. The floor stays 0.90 (a regression gate with headroom),
-    // not the measured number; raising it is only honest after a real parser improvement re-measures higher.
+    // MEASURED at 96.2% (76/79) over 10 CVs once dates carried the precision their source stated; before
+    // that it was 95.7% (66/69) over 9 CVs, and the original six measured 94.2% (49/52). The three
+    // remaining misses are genuine and unchanged (a two-column organisation that kept a leading "at", and
+    // a reversed employer/title order the parser swaps) — the corpus is not a parser grading itself.
+    //
+    // HALF A POINT IS NOT WHAT THAT CHANGE WAS WORTH, AND THE REASON IS IN THE LABELS RATHER THAN IN THE
+    // PARSER. The ground truth for a month-and-year date used to be <blank>, because <blank> was the
+    // correct answer under the contract of the day — so the parser scored a HIT for extracting nothing,
+    // and every candidate still re-typed the date. A metric whose labels encode the old contract cannot
+    // see that contract widen. What moved the number was relabelling those fields to the values they now
+    // carry and adding a sample in the format most CVs actually use; what moved for the candidate was
+    // every experience date on a month/year CV. Worth remembering the next time a number here does not
+    // move: ask what the labels were asserting before assuming nothing improved.
+    //
+    // The corpus uses only Standard-14 PDF fonts and UTF-8 plain text, so extraction is deterministic
+    // across platforms and this floor is not flaky. A change that breaks several labels trips it. The
+    // floor stays 0.90 (a regression gate with headroom), not the measured number; raising it is only
+    // honest after a real parser improvement re-measures higher, and this one re-measured by half a point.
     private const double PerFieldAccuracyFloor = 0.90;
 
     // Unscoped; see the note in DocumentTextExtractionTests.
@@ -121,8 +132,44 @@ public sealed class ResumeExtractionCorpusTests
         ReversedOrder(),
         SubLabelInsideExperience(),
         UnparseableRangeStart(),
-        TwoDigitYearDates()
+        TwoDigitYearDates(),
+        MonthAndYearDates()
     ];
+
+    // THE DOMINANT REAL FORMAT, through a PDF, in both of its spellings: a written month name and a
+    // numeric month/year. It is in the corpus because it is the shape most CVs actually use, so a
+    // regression in month parsing has to trip the gate rather than merely disappoint someone. Each date
+    // is labelled to the precision the document states — "June 2015" is 2015-06 and nothing finer.
+    private static Sample MonthAndYearDates()
+    {
+        var lines = new[]
+        {
+            "Priya Nair",
+            "priya.nair@example.com",
+            "",
+            "EXPERIENCE",
+            "Staff Engineer",
+            "Shopify",
+            "June 2015 - February 2019",
+            "",
+            "EDUCATION",
+            "Master of Science",
+            "Toronto",
+            "09/2011 - 06/2013",
+        };
+
+        return new Sample("month-and-year-dates", OneColumnPdf(HelveticaLines(lines)), "application/pdf",
+        [
+            new("name", "Priya Nair", d => d.Contact?.FullName),
+            new("email", "priya.nair@example.com", d => d.Contact?.Email),
+            new("exp.org", "Shopify", d => Experience(d, "Shopify")?.Organization),
+            new("exp.start", "2015-06", d => Experience(d, "Shopify")?.Start),
+            new("exp.end", "2019-02", d => Experience(d, "Shopify")?.End),
+            new("edu.institution", "Toronto", d => Education(d, "Toronto")?.Institution),
+            new("edu.start", "2011-09", d => Education(d, "Toronto")?.Start),
+            new("edu.end", "2013-06", d => Education(d, "Toronto")?.End),
+        ]);
+    }
 
     // English, one column, full numeric dates — the case the parser should do best on.
     private static Sample EnglishOneColumn()
@@ -177,8 +224,9 @@ public sealed class ResumeExtractionCorpusTests
         ]);
     }
 
-    // Spanish, plain text (UTF-8, accents intact, no font needed), month-and-year dates the parser must
-    // recognise but leave BLANK rather than invent a day for.
+    // Spanish, plain text (UTF-8, accents intact, no font needed), with the two partial date shapes a
+    // real CV uses: an abbreviated month name plus a year on the job, and bare years on the degree. Each
+    // must arrive at the precision it states — no invented day, and no longer a blank either.
     private static Sample SpanishPlainText()
     {
         const string text =
@@ -216,11 +264,15 @@ public sealed class ResumeExtractionCorpusTests
             new("skill.spring", "Spring", d => Skill(d, "Spring")),
             new("lang.spanish", "Native", d => LanguageLevel(d, "Español")),
             new("exp.org", "Telefónica", d => Experience(d, "Telefónica")?.Organization),
-            // A month-and-year start is recognised but left blank — no invented day.
-            new("exp.start.blank", null, d => Experience(d, "Telefónica")?.Start),
+            // "ene 2019" is January 2019 to the month, and NOT the first of January.
+            new("exp.start", "2019-01", d => Experience(d, "Telefónica")?.Start),
+            // "Actualidad" still leaves the end blank: an open end is not a date, at any precision.
             new("exp.end.present.blank", null, d => Experience(d, "Telefónica")?.End),
             new("edu.institution", "Universidad Complutense", d => Education(d, "Universidad Complutense")?.Institution),
             new("edu.level", "Bachelor", d => Education(d, "Universidad Complutense")?.Level),
+            // Bare years, the coarsest precision the domain holds.
+            new("edu.start", "2013", d => Education(d, "Universidad Complutense")?.Start),
+            new("edu.end", "2017", d => Education(d, "Universidad Complutense")?.End),
         ]);
     }
 

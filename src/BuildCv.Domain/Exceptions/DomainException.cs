@@ -55,6 +55,11 @@ public sealed class InvalidSlugException : DomainException
     public InvalidSlugException(string message) : base(message) { }
 }
 
+public sealed class InvalidPartialDateException : DomainException
+{
+    public InvalidPartialDateException(string message) : base(message) { }
+}
+
 public sealed class InvalidDateRangeException : DomainException
 {
     public InvalidDateRangeException(string message) : base(message) { }
