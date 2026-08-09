@@ -69,6 +69,88 @@ public class ValueObjectConverterTests
         act.Should().Throw<InvalidDateRangeException>();
     }
 
+    // THE OLD ROWS. Every DateRange any deployment has ever written is full precision in the exact
+    // yyyy-MM-dd/yyyy-MM-dd shape, so the one question this change has to answer about existing data is
+    // whether that text still reads — and it is answered from LITERALS rather than by round-tripping
+    // something this build wrote. A round trip would pass for any self-consistent encoding, including one
+    // that had stopped being able to read the column. These strings are what is in the column today.
+    [Theory]
+    [InlineData("2020-01-15/2023-07-01", 2020, 1, 15, 2023, 7, 1)]
+    [InlineData("1999-12-31/2000-01-01", 1999, 12, 31, 2000, 1, 1)]
+    [InlineData("2016-02-29/2024-02-29", 2016, 2, 29, 2024, 2, 29)]
+    [InlineData("2011-09-01/2015-06-15", 2011, 9, 1, 2015, 6, 15)]
+    public void DateRange_ARowWrittenBeforePartialPrecision_StillReadsAsTheSameTwoFullDates(
+        string stored, int startYear, int startMonth, int startDay, int endYear, int endMonth, int endDay)
+    {
+        var loaded = _dateRange.ConvertFromProvider(stored).Should().BeOfType<DateRange>().Which;
+
+        loaded.Start.Should().Be(PartialDate.FromDate(new DateOnly(startYear, startMonth, startDay)));
+        loaded.End.Should().Be(PartialDate.FromDate(new DateOnly(endYear, endMonth, endDay)));
+
+        // Both day views collapse onto the stated days, so nothing downstream reads a widened interval.
+        loaded.StartsOn.Should().Be(new DateOnly(startYear, startMonth, startDay));
+        loaded.EndsOn.Should().Be(new DateOnly(endYear, endMonth, endDay));
+
+        // And it writes back byte for byte, so a resume merely loaded and saved does not churn the column.
+        _dateRange.ConvertToProvider(loaded).Should().Be(stored);
+    }
+
+    [Theory]
+    [InlineData("2020-01-15/")]
+    [InlineData("1900-01-01/")]
+    public void DateRange_AnOpenEndedRowWrittenBeforePartialPrecision_StillReadsAsCurrent(string stored)
+    {
+        var loaded = _dateRange.ConvertFromProvider(stored).Should().BeOfType<DateRange>().Which;
+
+        loaded.IsCurrent.Should().BeTrue();
+        loaded.EndsOn.Should().BeNull();
+        _dateRange.ConvertToProvider(loaded).Should().Be(stored);
+    }
+
+    // The new forms, and the shape of the encoding: precision is the LENGTH of an endpoint, so a partial
+    // range writes fewer characters than the full one the column was sized for.
+    [Theory]
+    [InlineData("2015-06/2019-02")]
+    [InlineData("2015/2019")]
+    [InlineData("2015-06-15/2019-02")]
+    [InlineData("2015/2019-02-20")]
+    [InlineData("2015-06/")]
+    [InlineData("2015/")]
+    public void DateRange_APartialPrecisionRange_RoundTripsAndFitsTheDeclaredColumnWidth(string stored)
+    {
+        var loaded = _dateRange.ConvertFromProvider(stored).Should().BeOfType<DateRange>().Which;
+
+        _dateRange.ConvertToProvider(loaded).Should().Be(stored);
+        stored.Length.Should().BeLessThanOrEqualTo(DateRangeConverter.MaxLength);
+    }
+
+    [Fact]
+    public void DateRange_AMonthPrecisionRange_KeepsTheMonthRatherThanGainingADay()
+    {
+        var period = DateRange.Create(PartialDate.FromYearMonth(2015, 6), PartialDate.FromYearMonth(2019, 2));
+
+        _dateRange.ConvertToProvider(period).Should().Be("2015-06/2019-02");
+
+        var loaded = _dateRange.ConvertFromProvider("2015-06/2019-02").Should().BeOfType<DateRange>().Which;
+        loaded.Should().Be(period);
+        loaded.Start.Day.Should().BeNull("a stored month must not come back with a day");
+        loaded.End!.Day.Should().BeNull();
+    }
+
+    // The endpoint grammar is strict about width, because the width is what carries the precision. An
+    // unpadded month is not a second spelling of a stored value — it is text this converter never wrote.
+    [Theory]
+    [InlineData("2015-6/2019-02")]
+    [InlineData("2015-06-15/2019-2")]
+    [InlineData("201/2019")]
+    [InlineData("2015-06-15/2019-02-3")]
+    public void DateRange_PersistedTextThatIsNotOneOfTheThreeEndpointForms_FailsLoudly(string stored)
+    {
+        var act = () => _dateRange.ConvertFromProvider(stored);
+
+        act.Should().Throw<FormatException>();
+    }
+
     [Fact]
     public void Password_RoundTripsThroughTheHash()
     {
