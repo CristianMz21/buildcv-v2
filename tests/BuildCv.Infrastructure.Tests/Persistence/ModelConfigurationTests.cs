@@ -1,3 +1,5 @@
+using BuildCv.Domain.Common.ValueObjects;
+using BuildCv.Domain.Exceptions;
 using BuildCv.Domain.Identity;
 using BuildCv.Domain.Jobs;
 using BuildCv.Domain.Organizations;
@@ -168,6 +170,140 @@ public sealed class ModelConfigurationTests
         "ReadabilityRecommendation.Kind", "ReadabilityRecommendation.Impact",
     ];
 
+    // ---------------------------------------------------------------------------------------------
+    // THE BOUNDED PLAINTEXT LEDGER.
+    //
+    // Two EF Core events fire from INSIDE SaveChangesAsync — RelationalEventId.CommandError and
+    // CoreEventId.SaveChangesFailed, both Error level with the exception attached — so by the time
+    // SaveChangesExtensions catches SQL Server error 2628 and deliberately drops the inner exception,
+    // EF has already written the message. 2628 is "String or binary data would be truncated", and
+    // SQL Server composes that text with the OFFENDING VALUE quoted into it. Dropping the inner
+    // exception guards a door the value has already walked through.
+    //
+    // Filtering the log is not the fix and was measured before being rejected: CommandError fires for
+    // every failed DbCommand including reads, so silencing that category also hides connection
+    // failures, timeouts, deadlocks and permission errors with no substitute signal — and it would not
+    // close the hole anyway, because DbContext.SaveChangesFailed is a public .NET event and SQL
+    // auto-instrumentation reads the ADO.NET layer directly. EnableSensitiveDataLogging is not in the
+    // causal path either: it gates PARAMETER interpolation, never Exception.Message.
+    //
+    // So the defence has to be that the value never reaches SQL Server, which means every bounded
+    // plaintext column that can be handed arbitrary text needs a Domain rule refusing it first —
+    // Language.Name <= 100 is the precedent, added after exactly this error carried candidate text
+    // into a log. The pair of sets below is that requirement written down, and the exact-set assertion
+    // over them is what makes an OMISSION mechanical rather than something a reviewer has to remember:
+    // the same job EncryptedColumns_AreExactlyTheClassifiedSet does for the classification above.
+    //
+    // TWO CATEGORIES, AND THE ISSUE THAT ROUTED THIS OVERSTATES THE FIRST. Its wording is "every
+    // bounded plaintext column currently has a Domain rule". Seventeen columns carry a width; ELEVEN
+    // have one. The other six are numbers and dates whose width comes from the shape of their
+    // serialization, and writing the issue's sentence at the top of a ledger that disproves it is the
+    // defect this repository has spent its history removing — so it is corrected here rather than
+    // repeated.
+    //
+    // THE PAIRING CANNOT BE INFERRED, which is why it is authored rather than reflected over. Nothing
+    // joins a column to the rule that guards it: Skill.Name and JobRequirement.Skill are both defended
+    // by Technology's limit, on a third type entirely; JobPosting.Description is a plain string whose
+    // rule is imperative code inside a private ValidateDescription with no inspectable metadata; and
+    // the constants are spelled five different ways — MaxLength, MaxNameLength, MaxTitleLength,
+    // MaxDescriptionLength, MaxHashLength — with only LanguageRequirement.MaxNameLength public at all.
+    // ---------------------------------------------------------------------------------------------
+
+    // Column -> build a value of EXACTLY this many characters and push it through the Domain factory a
+    // caller really goes through. Entity factories, not just the value object underneath, so a factory
+    // that took a raw string past its value object would be caught here too.
+    //
+    // Each delegate is called TWICE, at the column's own width and at one character over, and both
+    // halves carry weight:
+    //
+    //   - ONE OVER MUST THROW, or the rule is missing and the next over-long value is a 2628 in a log.
+    //   - AT THE WIDTH MUST NOT THROW, and that is what makes the throw attributable to LENGTH. The two
+    //     calls differ by one character and nothing else, so a factory that would have refused this
+    //     shape of value at any size cannot pass by rejecting both.
+    //
+    // Together they also pin the two widths to each other: widen HasMaxLength without moving the Domain
+    // rule and the at-the-width call starts throwing; narrow the Domain rule and it throws as well.
+    //
+    // The four fillers below are declared BEFORE the ledger on purpose: a static field read from an
+    // earlier field's initializer is maybe-null to the compiler, whatever the runtime order turns out
+    // to be.
+    private static readonly Email SomeEmail = Email.Create("ledger@example.com");
+    private static readonly AccountId SomeAccount = AccountId.New();
+    private static readonly OrganizationName SomeCompany = OrganizationName.Create("Contoso");
+    private static readonly Slug SomeSlug = Slug.Create("contoso");
+
+    private static readonly Dictionary<string, Action<int>> BoundedByADomainLengthRule = new(StringComparer.Ordinal)
+    {
+        // The Argon2id hash, not the password. Through Account.Create so the entity factory is on the
+        // path, since it is the only thing standing between IPasswordHasher's output and the column.
+        ["Account.Password"] = length =>
+            Account.Create(SomeEmail, Password.Create(Argon2idHashOf(length)), Role.Candidate),
+
+        ["JobPosting.CompanyName"] = length =>
+            JobPosting.Create(SomeAccount, "Backend Developer", OrganizationName.Create(Filler(length))),
+        ["JobPosting.Description"] = length =>
+            JobPosting.Create(SomeAccount, "Backend Developer", SomeCompany, Filler(length)),
+        ["JobPosting.Title"] = length =>
+            JobPosting.Create(SomeAccount, Filler(length), SomeCompany),
+
+        // Both sides of the Technology limit, because one column reaching it does not prove the other
+        // does: these are different entities on different aggregates that happen to share a type.
+        ["JobRequirement.Skill"] = length =>
+            JobRequirement.Create(Technology.Create(Filler(length)), RequirementPriority.MustHave),
+        ["Skill.Name"] = length => Skill.Create(Technology.Create(Filler(length))),
+
+        // The column the rule was written for, and its opposite number in the Jobs context. They do not
+        // share a type on purpose — see the header on LanguageRequirement — so they need two entries.
+        ["Language.Name"] = length => Language.Create(Filler(length)),
+        ["LanguageRequirement.Name"] = length =>
+            LanguageRequirement.Create(Filler(length), LanguageProficiency.Professional),
+
+        ["Organization.Name"] = length =>
+            Organization.Create(OrganizationName.Create(Filler(length)), SomeSlug, SomeAccount),
+        ["Organization.Slug"] = length =>
+            Organization.Create(SomeCompany, Slug.Create(Filler(length)), SomeAccount),
+
+        ["Responsibility.Description"] = length => Responsibility.Create(Filler(length)),
+    };
+
+    // The other six. They carry a width and have NO Domain length rule, and adding one would be
+    // inventing a guard against an input they cannot receive: nothing here is written from a string.
+    //
+    //   - The four DateRange columns are serialized by DateRangeConverter as "<start>/<end>", each
+    //     endpoint being PartialDate.ToIsoString — "yyyy-MM-dd", "yyyy-MM" or "yyyy", the year
+    //     formatted D4 against DateOnly's own four-digit range. Twenty-one characters is the widest
+    //     string that grammar can produce, so the column is exactly as wide as its encoding.
+    //   - The two Weights columns hold one JSON object of a fixed arity of doubles plus an int
+    //     SchemaVersion. No member of either payload is a string.
+    //
+    // What that buys is precisely the thing the ledger defends. Even if one of these DID overflow, the
+    // value 2628 would quote back is a date range or an object of numbers — analytical data that is
+    // plaintext on this row already — and not a sentence a candidate wrote. The categories differ in
+    // what the leak would COST, which is why they are not merged and given one weaker rule.
+    private static readonly string[] BoundedByTheirSerializedShape =
+    [
+        "Certificate.ValidityPeriod",
+        "Education.Period",
+        "Experience.Period",
+        "Project.Period",
+        "ReadabilityBreakdown.Weights",
+        "ScoreBreakdown.Weights",
+    ];
+
+    // 'a' survives every normalization these factories apply — Trim, Normalize(FormC), the
+    // control-character refusals — and matches Slug's ^[a-z0-9]+(?:-[a-z0-9]+)*$, so the only thing
+    // that ever varies between the two calls is the count.
+    private static string Filler(int length) => new('a', length);
+
+    // Password.Create reads the algorithm from between the first two '$', so the prefix has to be real
+    // or the factory would refuse every length for the wrong reason -- which the at-the-width call
+    // would catch, but only after wasting a reader's afternoon.
+    private static string Argon2idHashOf(int length)
+    {
+        const string prefix = "$argon2id$";
+        return prefix + Filler(length - prefix.Length);
+    }
+
     // SEVEN, not six. ReadabilityReport is an aggregate root of its own and not a part of Analysis:
     // an Analysis requires a non-nullable JobPostingId, and a readability report is taken with no
     // posting in existence. It therefore has to carry the same table shape every other root does --
@@ -253,6 +389,76 @@ public sealed class ModelConfigurationTests
                 "{0} is analytical data the scoring engine and internal reporting have to query", path);
         }
     }
+
+    // The omission catch. Exact set equality against the model, in both directions, so a bounded
+    // plaintext column cannot be ADDED without landing in one of the two sets — which is the whole
+    // point, because the failure this guards against is a column arriving with no Domain rule and
+    // nobody noticing until an over-long value puts candidate text in an error log.
+    //
+    // Derived entirely at model-build time and needs no database: non-encrypted properties whose
+    // GetMaxLength() is non-null. Encrypted columns are excluded because their width is the ENVELOPE's
+    // rather than the plaintext's — every constant in EncryptedColumn is the envelope overhead over a
+    // plaintext its value object has ALREADY capped, and each one names that cap — so an over-long
+    // value is refused by the Domain long before there is anything to seal.
+    [Fact]
+    public void BoundedPlaintextColumns_AreExactlyTheClassifiedSet()
+    {
+        using var context = PersistenceTestContext.ModelOnly();
+
+        var actual = BoundedPlaintextProperties(context.Model)
+            .Select(entry => $"{Name(entry.EntityType)}.{entry.Property.Name}");
+
+        actual.Should().BeEquivalentTo(
+            BoundedByADomainLengthRule.Keys.Concat(BoundedByTheirSerializedShape),
+            "a bounded plaintext column with no Domain rule reaches SQL Server, and error 2628 quotes "
+            + "the value it refused into a message EF logs before ValueTooLongException can drop it");
+    }
+
+    // The ledger itself. The width comes from the MODEL rather than from a literal beside the delegate,
+    // so the two cannot be edited into agreement — moving HasMaxLength moves what this test demands.
+    [Theory]
+    [MemberData(nameof(FreeTextColumnPaths))]
+    public void EachFreeTextColumn_IsRefusedByItsDomainRuleAtExactlyTheColumnWidth(string path)
+    {
+        using var context = PersistenceTestContext.ModelOnly();
+
+        var declared = FindProperty(context.Model, path)?.GetMaxLength();
+        declared.Should().NotBeNull("{0} is listed as a bounded plaintext column", path);
+        var width = declared!.Value;
+
+        var construct = BoundedByADomainLengthRule[path];
+
+        construct.Invoking(build => build(width)).Should().NotThrow(
+            "a value that exactly fills {0} is legal, and this is what makes the refusal below "
+            + "attributable to length rather than to the factory disliking the value's shape", path);
+
+        construct.Invoking(build => build(width + 1)).Should().Throw<DomainException>(
+            "one character over {0} would otherwise reach SQL Server as error 2628, whose message "
+            + "quotes the offending value and is logged from inside SaveChangesAsync", path);
+    }
+
+    // The other half of the classification, and it is a one-way guard on purpose: it cannot prove a
+    // column is unreachable by free text, but it does stop a plain string column being parked in the
+    // serialization-bounded set to dodge the ledger. A converted non-string property can only be
+    // written through its converter, so its width is that converter's grammar rather than a caller's.
+    [Theory]
+    [MemberData(nameof(SerializationBoundedColumnPaths))]
+    public void EachSerializationBoundedColumn_IsWrittenThroughAConverterAndNotFromAString(string path)
+    {
+        using var context = PersistenceTestContext.ModelOnly();
+
+        var property = FindProperty(context.Model, path);
+
+        property.Should().NotBeNull("{0} is listed as a bounded plaintext column", path);
+        property!.ClrType.Should().NotBe(typeof(string),
+            "{0} claims its width comes from its serialization, which a string column cannot claim", path);
+        property.GetValueConverter().Should().NotBeNull(
+            "{0} has no Domain length rule, so the converter is the only thing bounding it", path);
+    }
+
+    public static TheoryData<string> FreeTextColumnPaths() => [.. BoundedByADomainLengthRule.Keys];
+
+    public static TheoryData<string> SerializationBoundedColumnPaths() => [.. BoundedByTheirSerializedShape];
 
     // The provenance columns, pinned separately rather than folded into HighValueAnalyticalColumns —
     // because that list's stated contract is "a column something really QUERIES", and these two are not
@@ -526,6 +732,12 @@ public sealed class ModelConfigurationTests
         model.GetEntityTypes()
             .SelectMany(entityType => entityType.GetProperties().Select(property => (entityType, property)))
             .Where(entry => entry.property.FindAnnotation(PersistenceAnnotations.Encrypted)?.Value is true);
+
+    private static IEnumerable<(IEntityType EntityType, IProperty Property)> BoundedPlaintextProperties(IModel model) =>
+        model.GetEntityTypes()
+            .SelectMany(entityType => entityType.GetProperties().Select(property => (entityType, property)))
+            .Where(entry => entry.property.FindAnnotation(PersistenceAnnotations.Encrypted)?.Value is not true)
+            .Where(entry => entry.property.GetMaxLength() is not null);
 
     private static IEnumerable<string> EncryptedIn(IEnumerable<IProperty> properties, string where) =>
         properties
