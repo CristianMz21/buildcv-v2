@@ -1,0 +1,3 @@
+# sharp backs next/image's optimizer. This app renders no <Image>, so its native build is not run.
+allowBuilds:
+  sharp: false
