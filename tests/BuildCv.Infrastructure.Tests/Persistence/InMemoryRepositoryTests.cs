@@ -2,6 +2,7 @@ using BuildCv.Domain.Common.ValueObjects;
 using BuildCv.Domain.Identity;
 using BuildCv.Domain.Jobs;
 using BuildCv.Domain.Organizations;
+using BuildCv.Domain.Readability;
 using BuildCv.Domain.Resumes;
 using BuildCv.Domain.Scoring;
 using BuildCv.Infrastructure.Persistence;
@@ -25,6 +26,18 @@ public class InMemoryRepositoryTests
             resumeId,
             JobPostingId.New(),
             DateTimeOffset.UtcNow);
+
+    private static ReadabilityReport NewReadabilityReport(ResumeId resumeId) =>
+        ReadabilityReport.Create(
+            ReadabilityReportId.New(),
+            ReadabilityBreakdown.Create(0.9, 0.8, 0.7, 0.6, 0.0, ReadabilityWeightsSnapshot.Default()),
+            resumeId,
+            DateTimeOffset.UtcNow,
+            [
+                ReadabilityRecommendation.Create(
+                    ReadabilitySectionType.Contact, RecommendationPriority.Important,
+                    ReadabilityRecommendationKind.NoPhoneNumber, "Add a phone number.", 0.05),
+            ]);
 
     [Fact]
     public async Task Account_add_and_get_by_id_roundtrip()
@@ -154,7 +167,8 @@ public class InMemoryRepositoryTests
     [Fact]
     public async Task Resume_add_and_get_by_id_roundtrip()
     {
-        var repository = new InMemoryResumeRepository(new InMemoryAnalysisRepository());
+        var repository = new InMemoryResumeRepository(
+            new InMemoryAnalysisRepository(), new InMemoryReadabilityReportRepository());
         var ownerId = AccountId.New();
         var resume = CreateResume(ownerId);
 
@@ -170,7 +184,8 @@ public class InMemoryRepositoryTests
     [Fact]
     public async Task Resume_delete_removes_it()
     {
-        var repository = new InMemoryResumeRepository(new InMemoryAnalysisRepository());
+        var repository = new InMemoryResumeRepository(
+            new InMemoryAnalysisRepository(), new InMemoryReadabilityReportRepository());
         var resume = CreateResume(AccountId.New());
         await repository.AddAsync(resume);
 
@@ -199,7 +214,7 @@ public class InMemoryRepositoryTests
     public async Task Resume_delete_also_removes_the_analyses_derived_from_it()
     {
         var analyses = new InMemoryAnalysisRepository();
-        var repository = new InMemoryResumeRepository(analyses);
+        var repository = new InMemoryResumeRepository(analyses, new InMemoryReadabilityReportRepository());
 
         var resume = CreateResume(AccountId.New());
         await repository.AddAsync(resume);
@@ -306,7 +321,8 @@ public class InMemoryRepositoryTests
     [Fact]
     public async Task Resume_pages_walk_newest_first_without_a_gap_or_a_repeat()
     {
-        var repository = new InMemoryResumeRepository(new InMemoryAnalysisRepository());
+        var repository = new InMemoryResumeRepository(
+            new InMemoryAnalysisRepository(), new InMemoryReadabilityReportRepository());
         var ownerId = AccountId.New();
         var mine = new List<Resume>();
         for (var index = 0; index < 5; index++)
@@ -341,7 +357,8 @@ public class InMemoryRepositoryTests
     [Fact]
     public async Task Resume_update_does_not_move_the_resume_in_the_page_order()
     {
-        var repository = new InMemoryResumeRepository(new InMemoryAnalysisRepository());
+        var repository = new InMemoryResumeRepository(
+            new InMemoryAnalysisRepository(), new InMemoryReadabilityReportRepository());
         var ownerId = AccountId.New();
         var first = CreateResume(ownerId);
         var second = CreateResume(ownerId);
@@ -406,5 +423,89 @@ public class InMemoryRepositoryTests
         firstPage.Items.Select(analysis => analysis.Id).Should().Equal(history[0], history[1]);
         secondPage.Items.Select(analysis => analysis.Id).Should().Equal(history[2]);
         secondPage.NextCursor.Should().BeNull();
+    }
+
+    // The same direction, on the second aggregate keyed by ResumeId, and asserted here rather than left
+    // to the handler tests: the whole Api suite runs on this store, so a store that answered newest
+    // first would certify a history production replays the other way round.
+    //
+    // TWO PAGES, not one. A single page of three would come back in the same ORDER either way — the
+    // boundary comparison is what flips with the direction, and it is only exercised once a cursor is
+    // carried. Reversing this store's `>` to `<` leaves page one identical and empties page two.
+    [Fact]
+    public async Task ReadabilityReport_pages_walk_oldest_first()
+    {
+        var repository = new InMemoryReadabilityReportRepository();
+        var resumeId = ResumeId.New();
+        var history = new List<ReadabilityReportId>();
+        for (var index = 0; index < 3; index++)
+        {
+            var report = NewReadabilityReport(resumeId);
+            await repository.AddAsync(report);
+            history.Add(report.Id);
+        }
+
+        var firstPage = await repository.GetPageByResumeIdAsync(resumeId, PageRequests.Of(2));
+        var secondPage = await repository.GetPageByResumeIdAsync(
+            resumeId, PageRequests.Of(2, firstPage.NextCursor));
+
+        firstPage.Items.Select(report => report.Id).Should().Equal(history[0], history[1]);
+        secondPage.Items.Select(report => report.Id).Should().Equal(history[2]);
+        secondPage.NextCursor.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ReadabilityReport_get_by_resume_id_filters_by_resume()
+    {
+        var repository = new InMemoryReadabilityReportRepository();
+        var resumeId = ResumeId.New();
+        var mine = NewReadabilityReport(resumeId);
+        var somebodyElses = NewReadabilityReport(ResumeId.New());
+
+        await repository.AddAsync(mine);
+        await repository.AddAsync(somebodyElses);
+
+        var page = await repository.GetPageByResumeIdAsync(resumeId, PageRequests.Of());
+
+        page.Items.Should().ContainSingle().Which.Should().Be(mine);
+        (await repository.GetByIdAsync(somebodyElses.Id)).Should().Be(somebodyElses,
+            "filtering the list must not have made the other resume's report unreadable by id");
+    }
+
+    // THE PARITY THAT ONLY BECAME OBSERVABLE WHEN THE PORT GREW A READ.
+    // ResumeRepositoryTests.DeleteAsync_AlsoTombstonesTheReadabilityReportsDerivedFromTheResume makes
+    // the same claim against a real SQL Server, and until now it had to read the table through
+    // IgnoreQueryFilters because no port method could ask. This store dropped nothing at all, and the
+    // Api suite runs on it — so the first handler to read a report without loading its resume first
+    // would have been certified green against behaviour production does not have, on a promise that
+    // matters more here than for scoring: a readability recommendation quotes the candidate's own
+    // bullet points and job titles.
+    //
+    // BOTH READ PORTS and a BYSTANDER, for the reasons written on the analysis test above.
+    [Fact]
+    public async Task Resume_delete_also_removes_the_readability_reports_derived_from_it()
+    {
+        var reports = new InMemoryReadabilityReportRepository();
+        var repository = new InMemoryResumeRepository(new InMemoryAnalysisRepository(), reports);
+
+        var resume = CreateResume(AccountId.New());
+        await repository.AddAsync(resume);
+        var derived = NewReadabilityReport(resume.Id);
+        await reports.AddAsync(derived);
+
+        var survivor = CreateResume(AccountId.New());
+        await repository.AddAsync(survivor);
+        var bystander = NewReadabilityReport(survivor.Id);
+        await reports.AddAsync(bystander);
+
+        await repository.DeleteAsync(resume.Id);
+
+        (await reports.GetByIdAsync(derived.Id)).Should().BeNull("the resume it was derived from is gone");
+        (await reports.GetPageByResumeIdAsync(resume.Id, PageRequests.Of())).Items
+            .Should().BeEmpty("the history is not merely unreachable by id, it is gone from the list too");
+
+        (await reports.GetByIdAsync(bystander.Id)).Should().Be(bystander);
+        (await reports.GetPageByResumeIdAsync(survivor.Id, PageRequests.Of())).Items
+            .Should().ContainSingle().Which.Should().Be(bystander);
     }
 }

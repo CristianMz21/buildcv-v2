@@ -185,6 +185,8 @@ public static class DependencyInjection
 
         // Readability
         services.AddScoped<ICommandHandler<EvaluateResumeReadabilityCommand, Result<ReadabilityReport>>, EvaluateResumeReadabilityHandler>();
+        services.AddScoped<IQueryHandler<GetReadabilityReportByIdQuery, Result<ReadabilityReport>>, GetReadabilityReportByIdHandler>();
+        services.AddScoped<IQueryHandler<GetReadabilityHistoryQuery, Result<Page<ReadabilityReport>>>, GetReadabilityHistoryHandler>();
 
         return services;
     }
@@ -299,22 +301,23 @@ public static class DependencyInjection
         services.AddSingleton<IJobPostingRepository, InMemoryJobPostingRepository>();
         services.AddSingleton<IOrganizationRepository, InMemoryOrganizationRepository>();
 
-        // CONCRETE FIRST, THEN FORWARDED — and here the forwarding is load-bearing rather than a test
-        // convenience. InMemoryResumeRepository.DeleteAsync has to reach the analyses derived from the
-        // resume it is deleting, mirroring ResumeRepository.CascadeToAnalysesAsync, and the method that
-        // does it is deliberately not on IAnalysisRepository. Registered as the interface alone, the two
-        // singletons would be different objects and the cascade would empty a store nothing reads.
+        // CONCRETE FIRST, THEN FORWARDED — and for BOTH of the stores keyed by ResumeId, because in each
+        // case the forwarding is load-bearing rather than a test convenience.
+        // InMemoryResumeRepository.DeleteAsync has to reach the analyses AND the readability reports
+        // derived from the resume it is deleting, mirroring ResumeRepository.CascadeToAnalysesAsync and
+        // CascadeToReadabilityReportsAsync, and the methods that do it are deliberately not on the ports.
+        // Registered as the interfaces alone, the singletons would be different objects and each cascade
+        // would empty a store nothing reads.
+        //
+        // The readability store is ALSO resolved concretely by the Api tests, which read its Count to
+        // observe that a request wrote at all — a claim no assertion about a response body can make.
         services.AddSingleton<InMemoryAnalysisRepository>();
         services.AddSingleton<IAnalysisRepository>(
             provider => provider.GetRequiredService<InMemoryAnalysisRepository>());
-        services.AddSingleton<IResumeRepository, InMemoryResumeRepository>();
-
-        // Registered as the CONCRETE type first and then forwarded, so a test host can resolve
-        // InMemoryReadabilityReportRepository and read its Count. The port has no read method, so
-        // "did that request write a report" is otherwise unobservable from outside the process.
         services.AddSingleton<InMemoryReadabilityReportRepository>();
         services.AddSingleton<IReadabilityReportRepository>(
             provider => provider.GetRequiredService<InMemoryReadabilityReportRepository>());
+        services.AddSingleton<IResumeRepository, InMemoryResumeRepository>();
     }
 
     // Development gets it for free. Anything else has to say so — EXCEPT Production, which cannot say so

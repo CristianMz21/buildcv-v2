@@ -107,7 +107,14 @@ public sealed class V1ContractShapeTests
         // `band` at the root — four names already in the set above — plus `readabilityScore`, which is
         // genuinely numeric and deliberately absent from it. Rule 1 matters here too: the response is
         // built from a DTO, so the ResumeId that would otherwise serialize as {"value": guid} is bare.
-        await Collect($"/v1/resumes/{resumeId}/readability", HttpMethod.Post, candidate);
+        var readabilityId = (await Collect($"/v1/resumes/{resumeId}/readability", HttpMethod.Post, candidate))
+            .GetProperty("id").GetGuid();
+
+        // And both READ paths for it. The same DTO renders all three, so the sweep would catch a wrapper
+        // on any of them — but the read paths are the ones a reloaded aggregate travels, which is where
+        // a Domain type reaching the wire is least likely to have been noticed when it was written.
+        await Collect($"/v1/readability/{readabilityId}", HttpMethod.Get, candidate);
+        await Collect($"/v1/resumes/{resumeId}/readability", HttpMethod.Get, candidate);
 
         var organizationId = (await Collect("/v1/organizations", HttpMethod.Post, candidate,
             new { name = "Contoso", slug = "contoso" })).GetProperty("id").GetGuid();
@@ -127,7 +134,7 @@ public sealed class V1ContractShapeTests
 
         // Guards the sweep itself: an empty or truncated list would pass both rules vacuously, and this
         // is the number of routes the walk is claimed to cover.
-        bodies.Should().HaveCount(20);
+        bodies.Should().HaveCount(22);
 
         foreach (var (route, body) in bodies)
         {
