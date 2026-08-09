@@ -41,6 +41,12 @@ public static class ScoringEndpoints
         // this route can answer.
         .Produces<AnalysisResponse>(StatusCodes.Status200OK)
         .ProducesProblem(StatusCodes.Status400BadRequest)
+        // 403 IS REACHABLE TWICE, and this list omitted it while the comment above named it. Both paths
+        // are in ScoreResumeHandler: a resume the caller does not own, and a posting that is neither
+        // published nor theirs. Scoring is deliberately narrower than GET /jobs/{id}, so the second is an
+        // ORDINARY refusal rather than an edge case -- and a client generated from this document had no
+        // typed case for it. OpenApiDocumentTests keeps 403 and 404 travelling together from here on.
+        .ProducesProblem(StatusCodes.Status403Forbidden)
         .ProducesProblem(StatusCodes.Status404NotFound)
         .WithSummary("Scores a resume against a job posting, reusing an identical run rather than repeating it.")
         .WithDescription(
