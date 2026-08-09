@@ -2,22 +2,25 @@ namespace BuildCv.Application.Resumes;
 
 using System.Globalization;
 using System.Text.RegularExpressions;
+using BuildCv.Domain.Common.ValueObjects;
 
 /// <summary>
-/// One date read from CV text: either a confident full date, or a date that was recognised but could not
-/// be pinned to a full <c>yyyy-MM-dd</c>.
+/// One date read from CV text: either a date stated to some precision the domain can hold, or a date
+/// that was recognised and still could not be resolved to one.
 /// </summary>
 /// <param name="Value">
-/// The full date as <c>yyyy-MM-dd</c> when — and only when — the source stated a day, a month and a year.
-/// Null otherwise. See <see cref="CvDateParser"/> for why month-and-year is deliberately NOT enough.
+/// The date, written to THE PRECISION THE SOURCE STATED and no finer: <c>yyyy-MM-dd</c> when the source
+/// gave a day, <c>yyyy-MM</c> when it gave a month and a year, <c>yyyy</c> when it gave a bare year. Null
+/// when the span was recognised as a date attempt but resolves to nothing — a two-digit year, an
+/// impossible calendar date, a month outside 1..12. See <see cref="CvDateParser"/>.
 /// </param>
 /// <param name="Recognized">
 /// True when the parser is willing to TREAT this span as a date — a full date, a month name + year, a
 /// bare year, a numeric month/year, or a numeric date with a 2-digit year — even if <see cref="Value"/>
-/// is null because it could not be pinned to a full <c>yyyy-MM-dd</c>. A recognised atom is what lets a
-/// line become a dated entry, so the caller can flag "there was a date here I could not complete" rather
-/// than stay silent. False marks a date-SHAPED span the parser will NOT stand behind as a date on its own
-/// — a <c>"&lt;word&gt; &lt;year&gt;"</c> whose word is not a month ("Invierno 2020", "Engineer 2019").
+/// is null because it resolves to nothing. A recognised atom is what lets a line become a dated entry, so
+/// the caller can flag "there was a date here I could not complete" rather than stay silent. False marks
+/// a date-SHAPED span the parser will NOT stand behind as a date on its own — a
+/// <c>"&lt;word&gt; &lt;year&gt;"</c> whose word is not a month ("Invierno 2020", "Engineer 2019").
 /// Such a span never turns a line into a dated entry by itself, but it still HOLDS its position inside a
 /// range, so the real date beside it is not misattributed to the wrong end (see <see cref="FindRange"/>).
 /// </param>
@@ -34,19 +37,23 @@ public sealed record CvDate(string? Value, bool Recognized, string SourceText);
 public sealed record CvDateRange(CvDate Start, CvDate? End, bool EndIsPresent, string SourceText);
 
 /// <summary>
-/// Parses the date shapes real CVs use, into <c>yyyy-MM-dd</c> where that can be done WITHOUT inventing
-/// anything.
+/// Parses the date shapes real CVs use, each to THE PRECISION IT STATED and never one field finer.
 /// </summary>
 /// <remarks>
 /// <para>
 /// A full date is produced ONLY from a day+month+year source: <c>2019-03-15</c>, <c>15/03/2019</c>,
-/// <c>15-03-2019</c>. A month-and-year (<c>"Marzo 2020"</c>, <c>"01/2019"</c>) and a bare year
-/// (<c>"2019"</c>) are RECOGNISED but return a null value — because the domain's <c>DateRange</c> wants a
-/// full date, and turning "Marzo 2020" into "2020-03-01" invents a day the candidate never wrote. Per the
-/// governing rule of this PR, a field the parser is unsure about arrives empty and flagged, not guessed:
-/// the caller leaves the draft date blank and shows the source snippet so the candidate types the ten
-/// characters. Most real employment dates are month precision, so most will be left blank — that is the
-/// intended, safe outcome, not a gap to close by guessing the day.
+/// <c>15-03-2019</c>. A month-and-year source (<c>"Marzo 2020"</c>, <c>"01/2019"</c>, <c>"2019-03"</c>)
+/// produces <c>yyyy-MM</c> and a bare year produces <c>yyyy</c> — NOT <c>2020-03-01</c>, which would
+/// invent a day the candidate never wrote. The governing rule has not moved: nothing here fills in a
+/// field the source did not state. What changed is what the field can hold — the domain's
+/// <c>PartialDate</c> can now carry a date with no day, so the honest reading of "Marzo 2020" is a value
+/// rather than a blank. Month/year is the dominant format on real CVs, which is why this is the
+/// difference between a candidate confirming a date and re-typing one.
+/// </para>
+/// <para>
+/// A span that resolves to NOTHING is still flagged rather than dropped: a two-digit year, a calendar
+/// date that does not exist, a numeric month outside 1..12. Those return a null value with
+/// <c>Recognized</c> true, so the entry still appears on the review screen with its source snippet.
 /// </para>
 /// <para>
 /// Numeric dates are read DAY-FIRST (<c>15/03/2019</c> is 15 March), the Spanish-market convention; when
@@ -135,9 +142,26 @@ public static class CvDateParser
                 // the slot this one occupied — "Invierno 2020 - 15/03/2021" would promote 15/03/2021 to the
                 // START and lose the real start. The placeholder does not turn a line into a dated entry on
                 // its own (FindRange requires a RECOGNISED atom), but it holds this position inside a range.
-                yield return Months.ContainsKey(ResumeSectionHeadings.Normalize(match.Groups["mw"].Value))
-                    ? new CvDate(null, Recognized: true, source)
+                //
+                // "Marzo 2020" resolves to 2020-03 — month precision, which is what it says. Whether the
+                // word is a month decides RECOGNITION exactly as it did; only the value is new.
+                yield return Months.TryGetValue(ResumeSectionHeadings.Normalize(match.Groups["mw"].Value), out var namedMonth)
+                    ? new CvDate(YearMonth(match.Groups["my"].Value, namedMonth), Recognized: true, source)
                     : new CvDate(null, Recognized: false, source);
+            }
+            else if (match.Groups["nummonthyear"].Success)
+            {
+                // "06/2015". A four-digit second field is a year, so this is unambiguous even though the
+                // day-first assumption governs the three-field numeric shapes above.
+                var parts = match.Value.Split('/');
+                yield return new CvDate(YearMonth(parts[1], parts[0]), Recognized: true, source);
+            }
+            else if (match.Groups["yearmonth"].Success)
+            {
+                // "2015-06" or "2015/6". A month outside 1..12 resolves to nothing and stays flagged —
+                // "2015-13" is a date attempt, not a date.
+                var parts = match.Value.Split('-', '/');
+                yield return new CvDate(YearMonth(parts[0], parts[1]), Recognized: true, source);
             }
             else if (match.Groups["shortdate"].Success)
             {
@@ -154,8 +178,8 @@ public static class CvDateParser
             }
             else
             {
-                // nummonthyear, yearmonth, bare year: date-shaped but not a full date.
-                yield return new CvDate(null, Recognized: true, source);
+                // A bare year. The regex admits only 19xx and 20xx, so this always resolves.
+                yield return new CvDate(Year(match.Value), Recognized: true, source);
             }
         }
     }
@@ -201,6 +225,27 @@ public static class CvDateParser
         value = string.Empty;
         return false;
     }
+
+    // The partial forms are written by PartialDate rather than by a format string here, so what this
+    // parser emits is by construction what ResumeDraftValidator accepts and what the column stores.
+    // Anything outside the calendar or outside the plausible-year window resolves to nothing; the caller
+    // still shows the source snippet, which is the pre-existing "recognised but not resolved" path.
+    private static string? YearMonth(string yearText, string monthText) =>
+        int.TryParse(monthText, out var month) ? YearMonth(yearText, month) : null;
+
+    private static string? YearMonth(string yearText, int month) =>
+        int.TryParse(yearText, out var year) && IsPlausibleYear(year) && month is >= 1 and <= 12
+            ? PartialDate.FromYearMonth(year, month).ToIsoString()
+            : null;
+
+    private static string? Year(string yearText) =>
+        int.TryParse(yearText, out var year) && IsPlausibleYear(year)
+            ? PartialDate.FromYear(year).ToIsoString()
+            : null;
+
+    // The same window TryBuild applies to a full date, so one parser does not read "0450" as a year in
+    // one shape and refuse it in another.
+    private static bool IsPlausibleYear(int year) => year is >= 1900 and <= 2100;
 
     private static Dictionary<string, int> BuildMonths()
     {
