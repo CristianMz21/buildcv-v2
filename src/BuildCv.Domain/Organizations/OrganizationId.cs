@@ -1,3 +1,5 @@
+using BuildCv.Domain.Exceptions;
+
 namespace BuildCv.Domain.Organizations;
 
 public sealed record OrganizationId
@@ -7,7 +9,7 @@ public sealed record OrganizationId
     public OrganizationId(Guid value)
     {
         if (value == Guid.Empty)
-            throw new ArgumentException("OrganizationId must not be empty.", nameof(value));
+            throw new EmptyIdentifierException("OrganizationId must not be empty.");
         Value = value;
     }
 

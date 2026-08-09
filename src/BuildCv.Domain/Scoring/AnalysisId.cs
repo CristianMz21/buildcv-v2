@@ -1,3 +1,5 @@
+using BuildCv.Domain.Exceptions;
+
 namespace BuildCv.Domain.Scoring;
 
 public sealed record AnalysisId
@@ -7,7 +9,7 @@ public sealed record AnalysisId
     public AnalysisId(Guid value)
     {
         if (value == Guid.Empty)
-            throw new ArgumentException("AnalysisId must not be empty.", nameof(value));
+            throw new EmptyIdentifierException("AnalysisId must not be empty.");
         Value = value;
     }
 

@@ -42,18 +42,18 @@ public static class ReadabilityEndpoints
             return result.ToHttpResult(report => Results.Ok(ReadabilityResponse.From(report)));
         })
         .Produces<ReadabilityResponse>(StatusCodes.Status200OK)
-        // 403 AND 404 ONLY, hand-listed rather than through ProducesResultProblems() — the same
-        // judgement OpenApiDocumentTests records for GET /v1/scoring/{analysisId}, which this route is
-        // the sibling of. That helper also declares 400, and this handler cannot produce one:
-        // GetReadabilityReportByIdHandler makes no Domain-factory call, so nothing can hand
-        // ToHttpResult a message that falls to its else-arm. Declaring a response the route cannot give
-        // is the same defect as omitting one it can.
+        // STILL HAND-LISTED rather than through ProducesResultProblems(), but the list is now the same
+        // three that helper would give. The reasoning changed under it, so it is restated rather than
+        // replaced: GetReadabilityReportByIdHandler makes no Domain-factory call, so nothing the HANDLER
+        // returns can fall to ToHttpResult's else-arm — the 400 comes from the line above it.
         //
-        // Measured, because the obvious counter-example is a zero GUID in the path: it answers 500, not
-        // 400. `new ReadabilityReportId(Guid.Empty)` throws in the endpoint before the handler runs, and
-        // a bare ArgumentException matches no IExceptionHandler branch. That is the pre-existing
-        // behaviour of every by-id route here — /v1/scoring/{analysisId} answers 500 on the same input —
-        // so it is stated rather than declared, and fixing it belongs to whoever fixes all of them.
+        // A zero GUID in the path is what reaches it. `new ReadabilityReportId(Guid.Empty)` throws
+        // before the handler runs, and that used to be a bare ArgumentException matching no
+        // IExceptionHandler branch, so this route and every other by-id route answered 500 with a C#
+        // parameter name in the detail. It is EmptyIdentifierException now — a DomainException, which
+        // DomainExceptionHandler answers as a 400 — so the response this comment used to state as
+        // unreachable is the ordinary one, and declaring it is no longer documenting a lie.
+        .ProducesProblem(StatusCodes.Status400BadRequest)
         .ProducesProblem(StatusCodes.Status403Forbidden)
         .ProducesProblem(StatusCodes.Status404NotFound)
         // 401 and 429 ARE reachable — the fallback policy and the global 100/min limiter — so unlike
