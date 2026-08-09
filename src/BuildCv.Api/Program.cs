@@ -164,7 +164,9 @@ builder.Services.AddHealthChecks()
         failureStatus: HealthStatus.Unhealthy,
         tags: [DatabaseHealthCheck.ReadinessTag]);
 
-builder.Services.AddOpenApi();
+// The transformer is the only configuration here, and it exists because the default document states a
+// union this API cannot produce; see NumericSchemaTransformer.
+builder.Services.AddOpenApi(options => options.AddSchemaTransformer<NumericSchemaTransformer>());
 
 var app = builder.Build();
 

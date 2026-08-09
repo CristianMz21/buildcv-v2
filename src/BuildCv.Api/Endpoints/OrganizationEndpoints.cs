@@ -27,7 +27,10 @@ public static class OrganizationEndpoints
                 request.Slug), cancellationToken);
             return result.ToHttpResult(org =>
                 Results.Created($"/v1/organizations/{org.Id.Value}", OrganizationResponse.From(org)));
-        });
+        })
+        .Produces<OrganizationResponse>(StatusCodes.Status201Created)
+        .ProducesResultProblems()
+        .ProducesAuthProblems();
 
         group.MapGet("/{id:guid}", async (
             Guid id,
@@ -38,7 +41,10 @@ public static class OrganizationEndpoints
             var result = await handler.Handle(
                 new GetOrganizationQuery(httpContext.User.GetAccountId(), new OrganizationId(id)), cancellationToken);
             return result.ToHttpResult(organization => Results.Ok(OrganizationResponse.From(organization)));
-        });
+        })
+        .Produces<OrganizationResponse>(StatusCodes.Status200OK)
+        .ProducesResultProblems()
+        .ProducesAuthProblems();
 
         group.MapGet("/slug/{slug}", async (
             string slug,
@@ -49,7 +55,10 @@ public static class OrganizationEndpoints
             var result = await handler.Handle(
                 new GetOrganizationBySlugQuery(httpContext.User.GetAccountId(), slug), cancellationToken);
             return result.ToHttpResult(organization => Results.Ok(OrganizationResponse.From(organization)));
-        });
+        })
+        .Produces<OrganizationResponse>(StatusCodes.Status200OK)
+        .ProducesResultProblems()
+        .ProducesAuthProblems();
 
         group.MapPost("/{id:guid}/members", async Task<IResult> (
             Guid id,
@@ -84,7 +93,10 @@ public static class OrganizationEndpoints
                 new AccountId(request.AccountId),
                 role), cancellationToken);
             return result.ToHttpResult(organization => Results.Ok(OrganizationResponse.From(organization)));
-        });
+        })
+        .Produces<OrganizationResponse>(StatusCodes.Status200OK)
+        .ProducesResultProblems()
+        .ProducesAuthProblems();
 
         group.MapDelete("/{id:guid}/members/{accountId:guid}", async (
             Guid id,
@@ -98,7 +110,10 @@ public static class OrganizationEndpoints
                 new OrganizationId(id),
                 new AccountId(accountId)), cancellationToken);
             return result.ToHttpResult(organization => Results.Ok(OrganizationResponse.From(organization)));
-        });
+        })
+        .Produces<OrganizationResponse>(StatusCodes.Status200OK)
+        .ProducesResultProblems()
+        .ProducesAuthProblems();
 
         return group;
     }

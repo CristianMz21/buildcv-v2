@@ -1,0 +1,143 @@
+using System.Net;
+using System.Text.Json;
+using FluentAssertions;
+using Microsoft.AspNetCore.Mvc.Testing;
+
+namespace BuildCv.Api.Tests;
+
+// The published OpenAPI document, read the way a client generator reads it.
+//
+// It is checked here because it is the only artifact in this repository that NOTHING else validates:
+// V1ContractShapeTests walks the real response bodies, so a document that disagrees with them — or
+// says nothing at all — passes every other test in the suite while every generated client is wrong.
+public sealed class OpenApiDocumentTests
+{
+    // The union .NET emits for a double, so that "NaN" and "Infinity" can arrive as strings. This API
+    // never turns that on, and a client generated from the unnarrowed document types every score as
+    // `number | string` — a branch each call site has to remember, and the one that is forgotten formats
+    // a percentage bar from a string. FiniteNumberSchemaTransformer removes it; this is what keeps it
+    // removed, including for the fields nobody has added yet.
+    [Fact]
+    public async Task NoSchemaOffersANumberOrAnIntegerAsAStringToo()
+    {
+        using var document = await FetchAsync();
+
+        var offenders = new List<string>();
+        Walk(document.RootElement.GetProperty("components").GetProperty("schemas"), "", offenders);
+
+        offenders.Should().BeEmpty(
+            "a floating-point field must be typed `number`, not `number | string`");
+    }
+
+    // The proof that .Produces<T> actually reaches the document. Scoring is the route a client meets
+    // first, and it returns IResult like every other endpoint here — which is exactly why nothing can
+    // infer its response and why it has to be stated.
+    [Fact]
+    public async Task TheScoringRouteDeclaresWhatItReturns()
+    {
+        using var document = await FetchAsync();
+
+        var responses = document.RootElement
+            .GetProperty("paths").GetProperty("/v1/scoring/score")
+            .GetProperty("post").GetProperty("responses");
+
+        responses.GetProperty("200")
+            .GetProperty("content").GetProperty("application/json")
+            .GetProperty("schema").GetProperty("$ref").GetString()
+            .Should().Be("#/components/schemas/AnalysisResponse");
+
+        // The error side is part of the contract too: every failure this API emits is
+        // ProblemDetails-shaped, and a document that only described the happy path would let a client
+        // be generated with no error type at all.
+        responses.GetProperty("404")
+            .GetProperty("content").GetProperty("application/problem+json")
+            .GetProperty("schema").GetProperty("$ref").GetString()
+            .Should().Be("#/components/schemas/ProblemDetails");
+    }
+
+    // The coverage guard, and the reason this whole pass exists: an operation that declares no body is
+    // indistinguishable, to a generator, from one that returns nothing. Every route here returns
+    // IResult, so nothing infers it and nothing else in this suite notices when a new endpoint forgets.
+    //
+    // Success only. The error shapes are asserted per route where they differ; what must never regress
+    // is that a caller can find out what a successful call gives back.
+    [Fact]
+    public async Task EveryV1OperationDeclaresWhatASuccessReturns()
+    {
+        using var document = await FetchAsync();
+
+        var undeclared = new List<string>();
+        var examined = 0;
+
+        foreach (var route in document.RootElement.GetProperty("paths").EnumerateObject())
+        {
+            if (!route.Name.StartsWith("/v1/", StringComparison.Ordinal))
+                continue;
+
+            foreach (var operation in route.Value.EnumerateObject())
+            {
+                examined++;
+                var responses = operation.Value.GetProperty("responses");
+
+                var declaresSuccess = responses.EnumerateObject().Any(response =>
+                    response.Name.StartsWith('2')
+                    // 204 is a complete answer on its own: it says there is no body, which is a
+                    // statement rather than an omission.
+                    && (response.Name == "204" || response.Value.TryGetProperty("content", out _)));
+
+                if (!declaresSuccess)
+                    undeclared.Add($"{operation.Name.ToUpperInvariant()} {route.Name}");
+            }
+        }
+
+        // WITHOUT THIS THE TEST CANNOT FAIL. A route prefix that stops matching — a version bump, a
+        // group rename — empties the loop, and an empty `undeclared` reads exactly like full coverage.
+        // The floor is well under the real count so it pins the mechanism rather than the inventory.
+        examined.Should().BeGreaterThan(40, "the walk must actually have reached the v1 operations");
+
+        undeclared.Should().BeEmpty(
+            "every v1 operation must state its success shape — nothing can infer it from IResult");
+    }
+
+    private static void Walk(JsonElement element, string path, List<string> offenders)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            if (element.TryGetProperty("type", out var type) && type.ValueKind == JsonValueKind.Array)
+            {
+                var members = type.EnumerateArray().Select(entry => entry.GetString()).ToArray();
+
+                // BOTH numeric kinds. The first version of this test checked only "number" and passed
+                // while every `int32` in the document — including the entry `id` that DELETE
+                // /v1/resumes/{id}/{section}/{itemId} takes — was still typed `number | string`.
+                if (members.Contains("string")
+                    && (members.Contains("number") || members.Contains("integer")))
+                {
+                    offenders.Add(path);
+                }
+            }
+
+            foreach (var property in element.EnumerateObject())
+                Walk(property.Value, $"{path}/{property.Name}", offenders);
+        }
+        else if (element.ValueKind == JsonValueKind.Array)
+        {
+            var index = 0;
+            foreach (var entry in element.EnumerateArray())
+                Walk(entry, $"{path}[{index++}]", offenders);
+        }
+    }
+
+    private static async Task<JsonDocument> FetchAsync()
+    {
+        using var factory = new ApiTestFactory();
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+
+        // Anonymous on purpose: MapOpenApi is AllowAnonymous and Development-only, which is the state
+        // ApiTestFactory forces.
+        var response = await client.GetAsync("/openapi/v1.json");
+        response.StatusCode.Should().Be(HttpStatusCode.OK, "the document must be served at all");
+
+        return JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+    }
+}

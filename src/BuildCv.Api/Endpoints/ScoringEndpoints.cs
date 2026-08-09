@@ -33,6 +33,15 @@ public static class ScoringEndpoints
             // contract instead, and the ordering the aggregate deliberately does not guarantee.
             return result.ToHttpResult(view => Results.Ok(AnalysisResponse.From(view.Analysis, view.IsStale)));
         })
+        // STATED, because nothing can infer it. These endpoints return IResult, which is opaque to the
+        // OpenAPI generator: without this the published document describes the request in full and the
+        // response not at all, and a client generated from it gets `unknown` back from every call.
+        // The status codes are the ones ToHttpResult really produces — 403 for "Forbidden.", 404 for an
+        // error ending in "not found.", 400 otherwise — so a reader is not left to guess which of them
+        // this route can answer.
+        .Produces<AnalysisResponse>(StatusCodes.Status200OK)
+        .ProducesProblem(StatusCodes.Status400BadRequest)
+        .ProducesProblem(StatusCodes.Status404NotFound)
         .WithSummary("Scores a resume against a job posting, reusing an identical run rather than repeating it.")
         .WithDescription(
             "DE-DUPLICATED. If this resume was already scored against this posting, and neither has been "
@@ -64,6 +73,9 @@ public static class ScoringEndpoints
 
             return result.ToHttpResult(view => Results.Ok(AnalysisResponse.From(view.Analysis, view.IsStale)));
         })
+        .Produces<AnalysisResponse>(StatusCodes.Status200OK)
+        .ProducesProblem(StatusCodes.Status403Forbidden)
+        .ProducesProblem(StatusCodes.Status404NotFound)
         .WithSummary("Returns one stored analysis, readable only by the owner of the resume it scored.")
         .WithDescription(
             "An analysis has no owner of its own: it belongs to a resume, and that resume's owner is the "

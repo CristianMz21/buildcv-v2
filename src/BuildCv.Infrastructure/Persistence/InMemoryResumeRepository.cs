@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using BuildCv.Application.Common.Pagination;
 using BuildCv.Application.Common.Repositories;
+using BuildCv.Application.Resumes;
 using BuildCv.Domain.Identity;
 using BuildCv.Domain.Resumes;
 
@@ -18,6 +19,7 @@ namespace BuildCv.Infrastructure.Persistence;
 public sealed class InMemoryResumeRepository(InMemoryAnalysisRepository analyses) : IResumeRepository
 {
     private readonly ConcurrentDictionary<Guid, KeysetRow<Resume>> _resumes = new();
+    private readonly ConcurrentDictionary<Guid, ItemIdMap> _itemIds = new();
     private long _sequence;
 
     public Task<Resume?> GetByIdAsync(ResumeId id, CancellationToken cancellationToken = default)
@@ -25,6 +27,43 @@ public sealed class InMemoryResumeRepository(InMemoryAnalysisRepository analyses
         cancellationToken.ThrowIfCancellationRequested();
         _resumes.TryGetValue(id.Value, out var row);
         return Task.FromResult(row?.Item);
+    }
+
+    // STANDS IN FOR THE SHADOW KEY EF ASSIGNS EACH OWNED ROW, for the same reason the sequence above
+    // stands in for the Seq column: the Api suite runs entirely on this store, so a resume whose entries
+    // could not be told apart here would certify a delete-by-id behaviour SQL Server does have and this
+    // one does not.
+    //
+    // Identity is by REFERENCE, which is the closest analogue available. EF distinguishes two entries by
+    // their row, not by their value; this store holds the aggregate itself, so the object is the row. It
+    // is what lets a candidate delete the second of two identical awards — the case value equality
+    // cannot express, and the reason ResumeItemIds exists at all.
+    public Task<ResumeWithItemIds?> GetByIdWithItemIdsAsync(
+        ResumeId id, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (!_resumes.TryGetValue(id.Value, out var row))
+            return Task.FromResult<ResumeWithItemIds?>(null);
+
+        var resume = row.Item;
+        var map = _itemIds.GetOrAdd(id.Value, _ => new ItemIdMap());
+
+        var ids = map.Assign(new Dictionary<ResumeSection, IReadOnlyList<object>>
+        {
+            [ResumeSection.Experiences] = resume.Experiences,
+            [ResumeSection.Educations] = resume.Educations,
+            [ResumeSection.Skills] = resume.Skills,
+            [ResumeSection.Projects] = resume.Projects,
+            [ResumeSection.Certificates] = resume.Certificates,
+            [ResumeSection.Languages] = resume.Languages,
+            [ResumeSection.Awards] = resume.Awards,
+            [ResumeSection.Publications] = resume.Publications,
+            [ResumeSection.Interests] = resume.Interests,
+            [ResumeSection.References] = resume.References
+        });
+
+        return Task.FromResult<ResumeWithItemIds?>(new ResumeWithItemIds(resume, ids));
     }
 
     public Task<Page<Resume>> GetPageByOwnerIdAsync(
@@ -71,6 +110,7 @@ public sealed class InMemoryResumeRepository(InMemoryAnalysisRepository analyses
     {
         cancellationToken.ThrowIfCancellationRequested();
         _resumes.TryRemove(id.Value, out _);
+        _itemIds.TryRemove(id.Value, out _);
         analyses.RemoveAllDerivedFrom(id);
         return Task.CompletedTask;
     }
@@ -78,4 +118,58 @@ public sealed class InMemoryResumeRepository(InMemoryAnalysisRepository analyses
     // Seeded at 1, matching IDENTITY(1,1) — and matching Cursor, which refuses a position of zero
     // precisely so "no cursor" can never be confused with "positioned at the first row".
     private KeysetRow<Resume> NextRow(Resume resume) => new(resume, Interlocked.Increment(ref _sequence));
+
+    /// <summary>
+    /// Hands each collection entry of one resume a number and remembers it for as long as that entry
+    /// stays on the aggregate.
+    /// </summary>
+    /// <remarks>
+    /// Seeded at 1 like every other surrogate in this store, so a zero can never be mistaken for an id.
+    /// Numbers are never reused: an entry that is removed takes its id out of circulation, which is what
+    /// stops a stale client from deleting whatever landed in the position its id used to occupy.
+    /// </remarks>
+    private sealed class ItemIdMap
+    {
+        private readonly Dictionary<object, int> _ids = new(ReferenceEqualityComparer.Instance);
+        private readonly Lock _gate = new();
+        private int _next;
+
+        public ResumeItemIds Assign(IReadOnlyDictionary<ResumeSection, IReadOnlyList<object>> sections)
+        {
+            lock (_gate)
+            {
+                var assigned = new Dictionary<ResumeSection, IReadOnlyList<int>>(sections.Count);
+                var live = new HashSet<object>(ReferenceEqualityComparer.Instance);
+
+                foreach (var (section, items) in sections)
+                {
+                    var ids = new int[items.Count];
+
+                    for (var position = 0; position < items.Count; position++)
+                    {
+                        var item = items[position];
+                        live.Add(item);
+
+                        if (!_ids.TryGetValue(item, out var id))
+                        {
+                            id = ++_next;
+                            _ids[item] = id;
+                        }
+
+                        ids[position] = id;
+                    }
+
+                    assigned[section] = ids;
+                }
+
+                // Entries the aggregate no longer holds are dropped here rather than left behind. This
+                // store outlives a request, so without it every removed bullet point would keep its
+                // object alive for the life of the process.
+                foreach (var stale in _ids.Keys.Where(key => !live.Contains(key)).ToList())
+                    _ids.Remove(stale);
+
+                return new ResumeItemIds(assigned);
+            }
+        }
+    }
 }

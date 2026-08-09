@@ -1,7 +1,9 @@
 using BuildCv.Application.Common.Pagination;
 using BuildCv.Application.Common.Repositories;
+using BuildCv.Application.Resumes;
 using BuildCv.Domain.Identity;
 using BuildCv.Domain.Resumes;
+using BuildCv.Infrastructure.Persistence.Conventions;
 using Microsoft.EntityFrameworkCore;
 
 namespace BuildCv.Infrastructure.Persistence.EfCore;
@@ -38,6 +40,42 @@ internal sealed class ResumeRepository : IResumeRepository
         ArgumentNullException.ThrowIfNull(id);
         return await ByIdQuery(_context, id).FirstOrDefaultAsync(cancellationToken);
     }
+
+    // The ids come out of the CHANGE TRACKER, not out of a second query, and that is what makes the
+    // positional alignment ResumeItemIds promises true rather than hoped for: ByIdQuery is AsTracking,
+    // so each owned entry EF materialized into resume.Skills is the very instance the tracker holds a
+    // shadow key for. Walking the aggregate's own list and asking the tracker per element therefore
+    // reads ids in the aggregate's order by construction, with no ORDER BY to keep in sync.
+    //
+    // A second query ordered by the same key would look equivalent and would not be: nothing stops an
+    // entry being added between the two, and the caller would then delete the wrong bullet point.
+    public async Task<ResumeWithItemIds?> GetByIdWithItemIdsAsync(
+        ResumeId id, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(id);
+
+        var resume = await ByIdQuery(_context, id).FirstOrDefaultAsync(cancellationToken);
+        if (resume is null)
+            return null;
+
+        return new ResumeWithItemIds(resume, new ResumeItemIds(new Dictionary<ResumeSection, IReadOnlyList<int>>
+        {
+            [ResumeSection.Experiences] = KeysOf(resume.Experiences),
+            [ResumeSection.Educations] = KeysOf(resume.Educations),
+            [ResumeSection.Skills] = KeysOf(resume.Skills),
+            [ResumeSection.Projects] = KeysOf(resume.Projects),
+            [ResumeSection.Certificates] = KeysOf(resume.Certificates),
+            [ResumeSection.Languages] = KeysOf(resume.Languages),
+            [ResumeSection.Awards] = KeysOf(resume.Awards),
+            [ResumeSection.Publications] = KeysOf(resume.Publications),
+            [ResumeSection.Interests] = KeysOf(resume.Interests),
+            [ResumeSection.References] = KeysOf(resume.References)
+        }));
+    }
+
+    private IReadOnlyList<int> KeysOf<T>(IReadOnlyList<T> items)
+        where T : class =>
+        [.. items.Select(item => (int)_context.Entry(item).Property(ChildTable.Key).CurrentValue!)];
 
     // Stops one step short of executing so the SQL can be READ without a database — the failure this
     // guards against is invisible from the outside. A single-query GetByIdAsync returns exactly the

@@ -33,7 +33,10 @@ public static class JobEndpoints
             return result.ToHttpResult(job =>
                 Results.Created($"/v1/jobs/{job.Id.Value}", JobPostingResponse.From(job)));
         })
-        .RequireAuthorization(AuthorizationPolicies.Recruiter);
+        .RequireAuthorization(AuthorizationPolicies.Recruiter)
+        .Produces<JobPostingResponse>(StatusCodes.Status201Created)
+        .ProducesResultProblems()
+        .ProducesAuthProblems();
 
         group.MapPost("/{id:guid}/publish", async (
             Guid id,
@@ -44,7 +47,10 @@ public static class JobEndpoints
             var result = await handler.Handle(
                 new PublishJobPostingCommand(httpContext.User.GetAccountId(), new JobPostingId(id)), cancellationToken);
             return result.ToHttpResult(job => Results.Ok(JobPostingResponse.From(job)));
-        });
+        })
+        .Produces<JobPostingResponse>(StatusCodes.Status200OK)
+        .ProducesResultProblems()
+        .ProducesAuthProblems();
 
         group.MapPost("/{id:guid}/close", async (
             Guid id,
@@ -55,7 +61,10 @@ public static class JobEndpoints
             var result = await handler.Handle(
                 new CloseJobPostingCommand(httpContext.User.GetAccountId(), new JobPostingId(id)), cancellationToken);
             return result.ToHttpResult(job => Results.Ok(JobPostingResponse.From(job)));
-        });
+        })
+        .Produces<JobPostingResponse>(StatusCodes.Status200OK)
+        .ProducesResultProblems()
+        .ProducesAuthProblems();
 
         group.MapGet("/{id:guid}", async (
             Guid id,
@@ -66,7 +75,10 @@ public static class JobEndpoints
             var result = await handler.Handle(
                 new GetJobPostingQuery(httpContext.User.GetAccountId(), new JobPostingId(id)), cancellationToken);
             return result.ToHttpResult(job => Results.Ok(JobPostingResponse.From(job)));
-        });
+        })
+        .Produces<JobPostingResponse>(StatusCodes.Status200OK)
+        .ProducesResultProblems()
+        .ProducesAuthProblems();
 
         return group;
     }

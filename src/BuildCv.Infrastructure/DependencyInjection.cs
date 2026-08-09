@@ -146,13 +146,15 @@ public static class DependencyInjection
         services.AddScoped<ICommandHandler<CreateResumeFromDraftCommand, ResumeImportResult>, CreateResumeFromDraftHandler>();
         services.AddScoped<ICommandHandler<ExtractDocumentTextCommand, Result<DocumentExtraction>>, ExtractDocumentTextHandler>();
         services.AddScoped<ICommandHandler<ProposeResumeDraftFromDocumentCommand, Result<ResumeDraftProposal>>, ProposeResumeDraftFromDocumentHandler>();
-        services.AddScoped<IQueryHandler<GetResumeQuery, Result<Resume>>, GetResumeHandler>();
+        services.AddScoped<IQueryHandler<GetResumeQuery, Result<ResumeWithItemIds>>, GetResumeHandler>();
         services.AddScoped<IQueryHandler<GetResumesByOwnerQuery, Result<Page<Resume>>>, GetResumesByOwnerHandler>();
         services.AddScoped<ICommandHandler<DeleteResumeCommand, Result<ResumeId>>, DeleteResumeHandler>();
         services.AddScoped<ICommandHandler<UpdateContactInformationCommand, Result<Resume>>, UpdateContactInformationHandler>();
         services.AddScoped<ICommandHandler<AddExperienceCommand, Result<Resume>>, AddExperienceHandler>();
         services.AddScoped<ICommandHandler<AddEducationCommand, Result<Resume>>, AddEducationHandler>();
         services.AddScoped<ICommandHandler<AddSkillCommand, Result<Resume>>, AddSkillHandler>();
+        // One registration behind all ten DELETE routes; the section travels on the command.
+        services.AddScoped<ICommandHandler<RemoveResumeItemCommand, Result<Resume>>, RemoveResumeItemHandler>();
         services.AddScoped<ICommandHandler<AddProjectCommand, Result<Resume>>, AddProjectHandler>();
         services.AddScoped<ICommandHandler<AddCertificateCommand, Result<Resume>>, AddCertificateHandler>();
         services.AddScoped<ICommandHandler<AddLanguageCommand, Result<Resume>>, AddLanguageHandler>();

@@ -56,6 +56,11 @@ public static class JobOfferEndpoints
         // The framework enforces IRequestSizeLimitMetadata on its own for minimal APIs, chunked bodies
         // included -- measured on the resume import, do not reintroduce a middleware for it.
         .WithMetadata(new RequestSizeLimitAttribute(ImportRequestSizeLimitBytes))
+        .Produces<JobPostingResponse>(StatusCodes.Status201Created)
+        // The field-error shape, not the plain problem: this route collects every bad field in one pass
+        // and keys them by path, which is what a review screen attaches to the right input.
+        .ProducesValidationProblem()
+        .ProducesAuthProblems()
         .WithSummary("Creates a candidate-owned Draft job offer from one reviewed draft.")
         .WithDescription(
             "Every field is sent as a STRING, including the requirement priority, so no VALUE is rejected "
@@ -81,6 +86,9 @@ public static class JobOfferEndpoints
             return result.ToHttpResult(
                 proposed => Results.Ok(ExtractJobOfferRequirementsResponse.From(proposed)));
         })
+        .Produces<ExtractJobOfferRequirementsResponse>(StatusCodes.Status200OK)
+        .ProducesResultProblems()
+        .ProducesAuthProblems()
         .WithSummary("Proposes skill requirements from pasted job-offer text, for the candidate to confirm.")
         .WithDescription(
             "Recognises common technology names in the text and proposes them as NiceToHave requirements, "
