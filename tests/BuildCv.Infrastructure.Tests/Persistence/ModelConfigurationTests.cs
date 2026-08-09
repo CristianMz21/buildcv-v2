@@ -286,6 +286,81 @@ public sealed class ModelConfigurationTests
             "these are timestamps about rows, not about a person");
     }
 
+    // The import-signals columns, pinned here for the same reason the provenance ones above are and NOT
+    // added to HighValueAnalyticalColumns: that list's stated contract is "a column something really
+    // QUERIES", and these four are loaded with the resume and read in memory by the readability engine.
+    // Writing them into that list would be this repository's signature defect — a comment asserting a
+    // property the code does not have.
+    //
+    // Three things have to hold, and all three fail silently:
+    //
+    //   - MAPPED. Ignore any one and the value stops round-tripping: ATS-parseability would then be
+    //     scored from a partly-null set of signals, or renormalized out of every report, and no test of
+    //     a SCORE's value would notice because the section is only 0.10 of the total.
+    //   - NULLABLE. A required column cannot be added to a table that already has rows without a
+    //     fabricated default, and every default here is a claim about a document those resumes never had.
+    //   - PLAINTEXT. Two closed enums, a bool and a page count — none of them can hold a fragment of the
+    //     candidate's document, and all four are what the engine reads and what "how many candidates
+    //     upload two-column PDFs" is answered from. The opposite direction is already covered by
+    //     EncryptedColumns_AreExactlyTheClassifiedSet's exact set equality, which is deliberately left
+    //     UNCHANGED by this feature: nothing here joined the encrypted set, and nothing left it.
+    [Theory]
+    [InlineData(nameof(ImportSignals.ColumnLayout))]
+    [InlineData(nameof(ImportSignals.HadTextLayer))]
+    [InlineData(nameof(ImportSignals.PageCount))]
+    [InlineData(nameof(ImportSignals.Warnings))]
+    public void ImportSignalColumns_AreMappedNullableAndPlaintext(string propertyName)
+    {
+        using var context = PersistenceTestContext.ModelOnly();
+
+        var property = context.Model.FindEntityType(typeof(ImportSignals))!.FindProperty(propertyName);
+
+        property.Should().NotBeNull(
+            "an unmapped {0} silently drops the evidence the ATS-parseability section is scored from",
+            propertyName);
+
+        // IsColumnNullable, not IProperty.IsNullable. The CLR members of an owned value are non-nullable
+        // by declaration -- ColumnLayout is an enum and HadTextLayer is a bool -- and EF reports that as
+        // IsNullable == false while still emitting a nullable COLUMN, because the whole owned reference
+        // is optional. The column is what the migration writes and what an existing row has to satisfy,
+        // so the column is what this asserts.
+        property!.IsColumnNullable(ResumesTable).Should().BeTrue(
+            "a resume created before this column existed came from no document at all");
+        property!.FindAnnotation(PersistenceAnnotations.Encrypted)?.Value.Should().NotBe(true,
+            "these describe a PDF's shape, not a person");
+    }
+
+    private static readonly StoreObjectIdentifier ResumesTable =
+        StoreObjectIdentifier.Table("Resumes", "resumes");
+
+    // The owned reference itself, which the theory above cannot see: a REQUIRED navigation would make
+    // every hand-built resume unloadable, and EF reports that as an exception at materialization rather
+    // than at model build.
+    [Fact]
+    public void ImportSignals_AreAnOptionalOwnedReferenceOnTheResumeRow()
+    {
+        using var context = PersistenceTestContext.ModelOnly();
+        var navigation = context.Model.FindEntityType(typeof(Resume))!
+            .FindNavigation(nameof(Resume.ImportSignals));
+
+        navigation.Should().NotBeNull();
+        navigation!.ForeignKey.IsOwnership.Should().BeTrue("the signals belong to the resume, not beside it");
+
+        // IsRequiredDependent is the one that answers "may this owned value be absent". ForeignKey
+        // .IsRequired says the opposite thing for an owned reference -- it is about the PRINCIPAL end,
+        // which is always required because the owner is the row -- and reads true for both of these.
+        // ContactInformation is asserted beside it so the pair proves this really distinguishes them,
+        // rather than being a property that happens to be false for everything.
+        navigation.ForeignKey.IsRequiredDependent.Should().BeFalse(
+            "a resume typed by hand has no document, and that is the ordinary case");
+        context.Model.FindEntityType(typeof(Resume))!
+            .FindNavigation(nameof(Resume.ContactInformation))!.ForeignKey.IsRequiredDependent
+            .Should().BeTrue("ContactInformation is the required owned reference this one is contrasted with");
+
+        navigation.TargetEntityType.GetTableName().Should().Be("Resumes",
+            "four nullable columns on the row, not a join for a value that is read on every readability run");
+    }
+
     // Catches the mistake the annotation exists for: a copy-pasted configuration block that keeps the
     // context string of the column it was copied from. The context is the AAD, so a wrong one does not
     // fail at write time — it fails on the first READ, in production, as an authentication-tag
@@ -436,12 +511,15 @@ public sealed class ModelConfigurationTests
         // SectionScore and ReadabilitySectionScore are deliberately absent: each is projected from its
         // breakdown's own columns and Ignored, so an appearance here would mean the projection had
         // become a table.
+        // ImportSignals IS here, unlike SectionScore: it is a real optional owned reference mapped into
+        // the Resumes row as four Import_* columns, so EF has to discover it as an entity type. Its
+        // absence would mean the whole value had stopped persisting.
         actual.Should().Equal(
             "Account", "Analysis", "Award", "Certificate", "ContactInformation", "Education",
-            "Experience", "Interest", "JobPosting", "JobRequirement", "Language", "LanguageRequirement",
-            "Membership", "Organization", "Project", "Publication", "ReadabilityBreakdown",
-            "ReadabilityRecommendation", "ReadabilityReport", "Recommendation", "Reference",
-            "RefreshToken", "Responsibility", "Resume", "ScoreBreakdown", "Skill");
+            "Experience", "ImportSignals", "Interest", "JobPosting", "JobRequirement", "Language",
+            "LanguageRequirement", "Membership", "Organization", "Project", "Publication",
+            "ReadabilityBreakdown", "ReadabilityRecommendation", "ReadabilityReport", "Recommendation",
+            "Reference", "RefreshToken", "Responsibility", "Resume", "ScoreBreakdown", "Skill");
     }
 
     private static IEnumerable<(IEntityType EntityType, IProperty Property)> EncryptedProperties(IModel model) =>

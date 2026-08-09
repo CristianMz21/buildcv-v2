@@ -50,6 +50,7 @@ internal sealed class ResumeConfiguration : IEntityTypeConfiguration<Resume>
             .IsDescending(false, true);
 
         ConfigureContactInformation(builder);
+        ConfigureImportSignals(builder);
         ConfigureExperiences(builder);
         ConfigureEducations(builder);
         ConfigureSkills(builder);
@@ -107,6 +108,47 @@ internal sealed class ResumeConfiguration : IEntityTypeConfiguration<Resume>
         });
 
         builder.Navigation(resume => resume.ContactInformation).IsRequired();
+    }
+
+    // EVERY MEMBER IS PLAINTEXT, and this is the block where that is easiest to get wrong by reflex —
+    // it describes a file the candidate uploaded, so it FEELS like their data. It is not: two closed
+    // enums, a bool and a page count, none of which can hold a fragment of the document. The
+    // classification rule this file states is "a value that identifies or describes a PERSON is
+    // encrypted"; a column layout describes a PDF.
+    //
+    // Sealing any of it would also end the only thing the columns are for. The readability engine reads
+    // them on every run, and "how many candidates upload two-column PDFs" is the question that decides
+    // whether the advice is working — neither survives an envelope, and no index can either.
+    //
+    // OPTIONAL owned reference, so it lives in the Resumes row as Import_* columns and every column is
+    // nullable. Null across all four is what EF materializes back as a null ImportSignals, which is the
+    // ordinary case: a resume typed by hand has no document to describe. It also makes the migration
+    // additive — every row already on disk reads back as null and is renormalized out of its readability
+    // report, rather than being given a fabricated default that would claim a document it never had.
+    private static void ConfigureImportSignals(EntityTypeBuilder<Resume> builder)
+    {
+        builder.OwnsOne(resume => resume.ImportSignals, signals =>
+        {
+            // tinyint, matching every other closed enum in this model. ImportSignals.Create refuses an
+            // undefined member, which is what keeps the unchecked conversion from writing a durable
+            // value that is a member of neither the enum nor the column's intent.
+            signals.Property(value => value.ColumnLayout)
+                .HasColumnName("Import_ColumnLayout")
+                .HasColumnType("tinyint");
+
+            signals.Property(value => value.HadTextLayer)
+                .HasColumnName("Import_HadTextLayer");
+
+            signals.Property(value => value.PageCount)
+                .HasColumnName("Import_PageCount");
+
+            // int, not tinyint: it is a bit field with room to grow, and a [Flags] enum that outgrew its
+            // column would start truncating combinations rather than failing.
+            signals.Property(value => value.Warnings)
+                .HasColumnName("Import_Warnings");
+        });
+
+        builder.Navigation(resume => resume.ImportSignals).IsRequired(false);
     }
 
     private void ConfigureExperiences(EntityTypeBuilder<Resume> builder)

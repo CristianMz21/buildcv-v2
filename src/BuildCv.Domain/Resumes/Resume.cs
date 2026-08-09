@@ -19,6 +19,20 @@ public sealed class Resume
     public ResumeId Id { get; }
     public AccountId OwnerId { get; }
     public ContactInformation ContactInformation { get; private set; }
+
+    /// <summary>
+    /// What the document this resume was imported from looked like to a parser, or null when it was not
+    /// imported from one — built by hand, or imported without evidence.
+    /// </summary>
+    /// <remarks>
+    /// WRITE-ONCE, AND ONLY AT CREATION. There is no mutator and no setter outside the factory, which is
+    /// what makes the signals evidence about THIS resume's own source document rather than a value that
+    /// could later be pointed at any resume. Null is the ordinary case and the readability engine
+    /// renormalizes the ATS-parseability section out for it, so a hand-built CV is neither credited nor
+    /// penalised for a document that does not exist.
+    /// </remarks>
+    public ImportSignals? ImportSignals { get; private set; }
+
     public DateTimeOffset CreatedAt { get; }
     public DateTimeOffset UpdatedAt { get; private set; }
     public IReadOnlyList<Experience> Experiences => _experiences.AsReadOnly();
@@ -32,11 +46,13 @@ public sealed class Resume
     public IReadOnlyList<Interest> Interests => _interests.AsReadOnly();
     public IReadOnlyList<Reference> References => _references.AsReadOnly();
 
-    private Resume(ResumeId id, AccountId ownerId, ContactInformation contactInformation)
+    private Resume(
+        ResumeId id, AccountId ownerId, ContactInformation contactInformation, ImportSignals? importSignals)
     {
         Id = id;
         OwnerId = ownerId;
         ContactInformation = contactInformation;
+        ImportSignals = importSignals;
         CreatedAt = DateTimeOffset.UtcNow;
         UpdatedAt = DateTimeOffset.UtcNow;
     }
@@ -45,11 +61,14 @@ public sealed class Resume
     private Resume() { }
 #pragma warning restore CS8618
 
-    public static Resume Create(AccountId ownerId, ContactInformation contactInformation)
+    // importSignals is optional and defaults to null, so every existing caller keeps meaning what it
+    // meant: a resume created by any route other than a document import has no document to describe.
+    public static Resume Create(
+        AccountId ownerId, ContactInformation contactInformation, ImportSignals? importSignals = null)
     {
         ArgumentNullException.ThrowIfNull(ownerId);
         ArgumentNullException.ThrowIfNull(contactInformation);
-        return new Resume(ResumeId.New(), ownerId, contactInformation);
+        return new Resume(ResumeId.New(), ownerId, contactInformation, importSignals);
     }
 
     private void Touch() => UpdatedAt = DateTimeOffset.UtcNow;

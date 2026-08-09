@@ -1,6 +1,7 @@
 namespace BuildCv.Infrastructure.Documents;
 
 using BuildCv.Application.Common.Services;
+using BuildCv.Domain.Resumes;
 
 /// <summary>One word's horizontal extent on a page, in PDF user-space units.</summary>
 public readonly record struct WordBox(double Left, double Right);

@@ -5,6 +5,7 @@ using System.IO.Compression;
 using System.Text;
 using BuildCv.Application.Common.Observability;
 using BuildCv.Application.Common.Services;
+using BuildCv.Domain.Resumes;
 using BuildCv.Infrastructure.Documents;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
@@ -72,10 +73,19 @@ public sealed class DocumentTextExtractionTests
         result.Value!.PageCount.Should().Be(2);
         result.Value.Warnings.Should().ContainSingle()
             .Which.Should().Be(PdfPigTextExtractor.NoTextLayerWarning);
+
+        // The closed half of the same statement, asserted BESIDE the sentence rather than in a test of
+        // its own. HadTextLayer is what gets signed into the import evidence and scored by the
+        // readability engine, and the failure worth catching is the two disagreeing — a candidate told
+        // their PDF is a scan while their ATS-parseability score says it parsed fine.
+        result.Value.HadTextLayer.Should().BeFalse();
+        result.Value.WarningFlags.Should().Be(ImportWarningFlags.None,
+            "a scanned PDF is reported by HadTextLayer; NoTextContent is the empty-document case");
     }
 
     // A real page of writing sits far above the threshold; the warning must not fire on a short but
-    // genuine document.
+    // genuine document. It is also the other direction of the structured flag above, without which that
+    // assertion would be satisfied by an extractor that always answered false.
     [Fact]
     public async Task Pdf_WithLittleButRealText_DoesNotWarn()
     {
@@ -83,6 +93,8 @@ public sealed class DocumentTextExtractionTests
 
         result.IsSuccess.Should().BeTrue(result.Error);
         result.Value!.Warnings.Should().BeEmpty();
+        result.Value.HadTextLayer.Should().BeTrue();
+        result.Value.WarningFlags.Should().Be(ImportWarningFlags.None);
     }
 
     [Fact]
@@ -175,6 +187,21 @@ public sealed class DocumentTextExtractionTests
         result.Value!.Text.Should().BeEmpty();
         result.Value.Warnings.Should().ContainSingle()
             .Which.Should().Be(OpenXmlDocxTextExtractor.NoTextWarning);
+
+        // Beside the sentence, for the reason given on the scanned-PDF test above. HadTextLayer stays
+        // true: a DOCX is text-bearing by construction, so "no text layer" is not what went wrong here —
+        // the file is simply empty, and the candidate's fix is a different one.
+        result.Value.WarningFlags.Should().Be(ImportWarningFlags.NoTextContent);
+        result.Value.HadTextLayer.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Docx_WithText_ReportsNoWarningFlags()
+    {
+        var result = await Extract(DocxBytes("Jane Doe"), DocxContentType);
+
+        result.Value!.WarningFlags.Should().Be(ImportWarningFlags.None);
+        result.Value.HadTextLayer.Should().BeTrue();
     }
 
     [Fact]
@@ -385,6 +412,16 @@ public sealed class DocumentTextExtractionTests
         result.Value!.Text.Should().BeEmpty();
         result.Value.Warnings.Should().ContainSingle()
             .Which.Should().Be(PlainTextExtractor.NoTextWarning);
+        result.Value.WarningFlags.Should().Be(ImportWarningFlags.NoTextContent);
+    }
+
+    [Fact]
+    public async Task PlainText_WithText_ReportsNoWarningFlags()
+    {
+        var result = await Extract(Encoding.UTF8.GetBytes("Jane Doe"), "text/plain");
+
+        result.Value!.WarningFlags.Should().Be(ImportWarningFlags.None);
+        result.Value.HadTextLayer.Should().BeTrue();
     }
 
     // Spanish accents through the plain-text path. UTF-8 without a BOM: the í, ó and ñ each carry a

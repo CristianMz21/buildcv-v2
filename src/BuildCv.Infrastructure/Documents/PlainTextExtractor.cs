@@ -1,6 +1,7 @@
 using BuildCv.Application.Common.Observability;
 using BuildCv.Application.Common.Services;
 using BuildCv.Domain.Common.ValueObjects;
+using BuildCv.Domain.Resumes;
 
 namespace BuildCv.Infrastructure.Documents;
 
@@ -33,8 +34,16 @@ public sealed class PlainTextExtractor(BuildCvMetrics metrics)
         using var reader = new StreamReader(content, detectEncodingFromByteOrderMarks: true, leaveOpen: true);
         var text = reader.ReadToEnd().Trim();
 
-        IReadOnlyList<string> warnings = text.Length == 0 ? [NoTextWarning] : [];
-        return Result<DocumentExtraction>.Success(new DocumentExtraction(text, PageCount: null, warnings));
+        // The sentence and the closed flag from ONE predicate, as in the PDF adapter: an empty document
+        // is what the candidate is told and what the import evidence carries, and computing them apart
+        // is how the two come to disagree.
+        var empty = text.Length == 0;
+        IReadOnlyList<string> warnings = empty ? [NoTextWarning] : [];
+        return Result<DocumentExtraction>.Success(new DocumentExtraction(
+            text,
+            PageCount: null,
+            warnings,
+            WarningFlags: empty ? ImportWarningFlags.NoTextContent : ImportWarningFlags.None));
     }
 
     // Reason and message stated together, so the tag can never describe a different refusal from the

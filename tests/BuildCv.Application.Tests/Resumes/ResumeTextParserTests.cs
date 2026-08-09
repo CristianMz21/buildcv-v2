@@ -1,5 +1,6 @@
 using BuildCv.Application.Common.Services;
 using BuildCv.Application.Resumes;
+using BuildCv.Domain.Resumes;
 using FluentAssertions;
 
 namespace BuildCv.Application.Tests.Resumes;

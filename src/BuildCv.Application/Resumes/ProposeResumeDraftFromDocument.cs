@@ -3,6 +3,7 @@ namespace BuildCv.Application.Resumes;
 using BuildCv.Application.Common.Abstractions;
 using BuildCv.Application.Common.Services;
 using BuildCv.Domain.Common.ValueObjects;
+using BuildCv.Domain.Resumes;
 
 /// <summary>
 /// Proposes a best-effort <see cref="ResumeDraft"/> from one uploaded CV document, for a candidate to

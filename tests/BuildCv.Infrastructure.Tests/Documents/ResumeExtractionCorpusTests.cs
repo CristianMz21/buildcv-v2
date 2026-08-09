@@ -2,6 +2,7 @@ using System.Text;
 using BuildCv.Application.Common.Observability;
 using BuildCv.Application.Common.Services;
 using BuildCv.Application.Resumes;
+using BuildCv.Domain.Resumes;
 using BuildCv.Infrastructure.Documents;
 using FluentAssertions;
 using UglyToad.PdfPig.Content;
