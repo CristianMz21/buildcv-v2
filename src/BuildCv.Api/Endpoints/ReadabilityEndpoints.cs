@@ -42,7 +42,22 @@ public static class ReadabilityEndpoints
             return result.ToHttpResult(report => Results.Ok(ReadabilityResponse.From(report)));
         })
         .Produces<ReadabilityResponse>(StatusCodes.Status200OK)
-        .ProducesResultProblems()
+        // 403 AND 404 ONLY, hand-listed rather than through ProducesResultProblems() — the same
+        // judgement OpenApiDocumentTests records for GET /v1/scoring/{analysisId}, which this route is
+        // the sibling of. That helper also declares 400, and this handler cannot produce one:
+        // GetReadabilityReportByIdHandler makes no Domain-factory call, so nothing can hand
+        // ToHttpResult a message that falls to its else-arm. Declaring a response the route cannot give
+        // is the same defect as omitting one it can.
+        //
+        // Measured, because the obvious counter-example is a zero GUID in the path: it answers 500, not
+        // 400. `new ReadabilityReportId(Guid.Empty)` throws in the endpoint before the handler runs, and
+        // a bare ArgumentException matches no IExceptionHandler branch. That is the pre-existing
+        // behaviour of every by-id route here — /v1/scoring/{analysisId} answers 500 on the same input —
+        // so it is stated rather than declared, and fixing it belongs to whoever fixes all of them.
+        .ProducesProblem(StatusCodes.Status403Forbidden)
+        .ProducesProblem(StatusCodes.Status404NotFound)
+        // 401 and 429 ARE reachable — the fallback policy and the global 100/min limiter — so unlike
+        // the scoring sibling, which omits both, they are declared.
         .ProducesAuthProblems()
         .WithSummary("Returns one stored readability report, readable only by the owner of the resume it graded.")
         .WithDescription(
