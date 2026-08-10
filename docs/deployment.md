@@ -219,6 +219,34 @@ and confirm it is *not*. If the second is also throttled, the partition has coll
 
 ---
 
+## 4b. What the heaviest endpoints actually cost
+
+Measured at the **documented ceilings**, not at a plausible size — a CV filled to every limit the draft
+validator allows (200 skills, 50 experiences with 50 bullet points each, 50 projects, ~2,900 items in
+one request), a posting with the maximum 100 requirements, and a document at the 5 MiB upload limit.
+
+| Endpoint | Input | Time |
+|---|---|---|
+| `POST /v1/resumes/import/propose` | 5 MiB document | **4.1 s** |
+| `POST /v1/job-offers/import` | 100 requirements | 2.7 s |
+| `POST /v1/scoring/score` | 200 skills × 100 requirements | 2.5 s |
+| `POST /v1/resumes/import` | CV at every ceiling | 2.3 s |
+| `POST /v1/resumes/import/extract` | 5 MiB document | 0.6 s |
+| `POST /v1/resumes/{id}/readability` | CV at every ceiling | 0.5 s |
+| `GET /v1/resumes/{id}` | CV at every ceiling | 0.4 s |
+
+**Nothing approaches a client timeout**, which is what this table exists to establish: the BFF in front of
+this API bounds every call at 20 seconds, and the slowest thing the API can be asked to do finishes in
+about a fifth of that.
+
+Read it as a **shape**, not as a capacity figure. One request at a time, no contention, SQL Server in a
+container on the same host. What it rules out is an endpoint that is inherently slow — none of these is
+doing twenty seconds of work — and what it does not tell you is how any of them behave under concurrent
+load, which only your own traffic will.
+
+`POST /v1/resumes/import/propose` is the one to watch: it is the only endpoint whose cost is driven by a
+file somebody else chose, and it parses inside the request because there are no background jobs.
+
 ## 5. Health probes
 
 | Probe | Use it for | Never use it for |
