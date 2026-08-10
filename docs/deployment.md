@@ -62,6 +62,64 @@ retention policy anywhere in this repository, because backup policy is an operat
 Azure SQL, RDS and Cloud SQL all bring automated backups and point-in-time restore that a volume does
 not.
 
+### Rehearsing the restore, with the commands that work
+
+Do this before the first real candidate signs up, not after. It has been executed end to end against
+the bundled container; every step below is the one that worked, including the parts that fail silently
+if you skip them.
+
+```bash
+COMPOSE="docker compose -f docker-compose.app.yml"
+SQL="/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P $MSSQL_SA_PASSWORD -C -b"
+
+# 1. Back up. The directory does not exist and SQL Server cannot create it.
+$COMPOSE exec -T --user root sqlserver sh -c \
+  'mkdir -p /var/opt/mssql/backup && chown mssql:root /var/opt/mssql/backup'
+$COMPOSE exec -T sqlserver $SQL -Q \
+  "BACKUP DATABASE [BuildCv] TO DISK='/var/opt/mssql/backup/BuildCv.bak' \
+   WITH FORMAT, INIT, COMPRESSION, CHECKSUM;"
+
+# 2. Get it OFF the host. A backup inside the volume dies with the volume.
+docker cp "$($COMPOSE ps -q sqlserver):/var/opt/mssql/backup/BuildCv.bak" ./BuildCv.bak
+
+# 3. Restore. WITH MOVE is required -- the logical names inside the backup are
+#    BuildCv and BuildCv_log, and they have to be remapped onto this server's paths.
+docker cp ./BuildCv.bak "$($COMPOSE ps -q sqlserver):/var/opt/mssql/backup/BuildCv.bak"
+$COMPOSE exec -T --user root sqlserver \
+  chown mssql:root /var/opt/mssql/backup/BuildCv.bak
+$COMPOSE exec -T sqlserver $SQL -Q \
+  "RESTORE DATABASE [BuildCv] FROM DISK='/var/opt/mssql/backup/BuildCv.bak' \
+   WITH MOVE 'BuildCv' TO '/var/opt/mssql/data/BuildCv.mdf', \
+        MOVE 'BuildCv_log' TO '/var/opt/mssql/data/BuildCv_log.ldf', RECOVERY;"
+```
+
+Three things that cost time if nobody wrote them down:
+
+- **`chown mssql` on the copied `.bak`.** `docker cp` writes it as root with the host's umask, and SQL
+  Server runs as `mssql`. It reports "Operating system error 5(Access is denied)" — a permission, wearing
+  the clothes of a missing file. Same trap as the migration script and the published app files.
+- **`WITH MOVE` is not optional**, even restoring onto the same image. The logical names travel inside
+  the backup; the paths do not.
+- **`identity` is a reserved word.** A hand-written query against the accounts table needs
+  `[identity].Accounts`, or SQL Server answers `Incorrect syntax near the keyword 'identity'`.
+
+**Then start the stack normally.** `migrator` runs its idempotent script over the restored schema and
+exits 0 — a restore does not need a different startup path.
+
+### What the rehearsal proves, and it is the point of §0
+
+Restoring the database is **half** of a recovery. Executed here with a marked CV written before the
+backup:
+
+| | Result |
+|---|---|
+| Login with an account that predates the backup | **succeeds** — the blind-index keys still resolve the address |
+| The marked CV, read back through the API | **returns decrypted** |
+
+Both halves needed the **same key ring**. A restore with the wrong keys gives you every row and no
+readable one; the keys with no backup give you nothing at all. That is why §0 asks you to rehearse
+reading the key material back, not merely to store it.
+
 ### The bundled SQL Server is not licensed for production
 
 `MSSQL_PID` defaults to `Developer`, which is free and full-featured and which Microsoft licenses for
@@ -334,7 +392,7 @@ Named so you plan around them rather than discover them:
 
 - [ ] Every placeholder in `.env` replaced, and `docker compose ... config` resolves cleanly
 - [ ] Encryption and blind-index keys backed up **outside** the database, and a restore rehearsed
-- [ ] Database backups running, and a restore rehearsed against a real dump
+- [ ] Database backups running, and a restore rehearsed against a real dump — **including reading a CV back through the API afterwards**, which is what proves the key ring and the dump go together (§0)
 - [ ] SQL Server licensed, or a managed instance in use
 - [ ] `Network:ForwardedHeaders` configured, and the two-machine throttle test above passed
 - [ ] TLS terminating in front of `web`; API and database publish no ports
