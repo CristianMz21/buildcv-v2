@@ -44,16 +44,22 @@ RUN dotnet tool restore \
 # healthcheck uses. This stage never starts a database -- its entrypoint is the migration script.
 FROM mcr.microsoft.com/mssql/server:2022-CU26-ubuntu-22.04 AS migrator
 USER root
-# The directory is created HERE rather than implicitly by COPY, because --chmod applies to the parent
-# COPY creates as well as to the file -- and a directory at 644 has no execute bit, so mssql cannot
-# traverse it. Measured: the file was present and correct, and sqlcmd reported '/migrations/BuildCv.sql':
-# Invalid filename, which reads like a missing file.
+# The directory is created HERE rather than implicitly by COPY. That began as a --chmod problem -- the
+# flag applied to the parent COPY created, and a directory at 644 has no execute bit, so mssql could not
+# traverse it and sqlcmd reported '/migrations/BuildCv.sql': Invalid filename, which reads like a
+# missing file. The explicit mkdir is kept now that --chmod is gone: it states the directory's mode
+# instead of inheriting whatever COPY would have left.
 RUN mkdir -p /migrations
-# --chmod for the same reason as the runtime stage below: COPY preserves the builder's umask, and this
-# container runs as mssql. A 640 script fails with "Error code 0x80070005" -- access denied, reported
-# by sqlcmd as a problem opening the file rather than as a permission.
-COPY --from=migrations --chmod=644 /migrations/BuildCv.sql /migrations/BuildCv.sql
-COPY --chmod=755 docker/migrate.sh /usr/local/bin/migrate.sh
+# A SEPARATE RUN chmod, NOT `COPY --chmod`, and the difference is portability rather than taste:
+# --chmod requires BuildKit, and `az acr build` uses the classic builder, so the image built locally
+# and failed in Azure with "the --chmod option requires BuildKit". RUN chmod works on both.
+#
+# The mode still has to be stated. COPY preserves the builder's umask, and this container runs as
+# mssql: a 640 script fails with "Error code 0x80070005" -- access denied, reported by sqlcmd as a
+# problem opening the file rather than as a permission.
+COPY --from=migrations /migrations/BuildCv.sql /migrations/BuildCv.sql
+COPY docker/migrate.sh /usr/local/bin/migrate.sh
+RUN chmod 644 /migrations/BuildCv.sql && chmod 755 /usr/local/bin/migrate.sh
 USER mssql
 ENTRYPOINT ["/usr/local/bin/migrate.sh"]
 
@@ -63,7 +69,8 @@ ENTRYPOINT ["/usr/local/bin/migrate.sh"]
 # `service_completed_successfully` wait on a loop that never completes.
 FROM mcr.microsoft.com/mssql/server:2022-CU26-ubuntu-22.04 AS backup
 USER root
-COPY --chmod=755 docker/backup.sh /usr/local/bin/backup.sh
+COPY docker/backup.sh /usr/local/bin/backup.sh
+RUN chmod 755 /usr/local/bin/backup.sh
 USER mssql
 ENTRYPOINT ["/usr/local/bin/backup.sh"]
 
@@ -82,7 +89,11 @@ ENV ASPNETCORE_URLS=http://+:8080
 # select it here, so a container can never come up serving accounts out of a dictionary.
 ENV ASPNETCORE_ENVIRONMENT=Production
 
-# --chmod, because COPY otherwise PRESERVES THE SOURCE MODE and the source mode is the builder's umask.
+# A SEPARATE RUN chmod rather than `COPY --chmod`: the latter needs BuildKit, and `az acr build` uses
+# the classic builder -- the image built here and failed in Azure. `a+rX` rather than 755 so directories
+# get traversal and files keep their execute bit only where they had one.
+#
+# The mode is stated at all because COPY PRESERVES THE SOURCE MODE, and the source mode is the umask.
 # On a machine with umask 077 the published files arrive 640 -- readable by root, and by nobody else --
 # and the container then drops to $APP_UID and cannot read its own appsettings.json:
 #
@@ -96,7 +107,8 @@ ENV ASPNETCORE_ENVIRONMENT=Production
 # works. It fails only for whoever builds with a restrictive umask -- so it is exactly the class of bug
 # that ships green and breaks on somebody else's machine. Stating the mode makes the image independent
 # of who built it.
-COPY --from=build --chmod=755 /app ./
+COPY --from=build /app ./
+RUN chmod -R a+rX /app
 
 # The aspnet image ships this user. The app writes nothing to disk, so it needs nothing it owns.
 USER $APP_UID

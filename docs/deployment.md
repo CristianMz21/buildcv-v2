@@ -372,6 +372,41 @@ except which addresses are trusted.
 Until then, rate limiting that distinguishes users has to live **in front of** the web container. Caddy
 can do it, and so can any ingress or CDN you put there.
 
+### Deploying to Azure Container Apps
+
+`deploy/azure.sh` maps this stack onto Container Apps. Four things it teaches that are not obvious, all
+of them found by running it rather than reading the docs:
+
+- **`az acr build` uses the CLASSIC Docker builder, not BuildKit.** Any `COPY --chmod` fails there with
+  `the --chmod option requires BuildKit` after building fine locally for as long as you like. The
+  Dockerfile uses `RUN chmod` instead, which works on both. Anything else BuildKit-only will fail the
+  same way, and only in Azure.
+- **`az containerapp update --yaml` REPLACES the container definition; it does not merge.** A patch that
+  declares `containers: [{name, image, probes}]` to add a probe silently drops every environment
+  variable, and the app then fails `ValidateOnStart` on the missing `Jwt:SigningKey` — exit 139,
+  crash-looping. Send the whole container block, or use `--set-env-vars`, which does merge. Measured;
+  the previous revision stayed Active and Healthy, which is the only reason it was not an outage.
+- **Container Apps does not consult the image's `HEALTHCHECK`.** Probes must be declared in the app
+  definition or there are none, and a container with no probe still reports Running. Declare
+  `/health/live` as **Liveness** and `/health/ready` as **Readiness** — never the other way round: as
+  liveness, `/health/ready` restarts every instance the moment the database goes away, into a database
+  that is still down, undoing the recovery property §5 describes.
+- **A region can refuse new SQL servers.** `eastus` and `eastus2` both answered
+  `RegionDoesNotAllowProvisioning`, and a failed attempt still reserves the NAME, so the retry needs a
+  fresh one as well as a different region.
+
+**The `min-replicas 0` trap, which applies to any registry migration.** A container app that scales to
+zero **re-pulls its image when it wakes**. Deleting the old registry after repointing does not fail at
+deletion — it fails silently, at whichever person opens the site first. A running revision proves
+nothing, because it is not pulling. Force a scale-to-zero and a cold wake before deleting anything.
+
+**`azurecontainerapps.io` is not in the Public Suffix List**, which `azurestaticapps.net` is — checked
+against the published list. So every Container App shares one registrable domain and **any other
+tenant's app is same-site with yours**. `SameSite=Lax` on a session cookie protects nothing against a
+forged POST from a neighbour, and `Strict` does not either. It does not reach this API, whose ingress is
+internal — but that is now a second reason for internal ingress, alongside the credential argument, and
+it applies immediately to anything browser-facing on that domain.
+
 ## 5. Health probes
 
 | Probe | Use it for | Never use it for |
