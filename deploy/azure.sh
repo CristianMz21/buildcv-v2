@@ -62,18 +62,30 @@ az acr build -r "$REGISTRY" -t "buildcv-migrator:latest" -f Dockerfile --target 
 az acr build -r "$REGISTRY" -t "buildcv-web:latest" "$WEB_CONTEXT" -o none
 
 say "4/7  Azure SQL $SQL_SERVER/$SQL_DB"
-az sql server create -g "$GROUP" -n "$SQL_SERVER" -l "$LOCATION" \
-  -u "$SQL_ADMIN" -p "$SQL_PASSWORD" -o none
+# A REGION CAN REFUSE NEW SQL SERVERS, and a failed attempt still RESERVES THE NAME -- so a retry needs
+# a fresh name as well as a different region. Measured: eastus and eastus2 both answered
+# RegionDoesNotAllowProvisioning, and reusing the name then failed with InvalidResourceLocation against
+# a server that did not exist.
+for REGION in "$LOCATION" eastus2 centralus westus3; do
+  if az sql server create -g "$GROUP" -n "$SQL_SERVER" -l "$REGION" \
+       -u "$SQL_ADMIN" -p "$SQL_PASSWORD" -o none 2>/dev/null; then
+    echo "  SQL server in $REGION"
+    break
+  fi
+  echo "  $REGION refused; retrying elsewhere with a fresh name"
+  SQL_SERVER="${SQL_SERVER%-*}-$RANDOM"
+done
 # Azure services only. There is no public client for this database -- the API reaches it from inside
 # the Container Apps environment, and nothing else has any business connecting.
 az sql server firewall-rule create -g "$GROUP" -s "$SQL_SERVER" \
   -n AllowAzureServices --start-ip-address 0.0.0.0 --end-ip-address 0.0.0.0 -o none
 # The free serverless grant: 100k vCore-seconds and 32 GB a month. --use-free-limit is what claims it,
-# and BilledOverUsage means it keeps serving if the grant runs out rather than pausing the database
-# under a candidate mid-import.
+# and BillOverUsage means it keeps serving if the grant runs out rather than pausing the database under
+# a candidate mid-import. The value is BillOverUsage, not BilledOverUsage -- the CLI rejects the wrong
+# one by printing its full help text, which buries the one line naming the allowed values.
 az sql db create -g "$GROUP" -s "$SQL_SERVER" -n "$SQL_DB" \
   --edition GeneralPurpose --compute-model Serverless --family Gen5 --capacity 1 \
-  --use-free-limit --free-limit-exhaustion-behavior BilledOverUsage -o none
+  --use-free-limit --free-limit-exhaustion-behavior BillOverUsage -o none
 
 CONNECTION="Server=tcp:${SQL_SERVER}.database.windows.net,1433;Database=${SQL_DB};User ID=${SQL_ADMIN};Password=${SQL_PASSWORD};Encrypt=True;TrustServerCertificate=False;Connect Timeout=5"
 
