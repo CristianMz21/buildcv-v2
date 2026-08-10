@@ -161,3 +161,68 @@ jobs:
       - name: Tear down
         if: always()
         run: docker compose -f docker-compose.app.yml down -v
+
+  # PUBLISHES THE IMAGES, and the point is that no long-lived credential exists anywhere. GITHUB_TOKEN
+  # is minted for this run and expires with it, so nothing on a laptop and nothing in Azure holds push
+  # rights. It replaced a personal token that carried `repo` and `delete_repo` -- a credential able to
+  # delete the repository, held only to push a container image.
+  #
+  # ON MAIN ONLY, and only after the three checks above pass: a pull request must not be able to publish
+  # an image that a deployment could then pull.
+  #
+  # The packages are PUBLIC, which is what lets the container apps pull with no registry credential at
+  # all. That is safe because the image carries nothing the public repository does not -- audited: no
+  # .env, no keys, no .git, and the only baked variables are the port and the UID. Visibility is a
+  # property of the PACKAGE and survives every later push, so it is set once by hand and never again --
+  # verified by pushing a second tag and watching it stay public. A package that is DELETED and
+  # recreated starts private again, which is the one case that needs the click repeated.
+  publish-images:
+    runs-on: ubuntu-latest
+    needs: [build-and-unit-test, integration-test, compose-smoke]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # TAGGED BY COMMIT, and `latest` alongside it. The commit tag is what a deployment should
+      # reference: "latest in a registry" cannot tell you which build is running, and this repository
+      # has already been bitten by an image that was newer than the commit it was assumed to carry.
+      # THE OWNER IS LOWERCASED BY HAND, not taken from github.repository_owner, because that context
+      # returns the account's real casing (CristianMz21) and a container reference must be lowercase --
+      # the push fails with "invalid reference format" rather than with anything mentioning case.
+      - name: Build and push the API
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: runtime
+          push: true
+          tags: |
+            ghcr.io/cristianmz21/buildcv-api:${{ github.sha }}
+            ghcr.io/cristianmz21/buildcv-api:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push the migrator
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: migrator
+          push: true
+          tags: |
+            ghcr.io/cristianmz21/buildcv-migrator:${{ github.sha }}
+            ghcr.io/cristianmz21/buildcv-migrator:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
