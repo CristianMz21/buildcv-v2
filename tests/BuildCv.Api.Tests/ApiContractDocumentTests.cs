@@ -2,7 +2,10 @@ using System.Text.RegularExpressions;
 using BuildCv.Api.Endpoints;
 using BuildCv.Api.Security;
 using BuildCv.Application.Common.Services;
+using BuildCv.Application.Resumes;
 using FluentAssertions;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace BuildCv.Api.Tests;
 
@@ -83,6 +86,66 @@ public sealed class ApiContractDocumentTests
         File.ReadAllText(DocumentPath).Length.Should().BeGreaterThan(2000,
             "an emptied document would satisfy every Contain assertion above by having nothing to "
             + "contradict");
+    }
+
+    // The numbers above were pinned and the ROUTE INVENTORY was not, which is exactly where the document
+    // then drifted: it went on stating "the only PUT in the whole API is /v1/resumes/{id}/contact" after
+    // two more shipped, and told clients that editing a resume item was impossible when the route for it
+    // existed. A universal claim about the surface is the most useful sentence in a client contract and
+    // the one most certain to rot, because nothing about adding an endpoint touches the prose.
+    //
+    // So the surface is asserted the same way the ceilings are: against the app's own endpoint table.
+    // Scoped to /v1, which is what this document describes -- the health probes live outside it on
+    // purpose, and the OpenAPI route is Development-only.
+    [Fact]
+    public void EveryVersionedRouteTheApiServes_IsNamedInTheDocument()
+    {
+        var document = File.ReadAllText(DocumentPath);
+
+        using var factory = new ApiTestFactory();
+        // Forces the host to build; the endpoint table does not exist before it does.
+        using var client = factory.CreateClient();
+
+        var missing = new List<string>();
+        foreach (var endpoint in factory.Services.GetRequiredService<EndpointDataSource>().Endpoints.OfType<RouteEndpoint>())
+        {
+            var pattern = "/" + (endpoint.RoutePattern.RawText ?? string.Empty).TrimStart('/');
+            if (!pattern.StartsWith("/v1", StringComparison.Ordinal))
+                continue;
+
+            var normalized = NormalizeRoute(pattern);
+            foreach (var method in endpoint.Metadata.GetMetadata<HttpMethodMetadata>()?.HttpMethods ?? [])
+            {
+                var line = $"{method} {normalized}";
+                if (!document.Contains(line, StringComparison.Ordinal))
+                    missing.Add(line);
+            }
+        }
+
+        missing.Distinct().Should().BeEmpty(
+            "docs/api-contract.md is written for a client developer who cannot read this repository, so a "
+            + "route absent from it is a capability nobody outside can discover");
+    }
+
+    // Route constraints are an implementation detail of matching -- the document writes {id}, the code
+    // writes {id:guid}. The ten per-section item routes are registered concretely and collapse back to the
+    // one {section} family the document states, because ten identical rows would be noise rather than
+    // contract.
+    private static string NormalizeRoute(string pattern)
+    {
+        var withoutConstraints = Regex.Replace(pattern, @"\{(\w+)(?::[^}]+)?\}", "{$1}");
+
+        var sections = Enum.GetNames<ResumeSection>()
+            .Select(name => name.ToLowerInvariant())
+            .ToHashSet(StringComparer.Ordinal);
+
+        var segments = withoutConstraints.Split('/')
+            .Select(segment => sections.Contains(segment) ? "{section}" : segment);
+
+        // A group's own root registers as "/v1/job-offers/" while the document -- and every client --
+        // writes it without the trailing slash. Both forms route (measured: each answers 401, not 404),
+        // so the slash is a registration artifact and normalizing it away is not hiding anything.
+        return string.Join('/', segments).TrimEnd('/');
     }
 
     private static string Human(long bytes) =>

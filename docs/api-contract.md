@@ -387,8 +387,10 @@ Recruiter and Admin). `Recruiter` = Recruiter or Admin. `—` = anonymous.
 | `POST /v1/resumes/import/extract` | Candidate | multipart `file`, 5 MiB |
 | `POST /v1/resumes/import/propose` | Candidate | multipart `file`, 5 MiB. Writes nothing |
 | `POST /v1/resumes/import` | Candidate | 2 MiB. All-or-nothing, field-keyed errors |
-| `PUT /v1/resumes/{id}/contact` | Candidate | |
+| `PUT /v1/resumes/{id}/contact` | Candidate | Carries `website` and `profiles` forward; will not accept new ones — they can only be set at import |
+| `PUT /v1/resumes/{id}/name` | Candidate | Blank or null CLEARS the name. 120 characters |
 | `POST /v1/resumes/{id}/{section}` | Candidate | `skills`, `experiences`, `educations`, `certificates`, `projects`, `languages`, `awards`, `publications`, `interests`, `references` |
+| `PUT /v1/resumes/{id}/{section}/{itemId}` | Candidate | Replaces outright — omitted fields are cleared, and the result has a **new id** |
 | `DELETE /v1/resumes/{id}/{section}/{itemId}` | Candidate | `itemId` is an **int**, not a guid |
 | `POST /v1/resumes/{id}/readability` | Candidate | Evaluates the CV as it stands now. Always writes a new run |
 | `GET /v1/resumes/{id}/readability` | Candidate | Paged history, **oldest first** |
@@ -448,10 +450,16 @@ Recruiter and Admin). `Recruiter` = Recruiter or Admin. `—` = anonymous.
 Listed because you will otherwise spend an afternoon looking for it in the OpenAPI document. None of
 these is a bug report; they are gaps in the surface, and the workaround is given where there is one.
 
-- **There is no way to EDIT a resume item.** Sections have `POST` (add) and `DELETE` (remove) and
-  nothing else — the only `PUT` in the whole API is `/v1/resumes/{id}/contact`. Editing one bullet point
-  means delete-then-re-add. The `itemId` is explicitly **not** promised to survive that, so re-read the
-  resume afterwards rather than assuming the id you had is still the entry you meant.
+- **Editing one resume item REPLACES it outright** — `PUT /v1/resumes/{id}/{segment}/{itemId}`, for all
+  ten collections. Omitting a field clears it, so send the whole entry, and the replacement is a **new
+  entry with a new id**: re-read the resume before addressing it again. `itemId` is the `id` an entry
+  carries in `GET /v1/resumes/{id}`, never its position in the array.
+
+  Two fields cannot survive a round trip today, and the loss is silent: `AddExperienceRequest` has no
+  `highlights` and `AddSkillRequest` no `keywords`, while the responses carry both. Warn before saving,
+  or re-add what you cleared.
+- **The three `PUT`s are the whole edit surface**: the per-item one above, `/v1/resumes/{id}/contact`,
+  and `/v1/resumes/{id}/name`. Everything else is `POST` to add and `DELETE` to remove.
 - **Nothing is deletable except a resume, a resume's items, and an organization membership.** A job
   posting, an imported job offer, an account and an organization are permanent once created. There is no
   account-closure route.
