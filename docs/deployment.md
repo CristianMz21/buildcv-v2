@@ -347,6 +347,31 @@ load, which only your own traffic will.
 `POST /v1/resumes/import/propose` is the one to watch: it is the only endpoint whose cost is driven by a
 file somebody else chose, and it parses inside the request because there are no background jobs.
 
+### The rate limiter cannot tell your users apart, and that is measured
+
+**In the BFF topology every request reaches the API from the web container**, so `RateLimitPartitions`
+sees one address for the entire deployment. The `auth` window is 5 per minute *per partition*, and there
+is only one partition.
+
+Measured through the proxy, with seven login attempts from **seven different addresses**:
+
+```
+400 400 400 400 429 429 429
+```
+
+The fifth is throttled. Five failed logins by anybody — a bot, a typo, one confused user — and **nobody
+else can log in, register, refresh a token or request a password reset for a minute**.
+
+**Both halves are needed and only one is here.** The compose file names the web container in
+`Network:ForwardedHeaders:KnownProxies`, and that is inert on its own: verified by sending
+`X-Forwarded-For: 203.0.113.77` through the proxy with `Enabled=true` and watching the API record the
+web container's address anyway. **The BFF does not forward the header**, so there is nothing for the API
+to read. Until it does, `BUILDCV_FORWARDED_HEADERS` should stay `false` — enabling it changes nothing
+except which addresses are trusted.
+
+Until then, rate limiting that distinguishes users has to live **in front of** the web container. Caddy
+can do it, and so can any ingress or CDN you put there.
+
 ## 5. Health probes
 
 | Probe | Use it for | Never use it for |
@@ -477,7 +502,8 @@ window is 5/min per IP, so a rushed rehearsal reports a throttle and reads like 
 - [ ] Encryption and blind-index keys backed up **outside** the database, and a restore rehearsed
 - [ ] Database backups running, and a restore rehearsed against a real dump — **including reading a CV back through the API afterwards**, which is what proves the key ring and the dump go together (§0)
 - [ ] SQL Server licensed, or a managed instance in use
-- [ ] `Network:ForwardedHeaders` configured, and the two-machine throttle test above passed
+- [ ] Rate limiting that can tell users apart, **in front of** the web container — the API's own cannot
+      in this topology, and the two-machine throttle test is what proves whichever you use (§4)
 - [ ] TLS terminating in front of `web`; API and database publish no ports
 - [ ] Readiness wired to the load balancer, liveness to the container runtime
 - [ ] Log aggregation collecting JSON, and correlation ids queryable

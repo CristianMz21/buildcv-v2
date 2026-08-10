@@ -133,6 +133,43 @@ services:
     restart: unless-stopped
     mem_limit: 512m
 
+  # TLS termination, OFF unless you ask for it:
+  #
+  #   BUILDCV_DOMAIN=cv.example.com docker compose -f docker-compose.app.yml --profile proxy up -d
+  #
+  # Every hosting choice needs a terminator in front of `web`; this is the portable one, and it exists
+  # so that the pair nobody can afford to get wrong -- a proxy plus the ForwardedHeaders entry that
+  # names it -- ships configured together rather than as two instructions.
+  #
+  # WITHOUT BUILDCV_DOMAIN it serves plain HTTP on :80, which is for verifying the forwarded-header
+  # wiring locally and must never face the internet.
+  proxy:
+    profiles: ["proxy"]
+    image: caddy:2-alpine
+    environment:
+      # `:-` covers unset AND empty, and the default is the whole site address rather than a domain:
+      # Caddy will not apply its own default to an env var that is present but empty, which is what an
+      # unset compose variable produces.
+      BUILDCV_DOMAIN: ${BUILDCV_DOMAIN:-:80}
+    volumes:
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificates and ACME account keys. A named volume because losing it means re-issuing on every
+      # restart, and Let's Encrypt rate-limits that.
+      - buildcv-caddy-data:/data
+    ports:
+      - "80:80"
+      - "443:443"
+    networks:
+      default:
+        # PINNED so Network:ForwardedHeaders:KnownProxies can name it exactly. The runbook prefers
+        # KnownProxies alone whenever the address is stable; this is what makes it stable.
+        ipv4_address: 172.28.0.10
+    depends_on:
+      - web
+    restart: unless-stopped
+    mem_limit: 256m
+    stop_grace_period: 30s
+
   api:
     build:
       context: .
@@ -169,6 +206,19 @@ services:
       Email__Smtp__Username: ${BUILDCV_SMTP_USERNAME:-}
       Email__Smtp__Password: ${BUILDCV_SMTP_PASSWORD:-}
       Email__Smtp__FromAddress: ${BUILDCV_SMTP_FROM:-}
+      # THE OTHER HALF OF THE PROXY. Without this the API reads every request as coming from the proxy,
+      # so all clients share one rate-limit partition and the 5/min auth window becomes a 5/min cap for
+      # the whole deployment -- a self-inflicted denial of service that throttles no individual
+      # attacker. Named exactly rather than as a network, because X-Forwarded-For is client-controlled
+      # and trusting a subnet lets anything inside it claim a fresh address per request.
+      #
+      # Harmless when the proxy profile is off: an allowlist with one address that nothing connects
+      # from changes nothing, and the app refuses to start on an EMPTY one, which is why it is set
+      # unconditionally rather than left blank.
+      Network__ForwardedHeaders__Enabled: ${BUILDCV_FORWARDED_HEADERS:-false}
+      Network__ForwardedHeaders__KnownProxies__0: 172.28.0.20
+      Network__ForwardedHeaders__KnownProxies__1: 172.28.0.10
+      Network__ForwardedHeaders__ForwardLimit: "2"
       # NOT SET, deliberately: Cors:AllowedOrigins stays empty because nothing talks to this API from
       # a browser. The web container calls it server-side with a bearer token, so there is no
       # cross-origin request to allow — and an origin listed here would be one that could be tried.
@@ -208,6 +258,11 @@ services:
       BUILDCV_API_ORIGIN: http://api:8080
     depends_on:
       - api
+    networks:
+      default:
+        # PINNED for the same reason the proxy is: the API's immediate peer is THIS container, not the
+        # proxy, so this is the address Network:ForwardedHeaders has to name.
+        ipv4_address: 172.28.0.20
     ports:
       # The only thing on the host. Everything a user touches goes through here.
       - "127.0.0.1:3000:3000"
@@ -246,5 +301,15 @@ services:
     # only trace is a client-side error no server log ever sees.
     stop_grace_period: 30s
 
+# A FIXED SUBNET, so the proxy below has an address that can be named exactly. The alternative is
+# trusting a whole network in Network:ForwardedHeaders, and docs/deployment.md is explicit that sizing
+# that to the site rather than to the proxy tier is the failure the setting exists to prevent.
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
+
 volumes:
+  buildcv-caddy-data:
   buildcv-app-sqlserver-data:
