@@ -168,7 +168,30 @@ builder.Services.AddHealthChecks()
     .AddCheck<DatabaseHealthCheck>(
         DatabaseHealthCheck.Name,
         failureStatus: HealthStatus.Unhealthy,
-        tags: [DatabaseHealthCheck.ReadinessTag]);
+        tags: [DatabaseHealthCheck.ReadinessTag],
+        // A TIMEOUT, because "not ready" has to arrive FAST to be worth anything.
+        //
+        // The context is configured with EnableRetryOnFailure, so CanConnectAsync goes through the
+        // retrying execution strategy -- six attempts with backoff -- before it answers false. Measured
+        // against a stopped SQL Server: /health/ready returned NOTHING for over sixty seconds rather
+        // than 503. A load balancer polling that gets a hung socket instead of an answer, every few
+        // seconds, on every instance at once.
+        //
+        // Retrying is right for a REQUEST, which the user is waiting on and which should survive a
+        // blip. It is wrong for a probe, whose whole job is to report the blip.
+        //
+        // THIS TIMEOUT DOES NOT BOUND THE ANSWER ON ITS OWN, and saying otherwise would be the kind of
+        // comment this repository keeps catching. It caps the retry strategy; SqlClient's own
+        // `Connect Timeout` caps the attempt underneath it, and that one dominates. Measured against a
+        // stopped SQL Server:
+        //
+        //   no timeout here             no answer at all in 60s
+        //   this timeout, default 15s   503 in 22s
+        //   this timeout, 5s connect    503 in ~7s
+        //
+        // So the connection string carries `Connect Timeout` too -- see docker-compose.app.yml. Both
+        // are needed; neither is sufficient.
+        timeout: TimeSpan.FromSeconds(5));
 
 // The transformer is the only configuration here, and it exists because the default document states a
 // union this API cannot produce; see NumericSchemaTransformer.
