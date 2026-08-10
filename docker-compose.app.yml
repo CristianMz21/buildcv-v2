@@ -93,7 +93,12 @@ services:
       # Every one of these is REQUIRED with no default. The app validates the JWT key and the whole
       # encryption ring at startup and refuses to run without them, which is the behaviour to keep —
       # a default here would be a committed key that some deployment inherits.
-      ConnectionStrings__BuildCv: Server=sqlserver,1433;Database=BuildCv;User Id=sa;Password=${MSSQL_SA_PASSWORD};TrustServerCertificate=True;Encrypt=False
+      # Connect Timeout is DELIBERATE and is half of what makes /health/ready usable. SqlClient
+      # defaults to 15 seconds, which readiness inherits: with the database stopped the probe answered
+      # 503 in 22s, and a load balancer polling every few seconds gets a hung socket instead of an
+      # answer. At 5s it answers in about seven. The database here is a peer container, so five seconds
+      # is already enormous -- raise it if yours is far away, and see docs/deployment.md.
+      ConnectionStrings__BuildCv: Server=sqlserver,1433;Database=BuildCv;User Id=sa;Password=${MSSQL_SA_PASSWORD};TrustServerCertificate=True;Encrypt=False;Connect Timeout=5
       Jwt__SigningKey: ${BUILDCV_JWT_SIGNING_KEY:?set BUILDCV_JWT_SIGNING_KEY in .env, 32+ chars}
       # THE KEY IDS ARE LITERALS, and they have to be: Compose does not substitute variables in a
       # mapping KEY, only in a value. Written as `Encryption__Keys__${ID}__Aes` the name reached the

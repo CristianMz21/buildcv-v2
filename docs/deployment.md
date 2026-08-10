@@ -235,6 +235,29 @@ Readiness opens a database connection and answers 503 when it cannot. Both are a
 exempt from rate limiting, both are plain text, and both live **outside `/v1`** so they do not move when
 the product contract versions.
 
+**Readiness has to fail FAST, and two settings make it do so — neither is sufficient alone.** Measured
+against a stopped SQL Server:
+
+| Configuration | `/health/ready` answers |
+|---|---|
+| Neither | **nothing at all** in 60s — the probe hangs |
+| Health-check `timeout` only | 503 in **22s** |
+| Plus `Connect Timeout=5` | 503 in **~7s** |
+
+The context uses `EnableRetryOnFailure`, so the check retries six times with backoff before answering,
+and underneath that SqlClient's own `Connect Timeout` (default **15s**) dominates. Retrying is right for
+a *request* — the user is waiting and a blip should not surface — and wrong for a *probe*, whose entire
+job is to report the blip. A load balancer polling a hung endpoint gets a stuck socket instead of an
+answer, on every instance at once.
+
+`Connect Timeout` lives in the connection string, so **raise it if your database is not on the same
+network** and accept the slower probe.
+
+**A stopped database does NOT restart the API**, which is the liveness design working: with SQL Server
+down, `/health/live` still answered 200 in 4 ms and the container was never recycled. When the database
+came back the API recovered on its own — readiness returned in 0.25 s and writes succeeded — with **no
+restart**. Do not "fix" this by pointing liveness at the database.
+
 ---
 
 ## 6. Logs
