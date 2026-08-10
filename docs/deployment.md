@@ -264,7 +264,14 @@ restart**. Do not "fix" this by pointing liveness at the database.
 
 `ASPNETCORE_ENVIRONMENT=Production` selects `appsettings.Production.json`, which turns on the access log
 and switches the console formatter to JSON so a log aggregator can query fields instead of parsing
-sentences. Every request carries `X-Correlation-ID`, echoed to the caller and attached to every line the
+sentences.
+
+**The correlation id arrives as a queryable `CorrelationId` field**, not as prose in the message. That
+takes `Logging:Console:FormatterOptions:IncludeScopes`, which is a different setting from the
+`Logging:Console:IncludeScopes` in the base file — the latter is the legacy path the *simple* formatter
+reads, and it stops applying the moment the formatter is `json`. Getting that wrong is silent: the
+response header still carries the id and not one log line does. If you change the formatter, check that
+a line still carries `"CorrelationId"` before trusting it. Every request carries `X-Correlation-ID`, echoed to the caller and attached to every line the
 request writes — it is what turns "a user reports an error" into "here is the request".
 
 **Nothing about a CV reaches a log line, a metric tag or a span**, and that is enforced by a test rather
