@@ -376,10 +376,9 @@ returns null and every span costs one null check.
 
 Named so you plan around them rather than discover them:
 
-- **No mail provider.** `UnconfiguredEmailSender` refuses and `POST /v1/auth/password-reset` answers
-  **503**. Password recovery does not work until you register a real `IEmailSender` in
-  `AddInfrastructure` — one line, once you have picked a provider and a sending domain with its SPF and
-  DKIM records. Email verification is unbuilt for the same reason.
+- **No mail provider is CONFIGURED, but none needs to be written.** Password recovery answers **503**
+  until you set `Email:Smtp:Host`; setting it is the entire integration. See §7b. Email *verification*
+  is still unbuilt — that is a feature, not a configuration.
 - **No background jobs, and no caching layer.** Both were deliberate; the `Analyses` table *is* the
   scoring cache, through de-duplication.
 - **No rate limiting on the web tier.** The API's limiters protect the API. Your proxy is the only thing
@@ -387,6 +386,48 @@ Named so you plan around them rather than discover them:
 - **No admin surface.** `Admin` can read any resume and any posting; there is no console.
 
 ---
+
+## 7b. Turning on password recovery
+
+Four environment variables. There is no code change and no provider SDK: SES, Postmark, SendGrid,
+Resend, Mailgun and a self-hosted Postfix all speak SMTP, so the choice is configuration.
+
+```yaml
+Email__Smtp__Host: smtp.eu.postmarkapp.com     # THE SWITCH. Empty = recovery answers 503
+Email__Smtp__Port: "587"                        # submission + STARTTLS; 465 is implicit TLS
+Email__Smtp__Username: ${BUILDCV_SMTP_USERNAME:?}
+Email__Smtp__Password: ${BUILDCV_SMTP_PASSWORD:?}
+Email__Smtp__FromAddress: no-reply@yourdomain   # SPF and DKIM are checked against THIS
+Email__Smtp__FromName: BuildCv
+```
+
+- **The host is the only switch**, and there is deliberately no `Enabled` flag beside it. Two settings
+  that can disagree about one fact is how a deployment ends up configured to send through a host it was
+  told to ignore.
+- **`FromAddress` is required once `Host` is set, and the app refuses to start without it.** Validated
+  at startup rather than at send time because the send path *deliberately swallows its own failure* —
+  reporting it would leak whether an address has an account — so a half-configured host would otherwise
+  stay invisible until somebody noticed nobody was receiving mail.
+- **SPF and DKIM are checked against `FromAddress`**, not against `FromName`. A provider account without
+  those DNS records delivers to spam, which this API cannot detect and will report as success.
+- **`AllowInvalidCertificate` is for a local Mailpit or MailHog and nothing else.** Accepting an
+  unverified certificate on the connection that carries the SMTP password is the whole attack.
+
+**Rehearse it before announcing.** The flow was verified end to end against a local SMTP server, and
+what to check is what arrived, not what the API returned:
+
+```bash
+docker run -d --rm --name mailpit -p 127.0.0.1:1025:1025 -p 127.0.0.1:8025:8025 axllent/mailpit
+
+Email__Smtp__Host=127.0.0.1 Email__Smtp__Port=1025 \
+Email__Smtp__FromAddress=no-reply@buildcv.test \
+dotnet run --project src/BuildCv.Api
+```
+
+Then `POST /v1/auth/password-reset`, open the message at `http://127.0.0.1:8025`, take the link out of
+the body, and **use it**: confirm answers 204, the new password logs in, the old one does not, and a
+second click on the same link answers 400 rather than 429. That last distinction matters — the auth rate
+window is 5/min per IP, so a rushed rehearsal reports a throttle and reads like proof of single use.
 
 ## 8. Before you announce it
 
@@ -401,4 +442,5 @@ Named so you plan around them rather than discover them:
 - [ ] **An alert on the 5xx rate**, not only on the health probes — a key-ring problem answers 200 on
       both of them while every request fails (§0)
 - [ ] The `Fluency` data loss announced, if you are upgrading rather than installing fresh
-- [ ] A decision recorded about password recovery being unavailable until a mailer exists
+- [ ] `Email:Smtp:Host` set and a real reset link clicked through end to end (§7b) — or a decision
+      recorded that password recovery is unavailable, which is what the 503 tells users

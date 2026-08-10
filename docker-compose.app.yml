@@ -113,6 +113,14 @@ services:
       Encryption__Keys__v1__Aes: ${BUILDCV_ENCRYPTION_KEY:?set BUILDCV_ENCRYPTION_KEY in .env, base64 32 bytes}
       Encryption__BlindIndex__ActiveKeyId: b1
       Encryption__BlindIndex__Keys__b1: ${BUILDCV_BLIND_INDEX_KEY:?set BUILDCV_BLIND_INDEX_KEY in .env, base64 32 bytes}
+      # PASSWORD RECOVERY. Unset, the API answers 503 on /v1/auth/password-reset and says why; set the
+      # host and it sends. No code change and no provider SDK -- every provider worth using speaks SMTP.
+      # FromAddress is required once Host is set and the app refuses to start without it. See
+      # docs/deployment.md section 7b.
+      Email__Smtp__Host: ${BUILDCV_SMTP_HOST:-}
+      Email__Smtp__Username: ${BUILDCV_SMTP_USERNAME:-}
+      Email__Smtp__Password: ${BUILDCV_SMTP_PASSWORD:-}
+      Email__Smtp__FromAddress: ${BUILDCV_SMTP_FROM:-}
       # NOT SET, deliberately: Cors:AllowedOrigins stays empty because nothing talks to this API from
       # a browser. The web container calls it server-side with a bearer token, so there is no
       # cross-origin request to allow — and an origin listed here would be one that could be tried.
