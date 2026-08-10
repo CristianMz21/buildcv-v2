@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using BuildCv.Application.Common.Pagination;
 using BuildCv.Application.Common.Repositories;
 using BuildCv.Domain.Jobs;
@@ -20,8 +21,15 @@ public sealed class AnalysisReadTests
     // equality rather than field by field, because the failure worth catching is a SECOND SHAPE for the
     // same aggregate quietly appearing on the read path — and a per-field assertion cannot see a field
     // that is present on one endpoint and missing on the other.
+    //
+    // requirementMatches is the ONE sanctioned difference, and it is carved out by naming it rather than
+    // by loosening the comparison. The field is present on BOTH responses — so the "second shape" this
+    // test exists to catch still cannot appear, and the field-set equality below now asserts that
+    // directly instead of inferring it from byte equality. Only the VALUE differs, and it has to: a
+    // stored analysis outlives the resume it scored, so attribution computed at read time would describe
+    // today's CV beside an older number. See ScoredAnalysisView.
     [Fact]
-    public async Task GetAnalysis_ReturnsByteForByteWhatTheScoreEndpointReturned()
+    public async Task GetAnalysis_ReturnsByteForByteWhatTheScoreEndpointReturned_ExceptForAttribution()
     {
         using var factory = new ApiTestFactory();
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
@@ -33,9 +41,33 @@ public sealed class AnalysisReadTests
         var analysisId = IdOf(scoredBody);
 
         var read = await GetAnalysisAsync(client, candidateToken, analysisId);
-
         read.StatusCode.Should().Be(HttpStatusCode.OK);
-        (await read.Content.ReadAsStringAsync()).Should().Be(scoredBody);
+
+        AssertSameShape(await read.Content.ReadAsStringAsync(), scoredBody);
+    }
+
+    // The read body and the scored body, compared the way this file has always compared them — with the
+    // single documented exception named, never waved through.
+    private static void AssertSameShape(string readBody, string scoredBody)
+    {
+        var readJson = JsonNode.Parse(readBody)!.AsObject();
+        var scoredJson = JsonNode.Parse(scoredBody)!.AsObject();
+
+        // THE ORIGINAL GUARANTEE, now stated instead of implied: same fields, same order, both ways.
+        readJson.Select(property => property.Key).Should().Equal(
+            scoredJson.Select(property => property.Key),
+            "a field on one endpoint and not the other is a second shape for one aggregate");
+
+        scoredJson["requirementMatches"]!.GetValueKind().Should().Be(
+            JsonValueKind.Array, "the scoring call computed attribution against the resume it scored");
+        readJson["requirementMatches"].Should().BeNull(
+            "null is not an empty array: 'not carried by this response' and 'the posting required "
+            + "nothing' are different facts");
+
+        // Everything else, still byte for byte.
+        readJson.Remove("requirementMatches");
+        scoredJson.Remove("requirementMatches");
+        readJson.ToJsonString().Should().Be(scoredJson.ToJsonString());
     }
 
     // The one that matters most on this endpoint, and it needs a store that behaves like a database
@@ -348,7 +380,8 @@ public sealed class AnalysisReadTests
         using var historyJson = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         var entry = historyJson.RootElement.GetProperty("items").EnumerateArray().Should().ContainSingle().Subject;
 
-        entry.GetRawText().Should().Be(scoredJson.RootElement.GetRawText());
+        // Same carve-out as above, same reason: the history serves stored analyses.
+        AssertSameShape(entry.GetRawText(), scoredJson.RootElement.GetRawText());
 
         // The zero-weight signal survives the read path, which is the fact the XML docs and the endpoint
         // description promise a client developer they can rely on. This posting states no skill and no

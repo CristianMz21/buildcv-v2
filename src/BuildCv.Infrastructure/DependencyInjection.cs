@@ -181,7 +181,7 @@ public static class DependencyInjection
         services.AddScoped<IQueryHandler<GetOrganizationBySlugQuery, Result<Organization>>, GetOrganizationBySlugHandler>();
 
         // Scoring
-        services.AddScoped<ICommandHandler<ScoreResumeCommand, Result<AnalysisView>>, ScoreResumeHandler>();
+        services.AddScoped<ICommandHandler<ScoreResumeCommand, Result<ScoredAnalysisView>>, ScoreResumeHandler>();
         services.AddScoped<IQueryHandler<GetAnalysisByIdQuery, Result<AnalysisView>>, GetAnalysisByIdHandler>();
         services.AddScoped<IQueryHandler<GetAnalysisHistoryQuery, Result<Page<AnalysisView>>>, GetAnalysisHistoryHandler>();
 

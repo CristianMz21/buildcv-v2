@@ -142,9 +142,12 @@ public class ScoringContractTests
             JsonSerializer.Serialize(AnalysisResponse.From(analysis, isStale: false), WebOptions));
         var root = json.RootElement;
 
+        // requirementMatches is serialized here as null — this is AnalysisResponse.From, the stored-read
+        // factory. It is still in the list because the field EXISTS on every response: only FromScored
+        // fills it, and a client parsing one shape for both endpoints is the point.
         NamesOf(root).Should().Equal(
             "id", "breakdown", "resumeId", "jobPostingId", "scoredAt", "recommendations",
-            "overallScore", "band", "isStale");
+            "overallScore", "band", "isStale", "requirementMatches");
 
         NamesOf(root.GetProperty("breakdown")).Should().Equal(
             "skillsScore", "experienceScore", "educationScore", "certificationsScore", "projectsScore",

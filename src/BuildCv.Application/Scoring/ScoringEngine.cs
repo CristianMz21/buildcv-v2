@@ -42,6 +42,12 @@ public sealed class ScoringEngine : IScoringEngine
             RecommendationBuilder.Build(resume, jobPosting, breakdown, referenceDate, _skillLexicon));
     }
 
+    // The SAME lexicon instance the score used, which is the only thing this method has to get right: an
+    // attribution canonicalized by a different lexicon than the one that scored would publish a match the
+    // number does not contain, or hide one it does.
+    public IReadOnlyList<RequirementAttribution> Attribute(Resume resume, JobPosting jobPosting) =>
+        ScoringRules.Attribute(resume, jobPosting, _skillLexicon);
+
     private static ScoreBreakdown BuildBreakdown(
         Resume resume, JobPosting jobPosting, DateOnly referenceDate, ISkillLexicon skillLexicon)
     {

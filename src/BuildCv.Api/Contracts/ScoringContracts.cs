@@ -1,5 +1,6 @@
 namespace BuildCv.Api.Contracts;
 
+using BuildCv.Application.Scoring;
 using BuildCv.Domain.Scoring;
 
 public sealed record ScoreResumeRequest(Guid ResumeId, Guid JobPostingId);
@@ -97,7 +98,8 @@ public sealed record AnalysisResponse(
     IReadOnlyList<RecommendationResponse> Recommendations,
     int OverallScore,
     string Band,
-    bool IsStale)
+    bool IsStale,
+    IReadOnlyList<RequirementMatchResponse>? RequirementMatches = null)
 {
     /// <param name="analysis">The stored scoring run.</param>
     /// <param name="isStale">
@@ -124,6 +126,94 @@ public sealed record AnalysisResponse(
             analysis.OverallScore,
             analysis.Band.ToString(),
             isStale);
+    }
+
+    /// <summary>
+    /// The scoring call's answer: the same analysis, plus what actually matched.
+    /// </summary>
+    /// <remarks>
+    /// <c>requirementMatches</c> is NULL on every stored read and an array here, and the difference is a
+    /// statement rather than an accident. A stored analysis outlives the resume it scored — that is what
+    /// <c>isStale</c> reports — so attribution computed when it is read would describe today's CV beside
+    /// yesterday's number. Absent says "not available for this response"; an empty array would say "the
+    /// posting asked for nothing", and those are not the same fact.
+    ///
+    /// The two read endpoints cannot reach this overload: they carry <c>AnalysisView</c>, which has no
+    /// attribution to pass.
+    /// </remarks>
+    public static AnalysisResponse FromScored(ScoredAnalysisView scored)
+    {
+        ArgumentNullException.ThrowIfNull(scored);
+
+        return From(scored.View.Analysis, scored.View.IsStale) with
+        {
+            RequirementMatches = [.. scored.RequirementMatches.Select(RequirementMatchResponse.From)]
+        };
+    }
+}
+
+/// <summary>
+/// One of the posting's requirements, and which of the candidate's entries answered it.
+/// </summary>
+/// <remarks>
+/// <para>
+/// ONE ENTRY PER REQUIREMENT, satisfied or not, which is what makes <c>satisfied: false</c> with an empty
+/// <c>matchedBy</c> usable as the authoritative "this is missing". Inferring that from the recommendations
+/// instead does not work and never did: advice is capped at ten, so a requirement going unmentioned means
+/// nothing about whether it matched.
+/// </para>
+/// <para>
+/// <c>weight</c> is the requirement's own magnitude on the 0..1 scale, the same scale as every other number
+/// in this response except <c>overallScore</c>. Summing the weights of the satisfied entries reproduces the
+/// skills section's matched fraction — which is the arithmetic a client needs to rank its own content, and
+/// it is arithmetic over values the server supplied rather than a second opinion about what matched.
+/// </para>
+/// </remarks>
+public sealed record RequirementMatchResponse(
+    string Skill,
+    string Priority,
+    double Weight,
+    bool Satisfied,
+    IReadOnlyList<RequirementEvidenceResponse> MatchedBy)
+{
+    public static RequirementMatchResponse From(RequirementAttribution attribution)
+    {
+        ArgumentNullException.ThrowIfNull(attribution);
+
+        return new RequirementMatchResponse(
+            attribution.Skill,
+            attribution.Priority.ToString(),
+            attribution.Weight,
+            attribution.Satisfied,
+            [.. attribution.MatchedBy.Select(RequirementEvidenceResponse.From)]);
+    }
+}
+
+/// <summary>
+/// One place in the resume that answered a requirement, and the candidate's own wording that did it.
+/// </summary>
+/// <remarks>
+/// <c>matchedText</c> is verbatim from the CV, and it is the point of the whole structure: the engine
+/// canonicalizes through a lexicon it does not publish, so "React.js" satisfying "React" is otherwise
+/// invisible — and a client that re-derived the match by comparing strings would contradict the score
+/// beside it exactly when the lexicon did its job.
+///
+/// <c>source</c> is one of <c>SkillName</c>, <c>SkillKeyword</c>, <c>ProjectTechnology</c>, and that list
+/// is exhaustive because those are the only three places the matcher looks. EXPERIENCES ARE NOT AMONG
+/// THEM — work history is not read when deciding whether a requirement is met, so no response can rank it
+/// by requirements answered.
+///
+/// There is no entry id. A skill's name is unique within a CV (<c>Resume.AddSkill</c> refuses a duplicate),
+/// so a <c>SkillName</c> match joins back by exact string; ids themselves are per-materialization and
+/// belong to the read that produced them.
+/// </remarks>
+public sealed record RequirementEvidenceResponse(string Source, string MatchedText)
+{
+    public static RequirementEvidenceResponse From(RequirementEvidence evidence)
+    {
+        ArgumentNullException.ThrowIfNull(evidence);
+
+        return new RequirementEvidenceResponse(evidence.Source.ToString(), evidence.MatchedText);
     }
 }
 

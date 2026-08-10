@@ -18,7 +18,7 @@ public static class ScoringEndpoints
 
         group.MapPost("/score", async (
             ScoreResumeRequest request,
-            ICommandHandler<ScoreResumeCommand, Result<AnalysisView>> handler,
+            ICommandHandler<ScoreResumeCommand, Result<ScoredAnalysisView>> handler,
             HttpContext httpContext,
             CancellationToken cancellationToken) =>
         {
@@ -31,7 +31,11 @@ public static class ScoringEndpoints
             // put RecommendationKind and RecommendationPriority on the wire as raw integers — numbers
             // this repo documents as an append-only persistence detail. AnalysisResponse states the
             // contract instead, and the ordering the aggregate deliberately does not guarantee.
-            return result.ToHttpResult(view => Results.Ok(AnalysisResponse.From(view.Analysis, view.IsStale)));
+            //
+            // FromScored, which is the ONLY call site that fills requirementMatches — the two read routes
+            // below take AnalysisView, a type that does not carry attribution, so they cannot answer with
+            // one computed against a resume that has moved since the score was taken.
+            return result.ToHttpResult(scored => Results.Ok(AnalysisResponse.FromScored(scored)));
         })
         // STATED, because nothing can infer it. These endpoints return IResult, which is opaque to the
         // OpenAPI generator: without this the published document describes the request in full and the
@@ -57,6 +61,7 @@ public static class ScoringEndpoints
             + "is the same scoring event. The date is part of that test because a score genuinely moves "
             + "with time — experience accrues and certificates expire — so tomorrow's identical request "
             + "does produce a new run. `isStale` on the response is therefore always false here. "
+            + RequirementMatchesContract
             + ZeroWeightContract);
 
         // Reading one score back. Same DTO as /scoring/score, deliberately: a second shape for the same
@@ -105,6 +110,25 @@ public static class ScoringEndpoints
     // returns was either just computed from the current resume or reused precisely because the resume had
     // not moved — so its own description says that instead, and repeating this there would invite a client
     // to branch on a value that is constant.
+    // Stated ONLY here, because this is the only route that carries the field. Repeating it on the two
+    // read routes would describe something they always answer null for.
+    private const string RequirementMatchesContract =
+        "`requirementMatches` SAYS WHAT MATCHED, one entry per requirement the posting states, satisfied or "
+        + "not. Do not derive this yourself: the engine canonicalizes through a skill lexicon that is "
+        + "embedded in the server and published nowhere, so `React.js` satisfies a `React` requirement and "
+        + "a client comparing strings would contradict the score printed beside it — precisely whenever the "
+        + "lexicon did its job. `matchedBy[].matchedText` is the candidate's own wording, verbatim, so a UI "
+        + "can show WHY something counted. `matchedBy[].source` is one of `SkillName`, `SkillKeyword` or "
+        + "`ProjectTechnology`, and that list is exhaustive because those are the only three places the "
+        + "matcher looks — WORK HISTORY IS NOT READ when deciding whether a requirement is met, so no "
+        + "response can rank experiences by requirements answered. An unsatisfied requirement carries an "
+        + "empty `matchedBy`, which is the authoritative 'this is missing': recommendations are capped at "
+        + "ten, so a requirement going unmentioned there never meant it matched. "
+        + "THIS FIELD IS NULL ON `GET /v1/scoring/{analysisId}` AND ON THE HISTORY, and null is not an empty "
+        + "array: a stored analysis outlives the resume it scored, so attribution computed at read time "
+        + "would describe today's CV beside an older number. Re-post the same pair to get it — that returns "
+        + "the same de-duplicated analysis with attribution attached. ";
+
     private const string StalenessContract =
         "`isStale` IS COMPUTED PER REQUEST AND NEVER STORED. It is true when the resume has been edited "
         + "since this score was taken — the number describes a CV the candidate no longer has — and ALSO "

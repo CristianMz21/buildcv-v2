@@ -143,6 +143,61 @@ internal static class ScoringRules
         || skillLexicon.Canonicalize(candidate).Equals(
             skillLexicon.Canonicalize(required), StringComparison.OrdinalIgnoreCase);
 
+    // The same three comparisons IsSatisfiedBy makes, reported instead of reduced to a bool.
+    //
+    // IT SHARES NamesTheSameSkill RATHER THAN RESTATING IT, which is the only property that matters here:
+    // a second copy of the comparison would be a second statement of the matching rule, and the two would
+    // drift the first time the lexicon logic moved -- publishing an attribution that disagrees with the
+    // score it was published beside. So Satisfied below is not "what the attribution found"; it is
+    // MatchedBy being non-empty, and MatchedBy is built by the comparer that scored.
+    //
+    // Reads nothing and writes nothing: no score, no weight, no total. Deleting this method leaves every
+    // number in this file identical, which is what makes it safe to add to a shipped engine.
+    internal static IReadOnlyList<RequirementAttribution> Attribute(
+        Resume resume, JobPosting jobPosting, ISkillLexicon skillLexicon)
+    {
+        ArgumentNullException.ThrowIfNull(resume);
+        ArgumentNullException.ThrowIfNull(jobPosting);
+        ArgumentNullException.ThrowIfNull(skillLexicon);
+
+        var attributions = new List<RequirementAttribution>(jobPosting.Requirements.Count);
+
+        // ONE ENTRY PER REQUIREMENT, satisfied or not. An unsatisfied requirement carries an empty
+        // MatchedBy, which is what lets a client stop inferring absence from the text of a recommendation:
+        // advice is capped at ten, so "no recommendation mentions React" never meant "React matched".
+        foreach (var requirement in jobPosting.Requirements)
+        {
+            var evidence = new List<RequirementEvidence>();
+
+            foreach (var skill in resume.Skills)
+            {
+                if (NamesTheSameSkill(skill.Name.Name, requirement.Skill.Name, skillLexicon))
+                    evidence.Add(new RequirementEvidence(RequirementMatchSource.SkillName, skill.Name.Name));
+
+                foreach (var keyword in skill.Keywords)
+                {
+                    if (NamesTheSameSkill(keyword, requirement.Skill.Name, skillLexicon))
+                        evidence.Add(new RequirementEvidence(RequirementMatchSource.SkillKeyword, keyword));
+                }
+            }
+
+            foreach (var technology in resume.Projects.SelectMany(project => project.Technologies))
+            {
+                if (NamesTheSameSkill(technology.Name, requirement.Skill.Name, skillLexicon))
+                    evidence.Add(new RequirementEvidence(RequirementMatchSource.ProjectTechnology, technology.Name));
+            }
+
+            attributions.Add(new RequirementAttribution(
+                requirement.Skill.Name,
+                requirement.Priority,
+                requirement.Weight,
+                evidence.Count > 0,
+                evidence));
+        }
+
+        return attributions;
+    }
+
     internal static double ExperienceScore(double days) => Math.Clamp(days / ExperienceDaysCap, 0.0, 1.0);
 
     internal static int ProfessionalDays(Resume resume, DateOnly referenceDate) =>
