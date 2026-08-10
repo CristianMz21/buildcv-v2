@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using BuildCv.Application.Common.Repositories;
 using BuildCv.Domain.Common.ValueObjects;
+using BuildCv.Domain.Identity;
 using BuildCv.Domain.Organizations;
 
 namespace BuildCv.Infrastructure.Persistence;
@@ -39,6 +40,22 @@ public sealed class InMemoryOrganizationRepository : IOrganizationRepository
         cancellationToken.ThrowIfCancellationRequested();
         _organizations[organization.Id.Value] = organization;
         return Task.CompletedTask;
+    }
+
+    public Task<IReadOnlyList<Organization>> GetByMemberIdAsync(
+        AccountId accountId, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(accountId);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        IReadOnlyList<Organization> organizations =
+        [
+            .. _organizations.Values
+                .Where(organization => IsLive(organization)
+                    && organization.Members.Any(member => member.AccountId == accountId))
+        ];
+
+        return Task.FromResult(organizations);
     }
 
     private static bool IsLive(Organization? organization) =>

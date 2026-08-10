@@ -40,7 +40,31 @@ public static class ResultExtensions
         if (result.IsSuccess)
             return onSuccess is null ? Results.Ok(result.Value) : onSuccess(result.Value!);
 
-        var message = result.Error!;
+        return Refusal(result.Error!);
+    }
+
+    /// <summary>
+    /// The same mapping for a <see cref="Result"/> that carries no value — a command whose success is a
+    /// 204 rather than a body.
+    /// </summary>
+    /// <remarks>
+    /// It DELEGATES to <see cref="Refusal"/> rather than repeating the switch. Two copies of "Forbidden.
+    /// means 403" is how one endpoint starts answering 400 for a refusal every other endpoint answers 403
+    /// for, and the divergence is invisible until a client branches on the wrong one.
+    /// </remarks>
+    public static IResult ToHttpResult(this Result result, Func<IResult>? onSuccess = null)
+    {
+        ArgumentNullException.ThrowIfNull(result);
+
+        if (result.IsSuccess)
+            return onSuccess is null ? Results.NoContent() : onSuccess();
+
+        return Refusal(result.Error!);
+    }
+
+    // The single statement of how an Application-layer error string becomes a status code.
+    private static IResult Refusal(string message)
+    {
         var statusCode = message switch
         {
             "Forbidden." => StatusCodes.Status403Forbidden,

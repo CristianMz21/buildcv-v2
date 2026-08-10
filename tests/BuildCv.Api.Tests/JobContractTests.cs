@@ -232,6 +232,9 @@ public class JobContractTests
         public Task UpdateAsync(JobPosting jobPosting, CancellationToken cancellationToken = default) =>
             inner.UpdateAsync(jobPosting, cancellationToken);
 
+        public Task DeleteByOwnerAsync(AccountId ownerId, CancellationToken cancellationToken = default) =>
+            inner.DeleteByOwnerAsync(ownerId, cancellationToken);
+
         public async Task<JobPosting?> GetByIdAsync(
             JobPostingId id, CancellationToken cancellationToken = default) =>
             Stating(await inner.GetByIdAsync(id, cancellationToken));

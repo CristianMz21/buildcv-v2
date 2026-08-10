@@ -36,4 +36,10 @@ public sealed class FakeJobPostingRepository : IJobPostingRepository
             _jobPostings[index] = _jobPostings[index] with { Item = jobPosting };
         return Task.CompletedTask;
     }
+
+    public Task DeleteByOwnerAsync(AccountId ownerId, CancellationToken cancellationToken = default)
+    {
+        _jobPostings.RemoveAll(row => row.Item.OwnerId == ownerId);
+        return Task.CompletedTask;
+    }
 }

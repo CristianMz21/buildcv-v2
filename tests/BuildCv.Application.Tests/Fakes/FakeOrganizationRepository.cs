@@ -2,6 +2,7 @@ namespace BuildCv.Application.Tests.Fakes;
 
 using BuildCv.Application.Common.Repositories;
 using BuildCv.Domain.Common.ValueObjects;
+using BuildCv.Domain.Identity;
 using BuildCv.Domain.Organizations;
 
 public sealed class FakeOrganizationRepository : IOrganizationRepository
@@ -26,5 +27,21 @@ public sealed class FakeOrganizationRepository : IOrganizationRepository
         if (index >= 0)
             _organizations[index] = organization;
         return Task.CompletedTask;
+    }
+
+    // Deleted organizations are excluded, matching both real stores: their query filter and their IsLive
+    // check make a tombstoned row invisible, and a fake that still returned one would let a test pass
+    // against behaviour production does not have.
+    public Task<IReadOnlyList<Organization>> GetByMemberIdAsync(
+        AccountId accountId, CancellationToken cancellationToken = default)
+    {
+        IReadOnlyList<Organization> matches =
+        [
+            .. _organizations
+                .Where(organization => organization.Status != OrganizationStatus.Deleted
+                    && organization.Members.Any(member => member.AccountId == accountId))
+        ];
+
+        return Task.FromResult(matches);
     }
 }

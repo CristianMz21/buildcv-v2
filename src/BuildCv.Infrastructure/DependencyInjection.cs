@@ -138,6 +138,7 @@ public static class DependencyInjection
         services.AddScoped<ICommandHandler<RefreshAccessTokenCommand, Result<AuthResult>>, RefreshAccessTokenHandler>();
         services.AddScoped<IQueryHandler<GetAccountQuery, Result<AccountDto>>, GetAccountHandler>();
         services.AddScoped<ICommandHandler<ChangePasswordCommand, Result<AccountDto>>, ChangePasswordHandler>();
+        services.AddScoped<ICommandHandler<DeleteAccountCommand, Result>, DeleteAccountHandler>();
         services.AddScoped<ICommandHandler<VerifyEmailCommand, Result<AccountDto>>, VerifyEmailHandler>();
         services.AddScoped<ICommandHandler<RevokeSessionsCommand, Result>, RevokeSessionsHandler>();
 

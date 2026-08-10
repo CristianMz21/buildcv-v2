@@ -248,7 +248,7 @@ wide.
 | Per client address | **100 / min** | Everything except `/health/*` |
 | Per client address | **5 / min** | `POST /v1/auth/register`, `/login`, `/refresh` — one shared window |
 | Per client address | **20 / min** | `POST /v1/auth/logout` |
-| **Per account** | **5 / min** | `POST /v1/auth/change-password` |
+| **Per account** | **5 / min** | `POST /v1/auth/change-password`, `DELETE /v1/auth/me` — one shared window, so exhausting either closes both |
 | **Per account** | **5 / min** | `POST /v1/resumes/import` |
 | **Per account** | **10 / min** | `POST /v1/resumes/import/extract`, `POST /v1/resumes/import/propose` — one shared window |
 
@@ -417,6 +417,7 @@ Recruiter and Admin). `Recruiter` = Recruiter or Admin. `—` = anonymous.
 | `POST /v1/auth/refresh` | — | Reads the refresh **cookie**; no body form |
 | `POST /v1/auth/logout` | — | 204. Revokes every session. CSRF-guarded |
 | `POST /v1/auth/change-password` | Auth | Revokes every session; re-login after |
+| `DELETE /v1/auth/me` | Auth | **Irreversible.** Body `{ currentPassword }`. Deletes every CV, analysis, readability report, owned posting and session, then frees the address. 400 if you are the only owner of an organization with other members — and nothing is deleted when it refuses |
 | `GET /v1/auth/me` | Auth | The caller's account |
 | `GET /v1/auth/antiforgery` | — | Fetch **after** login; re-fetch on principal change |
 | `POST /v1/resumes` | Candidate | Create an empty resume |

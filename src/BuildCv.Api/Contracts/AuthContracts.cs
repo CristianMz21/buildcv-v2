@@ -8,6 +8,10 @@ public sealed record LoginRequest(string Email, string Password);
 
 public sealed record ChangePasswordRequest(string CurrentPassword, string NewPassword);
 
+// DELETE with a body, which is unusual and is the right shape here: the password is a credential, and a
+// credential in a query string reaches the access log of every proxy between the client and Kestrel.
+public sealed record DeleteAccountRequest(string CurrentPassword);
+
 public sealed record TokenResponse(string AccessToken, int ExpiresIn);
 
 public sealed record AntiforgeryTokenResponse(string RequestToken);
