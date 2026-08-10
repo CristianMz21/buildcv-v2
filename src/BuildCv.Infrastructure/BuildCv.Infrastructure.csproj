@@ -11,6 +11,22 @@
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.10" />
     <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="10.0.10" />
     <PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" Version="8.22.0" />
+
+    <!--
+      TRANSITIVE, pinned forward. Nothing here references this: it arrives as
+      EntityFrameworkCore.SqlServer to Microsoft.Data.SqlClient to Azure.Identity to
+      Microsoft.Identity.Client, and the 4.73.1 that chain resolves is flagged by its own authors as
+      deprecated for CRITICAL BUGS. Run `dotnet list package` with the deprecated and include-transitive
+      switches to see it.
+
+      It is not on this deployment's execution path: Azure.Identity is how SqlClient authenticates to
+      SQL Server with Entra ID, and the connection string here uses a SQL login. But docs/deployment.md
+      recommends a MANAGED instance, and managed instances are exactly where Entra ID auth is the normal
+      choice, so the path a deployment is being pointed at is the one that would use it.
+
+      Removing this line does not remove the package. It only puts the flagged version back.
+    -->
+    <PackageReference Include="Microsoft.Identity.Client" Version="4.87.0" />
   </ItemGroup>
 
   <ItemGroup>
