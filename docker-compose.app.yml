@@ -151,6 +151,10 @@ services:
       start_period: 15s
       retries: 3
     restart: unless-stopped
+    # The last container without a ceiling. Next.js renders server-side, so a request holds its work in
+    # this process's heap -- and this is the ONLY service reachable from outside, which makes it the one
+    # an attacker can lean on. Without a limit it competes with the database for the same host memory.
+    mem_limit: ${WEB_MEM_LIMIT:-512m}
 
 volumes:
   buildcv-app-sqlserver-data:
