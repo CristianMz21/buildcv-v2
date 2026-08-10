@@ -372,6 +372,50 @@ except which addresses are trusted.
 Until then, rate limiting that distinguishes users has to live **in front of** the web container. Caddy
 can do it, and so can any ingress or CDN you put there.
 
+#### How to check it yourself, instead of taking the paragraph above on trust
+
+The measurement above is dated the moment anything in the chain changes — a proxy added, a CDN put in
+front, the BFF starting to forward what it did not forward before. Enabling trust gives no signal either
+way: the peer address simply becomes a different value, and nothing tells you whether it is the right
+one. So the API can be asked directly.
+
+```bash
+# Container Apps
+az containerapp update -g buildcv-rg -n buildcv-api \
+  --set-env-vars Logging__LogLevel__BuildCv.Api.Security=Debug
+
+# compose
+BUILDCV_LOG_LEVEL=Debug docker compose -f docker-compose.app.yml up -d api
+```
+
+Make **one** request through the front door, then read the line:
+
+```
+Forwarded-header resolution: peer is now 203.0.113.7, was 100.100.0.103 before trust ran;
+unconsumed X-Forwarded-For is <absent>.
+```
+
+Read it as three separate facts, because they fail independently:
+
+| What you see | What it means |
+|---|---|
+| `was <absent> before trust ran` | trust is **off**, or the peer was not on the allowlist — the middleware never ran |
+| peer is an internal address, `unconsumed` holds the real client | `ForwardLimit` is too **low**; raise it by the number of entries still sitting there |
+| peer is an internal address, `unconsumed` is `<absent>` | nothing sent a chain — the hop in front is **overwriting** `X-Forwarded-For`, not appending, and no `ForwardLimit` fixes that |
+| `<unsafe>` | the header held something that is not an address list, or arrived twice; see below |
+
+**Turn it back off when you have the answer.** An address is personal data, and a log line carries none
+of this repository's encryption — it is the one line here whose content comes from outside the process.
+The level is the whole control: at the shipped `Information` the middleware writes nothing, which
+`ForwardedHeaderDiagnosticsTests` pins in both directions rather than assuming.
+
+`<unsafe>` is a refusal, not a bug. `X-Forwarded-For` is client input by definition, so a caller can put
+a forged log line in it; values that are not an address list are **replaced whole** rather than trimmed,
+the same ruling `CorrelationIdMiddleware` makes — a stripped value would report a chain nobody sent
+while looking exactly like one they did. A repeated header is refused for a subtler reason: joining it
+renders two headers of one hop identically to one header of two, and counting hops is the entire point
+of the line.
+
 ### Deploying to Azure Container Apps
 
 `deploy/azure.sh` maps this stack onto Container Apps. Five things it teaches that are not obvious, all
