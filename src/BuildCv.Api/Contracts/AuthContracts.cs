@@ -12,6 +12,10 @@ public sealed record ChangePasswordRequest(string CurrentPassword, string NewPas
 // credential in a query string reaches the access log of every proxy between the client and Kestrel.
 public sealed record DeleteAccountRequest(string CurrentPassword);
 
+public sealed record RequestPasswordResetRequest(string Email);
+
+public sealed record ConfirmPasswordResetRequest(string Token, string NewPassword);
+
 public sealed record TokenResponse(string AccessToken, int ExpiresIn);
 
 public sealed record AntiforgeryTokenResponse(string RequestToken);
