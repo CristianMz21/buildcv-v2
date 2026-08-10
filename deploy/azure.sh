@@ -115,7 +115,26 @@ az containerapp create -g "$GROUP" -n buildcv-api --environment "$ENVIRONMENT" \
              "Encryption__Keys__v1__Aes=secretref:enc" \
              "Encryption__BlindIndex__ActiveKeyId=b1" \
              "Encryption__BlindIndex__Keys__b1=secretref:blind" \
-             "ASPNETCORE_ENVIRONMENT=Production" -o none
+             "ASPNETCORE_ENVIRONMENT=Production" \
+             "Network__ForwardedHeaders__Enabled=${TRUST_INGRESS:-false}" \
+             "Network__ForwardedHeaders__KnownNetworks__0=100.100.0.0/16" \
+             "Network__ForwardedHeaders__ForwardLimit=2" -o none
+
+# THIS WAS MISSING FROM THE FIRST DEPLOYMENT AND THE OMISSION WAS INVISIBLE. Without it the API defaults
+# to Enabled:false and ignores X-Forwarded-For entirely -- so every request is attributed to the web
+# container and the 5/min auth window is shared by the whole deployment. Nothing fails; it just cannot
+# tell users apart. An experiment run against the deployment recorded the internal address and looked
+# like the BFF was at fault.
+#
+# A NETWORK RATHER THAN AN ADDRESS, which docs/deployment.md otherwise argues against. In compose the
+# peer can be pinned and named exactly; in Container Apps it is dynamic inside 100.100.0.0/16, so this
+# trusts anything in the ENVIRONMENT. That is proportionate while the environment holds only these two
+# apps, and stops being proportionate the moment a third lands in it.
+#
+# Default false: it is only correct if the ingress OVERWRITES a client-supplied X-Forwarded-For rather
+# than passing it through, and believing the header without that hands the limiter to the caller --
+# strictly worse than the shared bucket. Set TRUST_INGRESS=true once that is verified against the real
+# ingress, not assumed.
 
 API_FQDN=$(az containerapp show -g "$GROUP" -n buildcv-api --query "properties.configuration.ingress.fqdn" -o tsv)
 
