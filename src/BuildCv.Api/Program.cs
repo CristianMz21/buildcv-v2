@@ -226,6 +226,13 @@ if (forwardedHeaders.Enabled)
 // carry the same id. See CorrelationIdMiddleware for why the echo is written from OnStarting.
 app.UseMiddleware<CorrelationIdMiddleware>();
 
+// AFTER the correlation id rather than beside UseForwardedHeaders, which is where it belongs
+// logically. Nothing above CorrelationIdMiddleware logs — that is a property the observability
+// section states and this line would have been the first exception to it, arriving with no id on
+// exactly the requests an operator is trying to follow. It reads what the forwarded-header
+// middleware left behind, so running two steps later costs it nothing.
+app.UseMiddleware<ForwardedHeaderDiagnostics>();
+
 app.UseMiddleware<SecurityHeadersMiddleware>();
 app.UseExceptionHandler();
 
