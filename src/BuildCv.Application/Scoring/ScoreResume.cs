@@ -13,7 +13,7 @@ using BuildCv.Domain.Resumes;
 using BuildCv.Domain.Scoring;
 
 public sealed record ScoreResumeCommand(AccountId RequesterId, ResumeId ResumeId, JobPostingId JobPostingId)
-    : ICommand<Result<AnalysisView>>;
+    : ICommand<Result<ScoredAnalysisView>>;
 
 public sealed class ScoreResumeHandler(
     IResumeRepository resumeRepository,
@@ -22,9 +22,9 @@ public sealed class ScoreResumeHandler(
     IScoringEngine scoringEngine,
     TimeProvider timeProvider,
     BuildCvMetrics metrics)
-    : ICommandHandler<ScoreResumeCommand, Result<AnalysisView>>
+    : ICommandHandler<ScoreResumeCommand, Result<ScoredAnalysisView>>
 {
-    public async Task<Result<AnalysisView>> Handle(ScoreResumeCommand command, CancellationToken cancellationToken = default)
+    public async Task<Result<ScoredAnalysisView>> Handle(ScoreResumeCommand command, CancellationToken cancellationToken = default)
     {
         // Started before the authorization reads so a refused request is still one span rather than a
         // gap. It carries NO resume id, account id or posting id: a span attribute is exported to the
@@ -37,14 +37,14 @@ public sealed class ScoreResumeHandler(
         {
             var resume = await resumeRepository.GetByIdAsync(command.ResumeId, cancellationToken);
             if (resume is null)
-                return Result<AnalysisView>.Failure("Resume not found.");
+                return Result<ScoredAnalysisView>.Failure("Resume not found.");
 
             if (resume.OwnerId != command.RequesterId)
-                return Result<AnalysisView>.Failure("Forbidden.");
+                return Result<ScoredAnalysisView>.Failure("Forbidden.");
 
             var jobPosting = await jobPostingRepository.GetByIdAsync(command.JobPostingId, cancellationToken);
             if (jobPosting is null)
-                return Result<AnalysisView>.Failure("Job posting not found.");
+                return Result<ScoredAnalysisView>.Failure("Job posting not found.");
 
             // Scoring is published-or-owned. Without this any authenticated caller could score against
             // any JobPostingId, including a stranger's unpublished draft -- and a score is a readable
@@ -63,7 +63,7 @@ public sealed class ScoreResumeHandler(
             //    posting that does not exist is told so. Both handlers leak the same bit of existence
             //    information, and they leak it consistently.
             if (jobPosting.Status != JobPostingStatus.Published && jobPosting.OwnerId != command.RequesterId)
-                return Result<AnalysisView>.Failure("Forbidden.");
+                return Result<ScoredAnalysisView>.Failure("Forbidden.");
 
             // ONE clock read for the whole run, and both the date scored against and the date stamped on
             // the row are derived from it.
@@ -100,7 +100,14 @@ public sealed class ScoreResumeHandler(
                 // every other signal: the request count is identical, and the only trace of a reuse is a
                 // row that was NOT written.
                 Record(activity, metrics, ScoringOutcomes.Deduplicated);
-                return Result<AnalysisView>.Success(AnalysisView.Of(existing, resume));
+                // Attributed even though nothing was scored, and it is sound for the same reason the
+                // reuse is: the key's first term is ResumeUpdatedAt equality, so reaching this line is
+                // proof the resume has not moved since. Omitting it here instead would make attribution
+                // a property of whether the caller happened to miss the de-duplication, and a client
+                // could never get it back — re-POSTing the same pair de-duplicates again.
+                return Result<ScoredAnalysisView>.Success(new ScoredAnalysisView(
+                    AnalysisView.Of(existing, resume),
+                    scoringEngine.Attribute(resume, jobPosting)));
             }
 
             var score = scoringEngine.Score(resume, jobPosting, referenceDate);
@@ -131,15 +138,17 @@ public sealed class ScoreResumeHandler(
             // because the first term of the key says the resume has not moved — but that second claim is
             // a property of the key rather than of this line, and computing it keeps the response
             // truthful if the key ever changes instead of merely likely to be.
-            return Result<AnalysisView>.Success(AnalysisView.Of(analysis, resume));
+            return Result<ScoredAnalysisView>.Success(new ScoredAnalysisView(
+                AnalysisView.Of(analysis, resume),
+                scoringEngine.Attribute(resume, jobPosting)));
         }
         catch (DomainException ex)
         {
-            return Result<AnalysisView>.Failure(ex.Message);
+            return Result<ScoredAnalysisView>.Failure(ex.Message);
         }
         catch (ArgumentException ex)
         {
-            return Result<AnalysisView>.Failure(ex.Message);
+            return Result<ScoredAnalysisView>.Failure(ex.Message);
         }
     }
 

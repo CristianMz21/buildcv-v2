@@ -332,6 +332,45 @@ Two consequences a client has to handle:
   renormalized to total 1.0, so a low `overallScore` with only three recommendations is a complete
   answer, not a truncated one. `weights.languages` is `0` on every analysis this build can produce.
 
+### `requirementMatches` — what matched, and why you must not work it out yourself
+
+`POST /v1/scoring/score` returns one entry **per requirement the posting states**, satisfied or not:
+
+```jsonc
+"requirementMatches": [
+  { "skill": "React", "priority": "MustHave", "weight": 0.18, "satisfied": true,
+    "matchedBy": [ { "source": "SkillName", "matchedText": "React.js" } ] },
+  { "skill": "Kubernetes", "priority": "NiceToHave", "weight": 0.5, "satisfied": false,
+    "matchedBy": [] }
+]
+```
+
+**Do not re-derive this by comparing strings.** The engine canonicalizes through a skill lexicon that is
+embedded in the server and served by no endpoint, so `React.js` satisfies a `React` requirement. A
+client-side comparison would disagree with the score printed beside it *precisely whenever the lexicon did
+its job* — and it would tell a candidate to add a skill they already listed.
+
+- **`matchedText` is the candidate's own wording, verbatim.** It is what lets a UI show *why* something
+  counted rather than asserting that it did.
+- **`source` is one of `SkillName`, `SkillKeyword`, `ProjectTechnology`, and the list is exhaustive** —
+  those are the only three places the matcher looks. **Work history is not read when deciding whether a
+  requirement is met**, so nothing here (or anywhere else) can rank experiences by requirements answered.
+- **`satisfied: false` with an empty `matchedBy` is the authoritative "this is missing".** Do not infer
+  absence from the recommendations: they are capped at ten, so a requirement going unmentioned there never
+  meant it matched.
+- **Summing `weight` over the satisfied entries reproduces the skills section's matched fraction.** That is
+  arithmetic over values the server supplied, not a second opinion about what matched.
+- **There is no entry id, and none is coming.** Entry ids belong to the read that produced them; an
+  analysis outlives that read. A skill's name is unique within one CV, so a `SkillName` match joins back by
+  exact string.
+
+**The field is `null` on `GET /v1/scoring/{analysisId}` and on the history — and `null` is not `[]`.** A
+stored analysis outlives the resume it scored (that is what `isStale` reports), so attribution computed at
+read time would describe today's CV beside an older number, and you could not tell. `null` means "not
+carried by this response"; `[]` means "the posting required nothing". To get attribution for a pair you
+already scored, **re-post it**: that de-duplicates to the same analysis and attaches attribution, because a
+de-duplication is itself proof the resume has not moved.
+
 **Scoring is narrower than reading a posting**, and it is the one place the two authorization rules
 differ. `POST /v1/scoring/score` requires the resume to be yours *and* the posting to be either
 `Published` or yours — nothing else gets in. `GET /v1/jobs/{id}` additionally admits any `Admin` and

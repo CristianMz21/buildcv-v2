@@ -1,6 +1,7 @@
 namespace BuildCv.Application.Tests.Fakes;
 
 using BuildCv.Application.Common.Services;
+using BuildCv.Application.Scoring;
 using BuildCv.Domain.Jobs;
 using BuildCv.Domain.Resumes;
 using BuildCv.Domain.Scoring;
@@ -23,4 +24,10 @@ public sealed class RecordingScoringEngine(IScoringEngine inner) : IScoringEngin
         _referenceDates.Add(referenceDate);
         return inner.Score(resume, jobPosting, referenceDate);
     }
+
+    // Delegated and NOT recorded, on purpose. Recording it would make the notebook say how many times
+    // attribution ran, and no test should assert that: the de-duplicated branch attributes without
+    // scoring, so a count here would pin an implementation detail rather than a behaviour.
+    public IReadOnlyList<RequirementAttribution> Attribute(Resume resume, JobPosting jobPosting) =>
+        inner.Attribute(resume, jobPosting);
 }
