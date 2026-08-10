@@ -62,6 +62,10 @@ public static class ResumeTextParser
     // A leading bullet glyph or dash the candidate typed, stripped before an item or context line is read.
     private static readonly Regex LeadingBullet = new(@"^[\s\-–—*•·‣▪◦]+", RegexOptions.Compiled);
 
+    // A line that genuinely opens with a bullet MARKER and has content after it. Deliberately stricter
+    // than LeadingBullet, whose character class includes \s and so matches any indented line.
+    private static readonly Regex BulletLine = new(@"^\s*[\-–—*•·‣▪◦]+\s*\S", RegexOptions.Compiled);
+
     public static ResumeDraftProposal Parse(
         string text,
         ColumnLayout layout = ColumnLayout.Unknown,
@@ -364,7 +368,7 @@ public static class ResumeTextParser
         IReadOnlyList<string> body, List<FieldProvenance> fields)
     {
         var experiences = new List<ExperienceDraft>();
-        foreach (var (context, range) in DatedEntries(body))
+        foreach (var (context, range, highlights) in DatedEntries(body))
         {
             var index = experiences.Count;
             var (position, organization) = SplitContext(context);
@@ -376,9 +380,16 @@ public static class ResumeTextParser
             // Type is never guessed: no CV states "Professional" vs "Volunteer" in a machine-readable way,
             // and assuming one inflates or deflates the experience the candidate reviews.
             fields.Add(new FieldProvenance($"{path}.type", FieldConfidence.NotExtracted));
+            // Medium, on the same reasoning as every other positional read here: the TEXT is verbatim, but
+            // that these bullets belong to THIS role is inferred from them sitting under its date line.
+            // Absent and flagged when the document listed none, never silently missing.
+            fields.Add(highlights.Count > 0
+                ? new FieldProvenance($"{path}.highlights", FieldConfidence.Medium, string.Join(" | ", highlights))
+                : new FieldProvenance($"{path}.highlights", FieldConfidence.NotExtracted));
 
             experiences.Add(new ExperienceDraft(
-                Type: null, Organization: organization, Position: position, Start: start, End: end));
+                Type: null, Organization: organization, Position: position, Start: start, End: end,
+                Highlights: highlights.Count == 0 ? null : highlights));
         }
 
         return experiences.Count == 0 ? null : experiences;
@@ -388,7 +399,9 @@ public static class ResumeTextParser
         IReadOnlyList<string> body, List<FieldProvenance> fields)
     {
         var educations = new List<EducationDraft>();
-        foreach (var (context, range) in DatedEntries(body))
+        // Highlights are discarded here — EducationDraft has no such field. The consumption still matters:
+        // it keeps a bullet under a degree from being read as the next degree's institution.
+        foreach (var (context, range, _) in DatedEntries(body))
         {
             var index = educations.Count;
             var (degree, institution, level) = SplitEducationContext(context);
@@ -414,9 +427,24 @@ public static class ResumeTextParser
     }
 
     // One entry per line carrying a date range, with the (up to two) non-empty, non-date lines
-    // immediately above it as its context. Lines with no date are not turned into entries — a guessed
-    // organisation with no date to anchor it is more noise than help.
-    private static IEnumerable<(IReadOnlyList<string> Context, CvDateRange Range)> DatedEntries(
+    // immediately above it as its context, and the bullet lines immediately BELOW it as its highlights.
+    // Lines with no date are not turned into entries — a guessed organisation with no date to anchor it
+    // is more noise than help.
+    //
+    // Reading downwards is not a new feature bolted on; it repairs the entry that follows. Before this,
+    // every line under an anchor fell into the NEXT entry's context window, was bullet-stripped by the
+    // loop below, and — because the window keeps the last two lines — a role written as
+    //
+    //     Senior Engineer            <- context of entry 1
+    //     2019 - 2024                <- anchor 1
+    //     - Cut settlement time 40%  <- became context of entry 2
+    //     Junior Engineer            <- became context of entry 2
+    //     2015 - 2019                <- anchor 2
+    //
+    // produced entry 2 with Position = "Cut settlement time 40%" and Organization = "Junior Engineer".
+    // Consuming those lines here is what stops one job's achievements from being read as the next job's
+    // title.
+    private static IEnumerable<(IReadOnlyList<string> Context, CvDateRange Range, IReadOnlyList<string?> Highlights)> DatedEntries(
         IReadOnlyList<string> body)
     {
         var lastConsumed = -1;
@@ -435,9 +463,45 @@ public static class ResumeTextParser
             }
 
             var trimmedContext = context.Count > 2 ? context.GetRange(context.Count - 2, 2) : context;
-            yield return (trimmedContext, range);
-            lastConsumed = i;
+
+            // BulletLine, not LeadingBullet: the latter is `^[\s...]+`, so it matches on indentation
+            // alone and would swallow an indented job title. A highlight has to carry an actual marker.
+            var highlights = new List<string?>();
+            var k = i + 1;
+            for (; k < body.Count && BulletLine.IsMatch(body[k]) && CvDateParser.FindRange(body[k]) is null; k++)
+            {
+                // Past the cap the line is still CONSUMED, just not kept. Stopping the loop instead would
+                // hand the 51st bullet to the next entry as its job title, which is the exact corruption
+                // this block exists to prevent.
+                if (highlights.Count >= ResumeDraftLimits.TextItems)
+                    continue;
+
+                var text = LeadingBullet.Replace(body[k], string.Empty).Trim();
+                if (text.Length > 0)
+                    highlights.Add(text);
+            }
+
+            yield return (trimmedContext, range, highlights);
+            lastConsumed = k - 1;
         }
+    }
+
+    // The tail of a one-comma line, when it is only a company's legal form. Matched whole and
+    // case-insensitively, with any trailing period ignored, so "Inc." and "inc" both count while a real
+    // employer named "Incognito" does not. Covers the forms this product's Spanish-speaking market
+    // actually writes alongside the anglophone ones.
+    private static readonly string[] LegalFormSuffixes =
+    [
+        "inc", "llc", "ltd", "limited", "corp", "corporation", "co", "company", "plc", "llp", "lp",
+        "gmbh", "ag", "bv", "nv", "ab", "as", "oy", "pty", "pte",
+        "sa", "s a", "sas", "sl", "srl", "sac", "spa", "sapi", "sapi de cv", "de cv", "cv", "sabde cv",
+        "sociedad anonima", "sociedad anónima", "eirl", "sca", "scs", "sc",
+    ];
+
+    private static bool IsLegalFormSuffix(string tail)
+    {
+        var normalized = tail.TrimEnd('.').Replace(".", string.Empty, StringComparison.Ordinal).Trim();
+        return LegalFormSuffixes.Contains(normalized, StringComparer.OrdinalIgnoreCase);
     }
 
     // Two context lines: the first is read as the position/degree, the second as the organisation — the
@@ -460,6 +524,23 @@ public static class ResumeTextParser
             var at = line.IndexOf(word, StringComparison.OrdinalIgnoreCase);
             if (at > 0)
                 return (line[..at].Trim(), line[(at + word.Length)..].Trim());
+        }
+
+        // The comma is the most common separator on a real CV — "Senior Engineer, Remington Rand" — and
+        // also the most ambiguous one, which is why it is tried LAST and guarded. A company name carries
+        // commas of its own, and splitting "Acme, Inc." yields Position "Acme" / Organization "Inc.":
+        // strictly worse than the untouched fallback below, which at least keeps the name whole.
+        //
+        // So: exactly one comma, and the tail must not be a legal-form suffix. Anything more ambiguous
+        // than that falls through and stays honest — the position is left null and FLAGGED, which the
+        // review screen shows as "please fill in" rather than as a value the candidate might not reread.
+        var comma = line.IndexOf(',', StringComparison.Ordinal);
+        if (comma > 0 && line.IndexOf(',', comma + 1) < 0)
+        {
+            var head = line[..comma].Trim();
+            var tail = line[(comma + 1)..].Trim();
+            if (head.Length > 0 && tail.Length > 0 && !IsLegalFormSuffix(tail))
+                return (head, tail);
         }
 
         return (null, line);

@@ -482,6 +482,139 @@ public sealed class ResumeTextParserTests
         pythonLevel!.Confidence.Should().Be(FieldConfidence.NotExtracted);
     }
 
+    // Achievements is computed from Experience.Highlights and nothing else, and it carries 0.25 of the
+    // readability total. The parser used to emit no highlights from any document in any format, so every
+    // imported CV scored zero on a quarter of that score and was then advised to add bullet points it
+    // had already written.
+    [Fact]
+    public void Parse_BulletsUnderARole_BecomeThatRolesHighlights()
+    {
+        var (draft, confidence) = ResumeTextParser.Parse(
+            """
+            Sam Doe
+            sam@example.com
+
+            EXPERIENCE
+            Senior Engineer
+            Stripe
+            03/2019 - 06/2024
+            - Cut settlement time by 40% across 12 markets.
+            - Led a team of six.
+            """);
+
+        draft.Experiences![0]!.Highlights.Should().BeEquivalentTo(
+            ["Cut settlement time by 40% across 12 markets.", "Led a team of six."],
+            "the bullets below the date line describe the role above it");
+
+        var provenance = Provenance(confidence, "experiences[0].highlights");
+        provenance.Should().NotBeNull("a populated highlights list must carry provenance");
+        provenance!.Confidence.Should().Be(FieldConfidence.Medium, "the text is verbatim but the attribution is positional");
+    }
+
+    // The repair that matters more than the extraction. Bullets under one role used to fall into the NEXT
+    // entry's context window, get stripped of their marker, and be read as that entry's position and
+    // organisation. Silent, and worse than a missing field.
+    //
+    // THE SECOND ROLE DELIBERATELY HAS ONE CONTEXT LINE, and the first version of this test had two —
+    // which passed with the fix reverted, because the window already keeps only the last two lines and
+    // "Junior Engineer" / "Google" filled it on their own. A test that cannot observe its guarantee is
+    // the failure mode this repository keeps catching, so the shape here is the shape that corrupts:
+    // one bullet plus one title, both inside the window.
+    [Fact]
+    public void Parse_ABulletAboveASingleLineRole_IsNotReadAsThatRolesTitle()
+    {
+        var (draft, _) = ResumeTextParser.Parse(
+            """
+            Sam Doe
+            sam@example.com
+
+            EXPERIENCE
+            Senior Engineer
+            Stripe
+            03/2019 - 06/2024
+            - Cut settlement time by 40% across 12 markets.
+            Junior Engineer at Google
+            06/2015 - 02/2019
+            """);
+
+        draft.Experiences.Should().HaveCount(2);
+        draft.Experiences![0]!.Highlights.Should().ContainSingle();
+        draft.Experiences![1]!.Position.Should().Be(
+            "Junior Engineer", "the bullet belongs to the role above it, not to this one");
+        draft.Experiences![1]!.Organization.Should().Be("Google");
+        draft.Experiences![1]!.Highlights.Should().BeNull("this role listed none, and absent is honest");
+    }
+
+    // A role with no bullets is flagged, never silently absent — the rule every other field here follows.
+    [Fact]
+    public void Parse_ARoleWithNoBullets_FlagsHighlightsRatherThanOmittingThem()
+    {
+        var (draft, confidence) = ResumeTextParser.Parse(
+            """
+            Sam Doe
+            sam@example.com
+
+            EXPERIENCE
+            Senior Engineer
+            Stripe
+            03/2019 - 06/2024
+            """);
+
+        draft.Experiences![0]!.Highlights.Should().BeNull();
+        Provenance(confidence, "experiences[0].highlights")!.Confidence.Should().Be(FieldConfidence.NotExtracted);
+    }
+
+    // An indented continuation line is not a bullet. BulletLine exists precisely because LeadingBullet's
+    // character class includes \s, so `^[\s...]+` matches on indentation alone and would have consumed a
+    // plain indented job title as somebody else's achievement.
+    [Fact]
+    public void Parse_AnIndentedLineWithNoMarker_IsNotAHighlight()
+    {
+        var (draft, _) = ResumeTextParser.Parse(
+            """
+            Sam Doe
+            sam@example.com
+
+            EXPERIENCE
+            Senior Engineer
+            Stripe
+            03/2019 - 06/2024
+              Junior Engineer
+              Google
+            06/2015 - 02/2019
+            """);
+
+        draft.Experiences.Should().HaveCount(2);
+        draft.Experiences![0]!.Highlights.Should().BeNull("indentation alone does not make a bullet");
+        draft.Experiences![1]!.Position.Should().Be("Junior Engineer");
+    }
+
+    [Theory]
+    // The case the frontend session reported: a comma is the most common separator on a real CV.
+    [InlineData("Senior Engineer, Remington Rand", "Senior Engineer", "Remington Rand")]
+    // ...and the case that makes it the most dangerous one. Splitting here would produce Organization
+    // "Inc.", which is strictly worse than leaving the name whole.
+    [InlineData("Remington Rand, Inc.", null, "Remington Rand, Inc.")]
+    [InlineData("Mercado Libre, S.A.", null, "Mercado Libre, S.A.")]
+    // Two commas is too ambiguous to guess at, so it falls through and stays flagged.
+    [InlineData("Engineer, Payments, Stripe", null, "Engineer, Payments, Stripe")]
+    public void Parse_ASingleContextLine_SplitsOnACommaOnlyWhenItIsNotALegalForm(
+        string contextLine, string? expectedPosition, string expectedOrganization)
+    {
+        var (draft, _) = ResumeTextParser.Parse(
+            $"""
+            Sam Doe
+            sam@example.com
+
+            EXPERIENCE
+            {contextLine}
+            03/2019 - 06/2024
+            """);
+
+        draft.Experiences![0]!.Position.Should().Be(expectedPosition);
+        draft.Experiences![0]!.Organization.Should().Be(expectedOrganization);
+    }
+
     private static FieldProvenance? Provenance(DraftConfidence confidence, string path) =>
         confidence.Fields.FirstOrDefault(field => field.Path == path);
 }
