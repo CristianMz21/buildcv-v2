@@ -56,6 +56,19 @@ public sealed class InMemoryJobPostingRepository : IJobPostingRepository
         return Task.CompletedTask;
     }
 
+    // Removed outright rather than tombstoned, matching how this store treats every other delete: it
+    // is a dictionary, so a row nobody can reach is a row nobody can leak.
+    public Task DeleteByOwnerAsync(AccountId ownerId, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(ownerId);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        foreach (var entry in _jobPostings.Where(entry => entry.Value.Item.OwnerId == ownerId).ToList())
+            _jobPostings.TryRemove(entry.Key, out _);
+
+        return Task.CompletedTask;
+    }
+
     private KeysetRow<JobPosting> NextRow(JobPosting jobPosting) =>
         new(jobPosting, Interlocked.Increment(ref _sequence));
 }

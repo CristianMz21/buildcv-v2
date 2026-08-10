@@ -9,6 +9,7 @@ using BuildCv.Domain.Identity;
 using BuildCv.Infrastructure.Security;
 using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 
 namespace BuildCv.Api.Endpoints;
@@ -262,6 +263,81 @@ public static class AuthEndpoints
         .Produces<AccountResponse>(StatusCodes.Status200OK)
         .ProducesResultProblems()
         .ProducesAuthProblems();
+
+        // Leaving. The only route in this API that destroys data belonging to more than one aggregate, and
+        // the only one that cannot be undone.
+        //
+        // THE CURRENT PASSWORD IS REQUIRED, and it is the same argument /change-password makes: an access
+        // token is a bearer credential, so a stolen one would otherwise be enough to erase somebody's
+        // entire employment history. Re-authenticating is what makes a leaked token insufficient for the
+        // one action with no recovery.
+        //
+        // Throttled through the SAME per-account limiter as /change-password rather than a new one. Both
+        // are password-verifying endpoints on one account, so they share a budget on purpose: a limiter of
+        // its own would let an attacker who exhausted one window keep guessing in the other.
+        group.MapDelete("/me", async Task<IResult> (
+            // [FromBody] is REQUIRED, not decoration: minimal APIs refuse to INFER a body on DELETE and
+            // throw at startup rather than at request time. The body is right anyway -- a password in a
+            // query string reaches the access log of every proxy between the client and Kestrel.
+            [FromBody] DeleteAccountRequest request,
+            ICommandHandler<DeleteAccountCommand, Result> handler,
+            PasswordChangeRateLimiter rateLimiter,
+            BuildCvMetrics metrics,
+            ILogger<Program> logger,
+            HttpContext httpContext,
+            CancellationToken cancellationToken) =>
+        {
+            ArgumentNullException.ThrowIfNull(request);
+
+            var accountId = httpContext.User.GetAccountId();
+
+            using var lease = await rateLimiter.AcquireAsync(accountId, cancellationToken);
+            if (!lease.IsAcquired)
+            {
+                RateLimitResponse.SetRetryAfter(httpContext.Response, lease);
+                AuditLog.Log(logger, "account_delete_throttled", accountId, httpContext);
+                metrics.ThrottleRejection(ThrottlePolicies.PasswordChange);
+                return Results.Problem(
+                    detail: "Too many password change attempts.",
+                    statusCode: StatusCodes.Status429TooManyRequests);
+            }
+
+            var result = await handler.Handle(
+                new DeleteAccountCommand(accountId, request.CurrentPassword), cancellationToken);
+
+            if (!result.IsSuccess)
+                return result.ToHttpResult();
+
+            // Logged BEFORE the cookies are cleared, and the line is safe to keep because AuditLog hashes
+            // the address — an audit trail of deletions that stored the addresses would be a register of
+            // exactly the people who asked to be forgotten.
+            AuditLog.Log(logger, "account_deleted", accountId, httpContext);
+
+            // Every refresh token went with the account, so the browser is holding two credentials the
+            // server will never honour again.
+            AuthCookies.ClearTokens(httpContext);
+
+            return Results.NoContent();
+        })
+        .Produces(StatusCodes.Status204NoContent)
+        .ProducesResultProblems()
+        .ProducesAuthProblems()
+        .ProducesProblem(StatusCodes.Status429TooManyRequests)
+        .WithSummary("Closes the account and deletes everything it owns. Irreversible.")
+        .WithDescription(
+            "REQUIRES THE CURRENT PASSWORD, like `/auth/change-password` and for the same reason: an "
+            + "access token alone must not be enough to erase somebody's employment history. "
+            + "DELETES every CV — and with each one the analyses and readability reports derived from it "
+            + "— every job posting or imported offer the account owns, and every session. The email "
+            + "address becomes available for registration again. "
+            + "REFUSES with 400 if the account is the only owner of an organization that has other "
+            + "members: closing it would destroy their data, and this API cannot transfer ownership. "
+            + "Remove the other members first (`DELETE /v1/organizations/{id}/members/{accountId}`), or "
+            + "have another owner remove you. An organization where this account is the only member is "
+            + "closed with it. "
+            + "Nothing is deleted when the request is refused, so a caller told to deal with an "
+            + "organization still has every CV when they come back. "
+            + "Shares the per-account rate window with `/auth/change-password`.");
 
         // Client contract: fetch this token AFTER logging in, and re-fetch it whenever the
         // principal this API sees for your requests changes — login, logout, account switch, AND

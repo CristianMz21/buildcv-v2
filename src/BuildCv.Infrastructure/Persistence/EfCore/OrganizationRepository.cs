@@ -1,5 +1,6 @@
 using BuildCv.Application.Common.Repositories;
 using BuildCv.Domain.Common.ValueObjects;
+using BuildCv.Domain.Identity;
 using BuildCv.Domain.Organizations;
 using Microsoft.EntityFrameworkCore;
 
@@ -36,6 +37,19 @@ internal sealed class OrganizationRepository : IOrganizationRepository
         ArgumentNullException.ThrowIfNull(slug);
         return await _context.Organizations.AsTracking()
             .FirstOrDefaultAsync(organization => organization.Slug == slug, cancellationToken);
+    }
+
+    // AsTracking, because account deletion calls RemoveMember on what comes back and then saves it.
+    // The membership predicate translates: Members is an owned collection, so EF turns this into an
+    // EXISTS over its table rather than pulling every organization into memory.
+    public async Task<IReadOnlyList<Organization>> GetByMemberIdAsync(
+        AccountId accountId, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(accountId);
+
+        return await _context.Organizations.AsTracking()
+            .Where(organization => organization.Members.Any(member => member.AccountId == accountId))
+            .ToListAsync(cancellationToken);
     }
 
     public async Task AddAsync(Organization organization, CancellationToken cancellationToken = default)

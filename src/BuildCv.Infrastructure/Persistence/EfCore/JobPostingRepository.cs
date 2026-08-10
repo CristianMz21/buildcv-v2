@@ -68,4 +68,25 @@ internal sealed class JobPostingRepository : IJobPostingRepository
 
         await _context.SaveTranslatingFailuresAsync(cancellationToken);
     }
+
+    // Remove(), not ExecuteDeleteAsync, and for the reason RevokeAllForAccountAsync gives: the latter
+    // bypasses SaveChanges, so the audit interceptor never writes the DeletedAt tombstone and a soft
+    // delete silently becomes a hard one. A tombstone is what the filtered indexes read.
+    //
+    // Loaded with AsTracking and no page: this runs once, when an account leaves, and it has to reach
+    // EVERY posting they own. A paged loop here would be a delete that stops after twenty.
+    public async Task DeleteByOwnerAsync(AccountId ownerId, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(ownerId);
+
+        var owned = await _context.JobPostings.AsTracking()
+            .Where(posting => posting.OwnerId == ownerId)
+            .ToListAsync(cancellationToken);
+
+        if (owned.Count == 0)
+            return;
+
+        _context.JobPostings.RemoveRange(owned);
+        await _context.SaveTranslatingFailuresAsync(cancellationToken);
+    }
 }
