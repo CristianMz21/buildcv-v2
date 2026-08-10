@@ -104,10 +104,34 @@ public static class DependencyInjection
         services.AddSingleton<IImportEvidenceProtector, ImportEvidenceProtector>();
         services.AddSingleton<IPasswordResetTokenProtector, PasswordResetTokenProtector>();
 
-        // NO PROVIDER IS CHOSEN HERE, and the sender that ships refuses rather than pretending. Picking
-        // one means picking a sending domain plus its SPF and DKIM records, which is an infrastructure
-        // decision rather than a code one. Replacing this single line is the entire integration.
-        services.AddSingleton<IEmailSender, UnconfiguredEmailSender>();
+        // NO PROVIDER IS CHOSEN HERE, and none needs to be: SES, Postmark, SendGrid, Resend, Mailgun and
+        // a self-hosted Postfix all speak SMTP, so the choice is four environment variables rather than a
+        // code change. A provider SDK would have made somebody else's decision a dependency of this
+        // assembly.
+        //
+        // THE HOST IS THE SWITCH, and there is deliberately no Enabled flag beside it: two settings that
+        // can disagree about one fact is how a deployment ends up configured to send through a host it
+        // was told to ignore. With no host, UnconfiguredEmailSender refuses and says so -- which is what
+        // makes POST /v1/auth/password-reset answer 503 rather than telling somebody to watch an inbox
+        // that will never receive anything.
+        services.AddOptions<SmtpSettings>()
+            .Bind(configuration.GetSection(SmtpSettings.SectionName))
+            // Validated at STARTUP rather than at send time, because the send path deliberately swallows
+            // its failure to avoid leaking whether an address is registered -- so a half-configured host
+            // would otherwise be invisible until somebody noticed nobody was receiving mail.
+            .Validate(
+                s => string.IsNullOrWhiteSpace(s.Host) || !string.IsNullOrWhiteSpace(s.FromAddress),
+                $"{SmtpSettings.SectionName}:FromAddress is required when Host is set.")
+            .Validate(
+                s => s.Port is > 0 and <= 65535,
+                $"{SmtpSettings.SectionName}:Port must be a valid port.")
+            .ValidateOnStart();
+
+        var smtpHost = configuration.GetSection(SmtpSettings.SectionName)["Host"];
+        if (string.IsNullOrWhiteSpace(smtpHost))
+            services.AddSingleton<IEmailSender, UnconfiguredEmailSender>();
+        else
+            services.AddSingleton<IEmailSender, SmtpEmailSender>();
 
         // TryAdd so the Api can register an HttpContext-backed principal without removing this one.
         // Nothing in Application consumes ICurrentUser yet; the audit interceptor does.

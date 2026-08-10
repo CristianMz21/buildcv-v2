@@ -2,6 +2,12 @@
 
   <ItemGroup>
     <PackageReference Include="DocumentFormat.OpenXml" Version="3.5.1" />
+    <!--
+      SMTP, MIT-licensed, and the reason it is a dependency at all: System.Net.Mail.SmtpClient is
+      marked obsolete for new development and this project builds with TreatWarningsAsErrors, so the
+      framework option is not an option. MailKit is what the obsoletion message itself points at.
+    -->
+    <PackageReference Include="MailKit" Version="4.17.0" />
     <PackageReference Include="Konscious.Security.Cryptography.Argon2" Version="1.3.1" />
     <PackageReference Include="PdfPig" Version="0.1.15" />
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.10" />
