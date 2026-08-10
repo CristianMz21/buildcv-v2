@@ -31,8 +31,18 @@ CI (`.github/workflows/ci.yml`) runs two parallel jobs: `build-and-unit-test` (r
 ```bash
 docker compose up -d                                  # SQL Server only, for dotnet run / dotnet ef
 cp .env.example .env                                  # then replace every placeholder — see below
-docker compose -f docker-compose.app.yml up --build    # SQL Server + API + web client
+docker compose -f docker-compose.app.yml up --build    # SQL Server + migrator + API + web client
 ```
+
+**The composed stack has four services, and the fourth one is why it works at all.** `migrator` applies the schema once and exits; `api` waits on `service_completed_successfully`. It is a separate service rather than a startup step because `Program.cs` refuses to auto-migrate outside Development *and that gate is correct* — the process serving traffic should not own the schema, and it would re-run once per instance. Flipping the container to Development to dodge it would also re-open the in-memory persistence branch the `Dockerfile` deliberately closes.
+
+Without it the whole stack comes up looking healthy and nothing works: SQL Server starts empty, `/health/live` passes (it touches nothing by design), and every write fails with error 4060 — *"Cannot open database 'BuildCv' requested by the login"* — alongside *"Login failed for user 'sa'"*, which sends you after credentials that were never wrong. **No test catches this**, because nothing in the suite brings the composed product up. Three rules hold the migrator together, each of them measured rather than assumed:
+
+- **`sqlcmd -b`**, or a failed migration exits 0 and `service_completed_successfully` waves the API through to a half-built schema. Observed: the first run here stopped after one table and would have reported success.
+- **`sqlcmd -I`** (`QUOTED_IDENTIFIER ON`, which sqlcmd defaults *off*), because this schema is full of filtered indexes — the unique-when-not-deleted indexes on `EmailHash` and `TokenHash`, and the soft-delete filter on every aggregate root. SQL Server refuses to create one without it (`Msg 1934`).
+- **An explicit `CREATE DATABASE`**, because `dotnet ef migrations script` emits none — `Database.Migrate()` creates it in code, and generating a script skips that.
+
+**`COPY` preserves the builder's umask, so both image stages state `--chmod` explicitly.** On a workstation with `umask 077` the published files arrive `640`, the container drops to a non-root user, and the API dies before any of this codebase runs with `UnauthorizedAccessException: Access to the path '/app/appsettings.json' is denied` — surfacing to `docker compose ps` as `Restarting (139)`, which reads like a segfault. The same trap has a second form: `--chmod` also applies to the parent directory `COPY` creates, and a directory at `644` has no execute bit, so `sqlcmd` reported `Invalid filename` for a file that was present and correctly moded — unreachable rather than unreadable, and the message names neither. This class of failure is invisible on a normal `umask 022` machine, which is exactly what makes it worth stating.
 
 Migrations run off `BuildCvDbContextFactory` (an `IDesignTimeDbContextFactory`) in Infrastructure, so **`dotnet ef` takes `BuildCv.Infrastructure` as both project and startup project**. `--startup-project src/BuildCv.Api` is the invocation everyone reaches for and it fails — the Api project does not reference `Microsoft.EntityFrameworkCore.Design`.
 

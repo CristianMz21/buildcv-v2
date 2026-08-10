@@ -32,6 +32,28 @@ services:
       retries: 10
       start_period: 30s
 
+  # Runs once, applies the schema, exits. The API waits for it to succeed.
+  #
+  # Without this the stack comes up and does nothing: SQL Server starts empty, and the API's own
+  # auto-migration is gated on IsDevelopment() while the container runs Production -- deliberately, so
+  # that the process serving traffic never owns the schema. Every write then failed with error 4060,
+  # "Cannot open database 'BuildCv' requested by the login", and the accompanying "Login failed for
+  # user 'sa'" sends you after credentials that were never wrong. The whole test suite is silent on
+  # this: it never brings the composed product up.
+  migrator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: migrator
+    environment:
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD:?set MSSQL_SA_PASSWORD in .env}
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+    # NOT `unless-stopped`: this container is meant to exit 0, and a restart policy would relaunch it
+    # forever on success.
+    restart: "no"
+
   api:
     build:
       context: .
@@ -61,6 +83,11 @@ services:
     depends_on:
       sqlserver:
         condition: service_healthy
+      # service_completed_successfully, not service_started: the API must not accept traffic against a
+      # half-applied schema. migrate.sh runs sqlcmd with -b so a failed batch is a non-zero exit, which
+      # is what makes this condition mean anything.
+      migrator:
+        condition: service_completed_successfully
     # No published port either. The API is reachable only from the web container, which is the whole
     # security argument for the BFF: no browser ever holds a BuildCv credential, and nothing outside
     # this network can reach /v1 at all.
