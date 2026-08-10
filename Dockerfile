@@ -57,6 +57,16 @@ COPY --chmod=755 docker/migrate.sh /usr/local/bin/migrate.sh
 USER mssql
 ENTRYPOINT ["/usr/local/bin/migrate.sh"]
 
+# The backup sidecar. Same base as the migrator and for the same reason -- it needs sqlcmd, and this
+# image is already on disk. Separate stage rather than a second entrypoint on the migrator, because one
+# runs once and exits while this one runs forever, and conflating them would make
+# `service_completed_successfully` wait on a loop that never completes.
+FROM mcr.microsoft.com/mssql/server:2022-CU26-ubuntu-22.04 AS backup
+USER root
+COPY --chmod=755 docker/backup.sh /usr/local/bin/backup.sh
+USER mssql
+ENTRYPOINT ["/usr/local/bin/backup.sh"]
+
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 WORKDIR /app
 
