@@ -25,8 +25,29 @@ services:
       # brings the backups, patching and point-in-time restore that a docker volume does not have. See
       # docs/deployment.md.
       MSSQL_PID: ${MSSQL_PID:-Developer}
+      # BOTH limits, and the ordering between them is the point. SQL Server on Linux takes all the
+      # memory it can see by default, so an uncapped container starves the API beside it. But capping
+      # only the CONTAINER makes the kernel OOM-kill sqlservr mid-transaction, because SQL Server never
+      # learns it should back off -- a hard kill instead of a slow query.
+      #
+      # MSSQL_MEMORY_LIMIT_MB is what it reads, and it is deliberately BELOW mem_limit so SQL Server
+      # hits its own ceiling first and manages itself down, while the container limit stays a backstop
+      # that should never fire.
+      #
+      # DO NOT VERIFY THIS WITH `max server memory (MB)`. That setting is untouched by this variable and
+      # still reads 2147483647, which looks exactly like the limit being ignored -- it is a different
+      # knob, sizing the buffer pool rather than the process. The query that actually answers is
+      #
+      #   SELECT committed_target_kb / 1024 FROM sys.dm_os_sys_info;
+      #
+      # Measured on this stack: 1417 MB against the 2048 set here. Anyone who checks the wrong one
+      # concludes the setting does nothing and deletes it.
+      MSSQL_MEMORY_LIMIT_MB: ${MSSQL_MEMORY_LIMIT_MB:-2048}
     # No published port. The API reaches it over the compose network; publishing it would put a
     # database on the host for the convenience of nobody in this file.
+    # Sized for a development host. Raise both together for anything real -- and keep
+    # MSSQL_MEMORY_LIMIT_MB under mem_limit, or the backstop becomes the primary.
+    mem_limit: ${MSSQL_MEM_LIMIT:-3g}
     volumes:
       # A NAMED VOLUME IS NOT A BACKUP. `docker compose down -v` erases it, and so does a lost host.
       # Nothing in this file backs it up; see docs/deployment.md before putting real CVs in here.
