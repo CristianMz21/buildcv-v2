@@ -19,11 +19,17 @@ services:
       # command, not silently start a database on a value published in this file.
       MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD:?set MSSQL_SA_PASSWORD in .env}
       MSSQL_PID: Developer
+      MSSQL_MEMORY_LIMIT_MB: ${MSSQL_MEMORY_LIMIT_MB:-1536}
     ports:
       # Bound to the loopback interface only. Plain "1433:1433" listens on every interface, which on
       # a laptop means the coffee-shop wifi can reach a database whose password is in a file called
       # .env.example.
       - "127.0.0.1:1433:1433"
+    # A ceiling on a development machine, for the reason the app compose file gives at more length: SQL
+    # Server takes every byte it can see, and here it competes with `dotnet run`, an IDE and a browser
+    # rather than with two other containers. The inner limit stays below the outer one so SQL Server
+    # manages itself down instead of being OOM-killed mid-transaction.
+    mem_limit: ${MSSQL_MEM_LIMIT:-2g}
     volumes:
       - buildcv-sqlserver-data:/var/opt/mssql
     healthcheck:

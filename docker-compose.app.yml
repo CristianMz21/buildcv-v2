@@ -136,6 +136,12 @@ services:
     # the API dies alone and `restart: unless-stopped` brings it back.
     mem_limit: 1g
     cpus: 2.0
+    # Same reasoning as the web container, with a smaller measured need: the slowest thing this API can
+    # be asked to do is 4.1s (docs/deployment.md), so 10s would in fact cover it today. Set to 30s
+    # anyway because the cost is zero -- a grace period is a MAXIMUM, not a wait, and a container with
+    # nothing in flight still stops immediately -- while the thing it protects against is a loaded
+    # instance being slower than a measurement taken on an idle one.
+    stop_grace_period: 30s
 
   web:
     build:
@@ -172,6 +178,17 @@ services:
     # this process's heap -- and this is the ONLY service reachable from outside, which makes it the one
     # an attacker can lean on. Without a limit it competes with the database for the same host memory.
     mem_limit: ${WEB_MEM_LIMIT:-512m}
+    # LONGER THAN COMPOSE'S 10s DEFAULT, because the client in this container bounds every call to the
+    # API at 20 seconds -- so a request can legitimately still be in flight when the orchestrator's
+    # deadline expires. Measured on the web image, both sides of the line: an in-flight request shorter
+    # than the grace period drains cleanly (`docker stop` in 9.2s, exit 0, caller gets a full response);
+    # one longer than it is SEVERED (exit 137, connection cut).
+    #
+    # The server itself is not the problem -- Next's standalone server handles SIGTERM properly, stops
+    # accepting and finishes what it holds. It is the deadline above it. Left at 10s, a routine
+    # `docker compose up -d` that recreates this container under load fails a slice of requests, and the
+    # only trace is a client-side error no server log ever sees.
+    stop_grace_period: 30s
 
 volumes:
   buildcv-app-sqlserver-data:
