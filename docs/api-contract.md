@@ -58,7 +58,16 @@ dotnet run --project src/BuildCv.Api
 - **No connection string to configure.** With none set, Development falls back to a committed default
   that already matches `docker-compose.yml`. To point somewhere else, set
   `ConnectionStrings__BuildCv`.
-- **Ports**: `http://localhost:5062` and `https://localhost:7160`.
+- **Ports**: `dotnet run` gives you **`http://localhost:5062` only**. There are two launch profiles and
+  it takes the first, which is HTTP-only — `https://localhost:7160` does not answer, whatever this
+  document used to say. For HTTPS, and therefore for anything that depends on a `Secure` cookie:
+
+  ```bash
+  dotnet run --project src/BuildCv.Api --launch-profile https   # 7160 answers; 5062 then redirects to it
+  ```
+
+  Plain HTTP is the intended default for local work — see the cookie note below — so most clients want
+  the first form.
 - **OpenAPI**: `GET /openapi/v1.json`, anonymous, **Development only**. There is no Swagger UI; point
   your generator or an editor at the JSON.
 - **Auth cookies are not `Secure` in Development**, so plain-http debugging works. Every other
