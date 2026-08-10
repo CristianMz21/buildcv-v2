@@ -1,0 +1,42 @@
+# WITHOUT THIS THE IMAGE DOES NOT BUILD, and the failure names the wrong cause.
+#
+# The Dockerfile restores from the .csproj files first and then `COPY src/ src/`, which is the standard
+# layer-caching shape. But that second COPY also carries the HOST's obj/ directories, and they land on
+# top of the ones the container's own restore just wrote. The host's project.assets.json points at
+# /home/<user>/.nuget/packages, a path that does not exist in the image, so `dotnet publish --no-restore`
+# reports:
+#
+#   error NETSDK1064: Package Microsoft.AspNetCore.OpenApi, version 10.0.10 was not found. It might
+#   have been deleted since NuGet restore.
+#
+# It was never deleted. A restore that worked was overwritten by one that describes another machine --
+# which is why the message sends you looking at NuGet feeds and package versions instead of at COPY.
+#
+# The whole suite passing says nothing about this: `dotnet test` never reads these files through Docker.
+obj/
+bin/
+**/obj/
+**/bin/
+
+# Build output and local state that must not travel into the image.
+.vs/
+.vscode/
+*.user
+
+# Secrets. .env feeds docker compose on the HOST and is resolved into environment variables before the
+# build starts; a copy inside the image would be a credential baked into a layer for no reason.
+.env
+.env.*
+!.env.example
+
+# The API image has no use for the tests, and copying them would rebuild the layer on every test edit.
+tests/
+
+# Agent and planning artifacts. .superpowers is already gitignored; naming it here keeps a local
+# checkout that has one from silently enlarging the build context.
+.git/
+.github/
+.superpowers/
+.claude/
+.agents/
+.atl/
