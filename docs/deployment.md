@@ -21,6 +21,29 @@ database**. A backup of SQL Server contains the ciphertext and none of the keys.
 **Lose the key ring and every encrypted column is permanently unreadable.** Not degraded: the resume
 stops loading at all, because those columns are eagerly loaded owned properties.
 
+That is measured, not inferred. Starting the API against a resume written under a different key:
+
+| | Result |
+|---|---|
+| API startup | **succeeds** — the key ring is validated for format, never against the data |
+| `GET /v1/resumes` | **500** on every request |
+| `GET /health/live` | **200** |
+| `GET /health/ready` | **200** |
+
+**Neither health probe can see this.** Readiness opens a database connection and the connection is fine;
+nothing it does decrypts anything. So a key problem presents to your monitoring as *a perfectly healthy
+service*, while every candidate gets an error on every page — and the only signal is the log line naming
+`AesGcmFieldEncryptor` and a failed authentication tag.
+
+Two consequences worth acting on:
+
+- **Alert on the 5xx rate, not only on the health probes.** A deployment watching liveness and readiness
+  alone would have found out about this from a user.
+- **A wrong key is recoverable and a lost one is not.** Restoring the correct value brought every resume
+  straight back in the test above — nothing on disk was harmed. The failure is total and reversible
+  right up until the key is gone, which is exactly why §0 asks you to rehearse reading the backup rather
+  than trusting that it exists.
+
 So: back the key material up **separately from the database**, to somewhere that survives losing the
 host — a secrets manager, or a sealed envelope in a safe. Test that you can read it back *before* the
 first real candidate signs up. A backup you have never restored is a belief, not a backup.
@@ -259,5 +282,7 @@ Named so you plan around them rather than discover them:
 - [ ] TLS terminating in front of `web`; API and database publish no ports
 - [ ] Readiness wired to the load balancer, liveness to the container runtime
 - [ ] Log aggregation collecting JSON, and correlation ids queryable
+- [ ] **An alert on the 5xx rate**, not only on the health probes — a key-ring problem answers 200 on
+      both of them while every request fails (§0)
 - [ ] The `Fluency` data loss announced, if you are upgrading rather than installing fresh
 - [ ] A decision recorded about password recovery being unavailable until a mailer exists
