@@ -72,3 +72,92 @@ jobs:
 
       - name: Test
         run: dotnet test BuildCv.slnx -c Release --no-build --filter "Category=Integration" --collect:"XPlat Code Coverage"
+
+  # THE JOB THAT WOULD HAVE CAUGHT MOST OF THIS MONTH. Every deployment defect found in this repository
+  # was found by hand, by somebody bringing the stack up and looking -- the image not building at all,
+  # the schema never being created, the stack not surviving a restart. The unit suite was green through
+  # all of them, and stays green through the next one, because nothing in it composes anything.
+  #
+  # It brings up sqlserver + migrator + api. It cannot build `web`: that lives in a separate repository
+  # and checking it out here would need credentials for a checkout CI has no other reason to hold.
+  #
+  # HONESTLY, WHAT IT DOES NOT COVER: the umask trap. A runner builds at umask 022, so the published
+  # files land 644 and the container reads them -- the failure only appears for whoever builds with a
+  # restrictive umask, which is exactly why the Dockerfile states --chmod instead of relying on this.
+  compose-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Throwaway values, generated per run. Nothing here is a secret worth having: the stack is
+      # destroyed in the same job, and the app refuses to start without them, which is the behaviour
+      # being exercised.
+      - name: Write a disposable .env
+        run: |
+          {
+            echo "MSSQL_SA_PASSWORD=Ci_Throwaway_Password_1"
+            echo "BUILDCV_JWT_SIGNING_KEY=$(openssl rand -base64 48)"
+            echo "BUILDCV_ENCRYPTION_KEY=$(openssl rand -base64 32)"
+            echo "BUILDCV_BLIND_INDEX_KEY=$(openssl rand -base64 32)"
+          } > .env
+
+      # The cheapest check that .env is complete, and the one that fails before anything is built.
+      - name: Compose config resolves
+        run: docker compose -f docker-compose.app.yml config > /dev/null
+
+      - name: Build and start
+        run: docker compose -f docker-compose.app.yml up --build -d sqlserver migrator api
+
+      # `up` returns as soon as the containers start, not when the API can serve. Readiness is the
+      # signal that the migrator ran AND the database is reachable, which is the pair that was broken.
+      - name: Wait for readiness
+        run: |
+          for i in $(seq 1 40); do
+            code=$(docker compose -f docker-compose.app.yml exec -T api \
+              curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
+              http://localhost:8080/health/ready 2>/dev/null || echo 000)
+            [ "$code" = "200" ] && echo "ready after ${i} attempts" && exit 0
+            sleep 5
+          done
+          echo "::error::/health/ready never answered 200"
+          docker compose -f docker-compose.app.yml logs --tail 60
+          exit 1
+
+      # A WRITE, not a probe. The schema being present is the thing that was missing, and only a write
+      # touches it -- readiness opens a connection and queries nothing.
+      - name: Register an account through the API
+        run: |
+          code=$(docker compose -f docker-compose.app.yml exec -T api \
+            curl -s -o /tmp/r.json -w '%{http_code}' --max-time 30 \
+            -X POST http://localhost:8080/v1/auth/register \
+            -H 'content-type: application/json' \
+            -d '{"email":"ci-smoke@example.com","password":"Ci_Throwaway_Password_1"}')
+          if [ "$code" != "201" ]; then
+            echo "::error::register answered $code, expected 201"
+            docker compose -f docker-compose.app.yml logs api --tail 60
+            exit 1
+          fi
+
+      # RESTART SURVIVAL, without -v so the data stays. This is its own failure: SQL Server accepts
+      # connections against master while a user database is still recovering, so the migrator failed
+      # here on every restart and the API never started behind it.
+      - name: Survive a restart
+        run: |
+          docker compose -f docker-compose.app.yml down
+          docker compose -f docker-compose.app.yml up -d sqlserver migrator api
+          for i in $(seq 1 40); do
+            code=$(docker compose -f docker-compose.app.yml exec -T api \
+              curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
+              http://localhost:8080/health/ready 2>/dev/null || echo 000)
+            [ "$code" = "200" ] && echo "ready again after ${i} attempts" && exit 0
+            sleep 5
+          done
+          echo "::error::the stack did not come back after a restart"
+          docker compose -f docker-compose.app.yml logs --tail 80
+          exit 1
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f docker-compose.app.yml down -v
