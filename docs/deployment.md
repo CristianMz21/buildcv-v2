@@ -374,18 +374,16 @@ can do it, and so can any ingress or CDN you put there.
 
 ### Deploying to Azure Container Apps
 
-`deploy/azure.sh` maps this stack onto Container Apps. Four things it teaches that are not obvious, all
+`deploy/azure.sh` maps this stack onto Container Apps. Five things it teaches that are not obvious, all
 of them found by running it rather than reading the docs:
 
-- **`az acr build` uses the CLASSIC Docker builder, not BuildKit.** Any `COPY --chmod` fails there with
-  `the --chmod option requires BuildKit` after building fine locally for as long as you like. The
-  Dockerfile uses `RUN chmod` instead, which works on both. Anything else BuildKit-only will fail the
-  same way, and only in Azure.
 - **`az containerapp update --yaml` REPLACES the container definition; it does not merge.** A patch that
   declares `containers: [{name, image, probes}]` to add a probe silently drops every environment
   variable, and the app then fails `ValidateOnStart` on the missing `Jwt:SigningKey` — exit 139,
   crash-looping. Send the whole container block, or use `--set-env-vars`, which does merge. Measured;
-  the previous revision stayed Active and Healthy, which is the only reason it was not an outage.
+  the previous revision stayed Active and Healthy, which is the only reason it was not an outage. The
+  script now patches probes from the app's **own live template** read back with `az containerapp show`,
+  because a block it never enumerated is a block it cannot drop.
 - **Container Apps does not consult the image's `HEALTHCHECK`.** Probes must be declared in the app
   definition or there are none, and a container with no probe still reports Running. Declare
   `/health/live` as **Liveness** and `/health/ready` as **Readiness** — never the other way round: as
@@ -393,7 +391,53 @@ of them found by running it rather than reading the docs:
   that is still down, undoing the recovery property §5 describes.
 - **A region can refuse new SQL servers.** `eastus` and `eastus2` both answered
   `RegionDoesNotAllowProvisioning`, and a failed attempt still reserves the NAME, so the retry needs a
-  fresh one as well as a different region.
+  fresh one as well as a different region. The retry can therefore land the database in a **different
+  region from the apps**, which every query then pays a cross-region hop for; the script says so when
+  it happens rather than leaving it to be discovered in a latency graph.
+- **A successful `docker login` proves nothing about a push, and nothing about a pull either.** Login to
+  `ghcr.io` succeeded with a token lacking `write:packages` and the push then failed; separately, a bare
+  `curl` of a public manifest answers **401**, because GHCR wants a token it hands to anybody who asks.
+  Both directions are false signals. `docker manifest inspect` performs the token exchange and is the
+  only honest anonymous check — which is what the script's preflight uses, **before** creating a
+  database, because a missing image otherwise surfaces as an app stuck in Activating twenty minutes later.
+- **`az acr build` uses the CLASSIC Docker builder, not BuildKit** — kept here because the Dockerfile
+  still carries its consequence. Any `COPY --chmod` fails there with `the --chmod option requires
+  BuildKit` after building fine locally for as long as you like, so the Dockerfile uses `RUN chmod`,
+  which works on both. This script no longer builds in Azure at all (see below), so nothing reaches that
+  builder today; the Dockerfile keeps the portable form because the next person to try one will.
+
+### Images come from GHCR, and no container registry is created
+
+CI publishes `buildcv-api` and `buildcv-migrator` to `ghcr.io` on every push to `main`, tagged with the
+full 40-character commit SHA and `latest`; the web client's repository publishes `buildcv-web` the same
+way. The packages are **public**, so no app in this deployment carries a registry credential — the
+`registries` array is empty on both apps and on the job, verified by running the migration job to
+`Succeeded` after the old registry was deleted, rather than by reading a healthy status.
+
+**An Azure Container Registry was the only line billing from day one** — about USD 5/month to hold three
+images. It is deleted. What makes that safe is not that the images were copied out of it but that they
+are **reproducible from CI**: a tag that is a commit SHA can be rebuilt from the commit.
+
+Three things that cost real time to learn here:
+
+- **A package created with a personal token is not linked to the repository**, so the workflow's
+  `GITHUB_TOKEN` cannot write to it — `denied: permission_denied: write_package` on a workflow whose
+  `permissions:` block is already correct. Fix it under the package's **Manage Actions access** by
+  adding the repository with the **Write** role. Two separate settings get confused here: making the
+  package **public** governs who can pull and does not grant the push, which is what was measured — the
+  package was already public when the push was denied, and the same workflow re-run succeeded once the
+  Actions-access grant was in place. `Add repository` offers **Read** first, which is the wrong one.
+  Deleting the package also fixes it — CI recreates it linked and public — but only if nothing is
+  running on it.
+- **The GitHub API cannot change package visibility.** Two REST routes tested, both 404. It is a UI-only
+  setting, so this cannot be scripted.
+- **Public is the right default here and is not a security decision to re-take per change.** Both
+  repositories are already public, so the images contain no secret the source does not; every secret
+  this deployment holds is injected at runtime as a Container Apps secret. Private would mean a
+  credential on every app and a token to rotate, for images whose source anyone can read.
+
+**Prefer the SHA tag over `latest` when deploying.** `latest` moves under a running app: a replica that
+restarts, or an app waking from zero, pulls whatever `latest` points at then — which nobody chose.
 
 **The `min-replicas 0` trap, which applies to any registry migration.** A container app that scales to
 zero **re-pulls its image when it wakes**. Deleting the old registry after repointing does not fail at
