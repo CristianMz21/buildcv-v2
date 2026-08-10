@@ -81,9 +81,16 @@ public sealed class OpenApiDocumentTests
 
                 var declaresSuccess = responses.EnumerateObject().Any(response =>
                     response.Name.StartsWith('2')
-                    // 204 is a complete answer on its own: it says there is no body, which is a
-                    // statement rather than an omission.
-                    && (response.Name == "204" || response.Value.TryGetProperty("content", out _)));
+                    // 204 and 202 are complete answers on their own: each says there is no body, which is
+                    // a statement rather than an omission. 202 joins 204 rather than being waved through
+                    // as "another 2xx" — /v1/auth/password-reset answers it precisely BECAUSE it will not
+                    // say what happened, since a body that varied would reveal whether the address is
+                    // registered. A bodyless 202 is that refusal, stated.
+                    //
+                    // This does not weaken what the test was written for. The failure it catches is an
+                    // operation with no `.Produces` AT ALL, which documents nothing because IResult is
+                    // opaque to the generator; declaring a bare 202 is still an author saying so.
+                    && (response.Name is "204" or "202" || response.Value.TryGetProperty("content", out _)));
 
                 if (!declaresSuccess)
                     undeclared.Add($"{operation.Name.ToUpperInvariant()} {route.Name}");

@@ -264,6 +264,103 @@ public static class AuthEndpoints
         .ProducesResultProblems()
         .ProducesAuthProblems();
 
+        // Forgotten password, step one. Anonymous by necessity: the caller cannot log in, which is the
+        // whole problem.
+        //
+        // ALWAYS 202, whether or not the address has an account. An endpoint that answers differently is
+        // an account-enumeration oracle, and on THIS platform the fact enumerated is that somebody has a
+        // CV here — which means they are looking for work, which is a thing their current employer might
+        // like to know. The one exception answers the same way for every address: a server with no mail
+        // provider says so, and says it before the account is looked up at all.
+        //
+        // The auth rate window applies. It is per IP rather than per account on purpose — the caller has
+        // not proven which account they are, so keying on the address they typed would let anyone throttle
+        // a stranger's recovery by requesting resets for them.
+        group.MapPost("/password-reset", async Task<IResult> (
+            RequestPasswordResetRequest request,
+            ICommandHandler<RequestPasswordResetCommand, Result> handler,
+            IOptions<PasswordResetSettings> settings,
+            ILogger<Program> logger,
+            HttpContext httpContext,
+            CancellationToken cancellationToken) =>
+        {
+            ArgumentNullException.ThrowIfNull(request);
+
+            var result = await handler.Handle(
+                new RequestPasswordResetCommand(request.Email, settings.Value.ResetUrlTemplate),
+                cancellationToken);
+
+            if (!result.IsSuccess)
+            {
+                // 503, not 400: nothing about the request was wrong. The only failure this handler
+                // reports is a server with no mail provider.
+                return Results.Problem(
+                    detail: result.Error, statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+
+            // The address is hashed by AuditLog, so this line records that a reset was requested without
+            // recording who for. It is written on EVERY request, including ones that matched no account,
+            // so the log itself does not become the oracle the response refuses to be.
+            AuditLog.Log(logger, "password_reset_requested", null, httpContext, request.Email);
+
+            return Results.Accepted();
+        })
+        .AllowAnonymous()
+        .RequireRateLimiting(RateLimitPolicies.Auth)
+        .Produces(StatusCodes.Status202Accepted)
+        .ProducesProblem(StatusCodes.Status503ServiceUnavailable)
+        .ProducesProblem(StatusCodes.Status429TooManyRequests)
+        .WithSummary("Emails a single-use reset link, if that address has an account.")
+        .WithDescription(
+            "ALWAYS 202, whether or not the address is registered — deliberately, so this cannot be used "
+            + "to discover who has an account here. Do not tell the user their address was found; tell "
+            + "them that if it has an account, a link is on its way. "
+            + "503 means this server has no mail provider configured, which is the same answer for every "
+            + "address and therefore reveals nothing. "
+            + "The link expires in an hour and works ONCE.");
+
+        // Step two: redeem it. Also anonymous — the token is the credential.
+        group.MapPost("/password-reset/confirm", async Task<IResult> (
+            ConfirmPasswordResetRequest request,
+            ICommandHandler<ConfirmPasswordResetCommand, Result> handler,
+            ILogger<Program> logger,
+            HttpContext httpContext,
+            CancellationToken cancellationToken) =>
+        {
+            ArgumentNullException.ThrowIfNull(request);
+
+            var result = await handler.Handle(
+                new ConfirmPasswordResetCommand(request.Token, request.NewPassword), cancellationToken);
+
+            if (!result.IsSuccess)
+            {
+                AuditLog.Log(logger, "password_reset_failure", null, httpContext);
+                return result.ToHttpResult();
+            }
+
+            AuditLog.Log(logger, "password_reset_success", null, httpContext);
+
+            // Every refresh token on the account has just been revoked, including any this browser holds.
+            AuthCookies.ClearTokens(httpContext);
+
+            return Results.NoContent();
+        })
+        .AllowAnonymous()
+        .RequireRateLimiting(RateLimitPolicies.Auth)
+        .Produces(StatusCodes.Status204NoContent)
+        .ProducesResultProblems()
+        .ProducesProblem(StatusCodes.Status429TooManyRequests)
+        .WithSummary("Sets a new password from a reset link. The link is spent by succeeding.")
+        .WithDescription(
+            "SINGLE USE, and it costs nothing to store: the token is signed over the account's current "
+            + "password hash, so succeeding changes the hash and every token minted against the old one — "
+            + "including the one just spent — stops verifying. Changing the password any other way kills "
+            + "them too. "
+            + "EVERY SESSION IS REVOKED, because the person redeeming this may be recovering from a "
+            + "compromise and the attacker's refresh token must not survive it. Log in again afterwards. "
+            + "A bad, expired or already-spent token all answer with the SAME sentence — telling them "
+            + "apart would say whether the account exists.");
+
         // Leaving. The only route in this API that destroys data belonging to more than one aggregate, and
         // the only one that cannot be undone.
         //

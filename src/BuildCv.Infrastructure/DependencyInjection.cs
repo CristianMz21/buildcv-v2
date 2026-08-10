@@ -18,6 +18,7 @@ using BuildCv.Domain.Resumes;
 using BuildCv.Domain.Scoring;
 using BuildCv.Infrastructure.Documents;
 using BuildCv.Infrastructure.Lexicon;
+using BuildCv.Infrastructure.Mail;
 using BuildCv.Infrastructure.Persistence;
 using BuildCv.Infrastructure.Persistence.BlindIndexes;
 using BuildCv.Infrastructure.Persistence.EfCore;
@@ -60,6 +61,17 @@ public static class DependencyInjection
                 "Jwt:SigningKey must be at least 32 characters.")
             .ValidateOnStart();
 
+        // A URL rather than a secret, so unlike the two below it has a working default instead of
+        // refusing to start. The placeholder IS required though: a template without it would mail every
+        // user the same tokenless link, and the only symptom would be "the reset link does not work".
+        services.AddOptions<PasswordResetSettings>()
+            .Bind(configuration.GetSection(PasswordResetSettings.SectionName))
+            .Validate(
+                s => s.ResetUrlTemplate.Contains(
+                    RequestPasswordResetHandler.TokenPlaceholder, StringComparison.Ordinal),
+                $"PasswordReset:ResetUrlTemplate must contain {RequestPasswordResetHandler.TokenPlaceholder}.")
+            .ValidateOnStart();
+
         // Field encryption keys are required, exactly like the JWT signing key: a host with no
         // usable key ring must refuse to start rather than discover the problem on the first write.
         // EncryptionSettingsValidator reports which key id is wrong, which a single Validate
@@ -90,6 +102,12 @@ public static class DependencyInjection
         // port because the Application layer verifies through it. Same reason the two above are concrete
         // — it owns its AAD context — except that this one has a port to sit behind.
         services.AddSingleton<IImportEvidenceProtector, ImportEvidenceProtector>();
+        services.AddSingleton<IPasswordResetTokenProtector, PasswordResetTokenProtector>();
+
+        // NO PROVIDER IS CHOSEN HERE, and the sender that ships refuses rather than pretending. Picking
+        // one means picking a sending domain plus its SPF and DKIM records, which is an infrastructure
+        // decision rather than a code one. Replacing this single line is the entire integration.
+        services.AddSingleton<IEmailSender, UnconfiguredEmailSender>();
 
         // TryAdd so the Api can register an HttpContext-backed principal without removing this one.
         // Nothing in Application consumes ICurrentUser yet; the audit interceptor does.
@@ -139,6 +157,8 @@ public static class DependencyInjection
         services.AddScoped<IQueryHandler<GetAccountQuery, Result<AccountDto>>, GetAccountHandler>();
         services.AddScoped<ICommandHandler<ChangePasswordCommand, Result<AccountDto>>, ChangePasswordHandler>();
         services.AddScoped<ICommandHandler<DeleteAccountCommand, Result>, DeleteAccountHandler>();
+        services.AddScoped<ICommandHandler<RequestPasswordResetCommand, Result>, RequestPasswordResetHandler>();
+        services.AddScoped<ICommandHandler<ConfirmPasswordResetCommand, Result>, ConfirmPasswordResetHandler>();
         services.AddScoped<ICommandHandler<VerifyEmailCommand, Result<AccountDto>>, VerifyEmailHandler>();
         services.AddScoped<ICommandHandler<RevokeSessionsCommand, Result>, RevokeSessionsHandler>();
 
