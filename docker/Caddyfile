@@ -1,0 +1,35 @@
+# TLS in front of the web container. Every hosting choice needs one of these; this is the portable one.
+#
+# Caddy rather than nginx for one reason: it obtains and renews a certificate from Let's Encrypt with no
+# configuration beyond the domain name, and a certificate nobody has to remember to renew is a class of
+# outage that stops existing.
+#
+# BUILDCV_DOMAIN is the whole config. Set it to a name whose DNS A record points at this host and Caddy
+# does the rest on first request. Leave it unset and the block below serves plain HTTP on :80, which is
+# for local verification and must never face the internet.
+# The site address comes in already resolved -- compose substitutes `:80` when BUILDCV_DOMAIN is unset
+# or empty, because Caddy's own `{$VAR:default}` does NOT apply its default to an env var that is set
+# to an EMPTY STRING, which is exactly what compose passes. Left to Caddy, this line rendered as a bare
+# `{` and the whole block was parsed as a global options block:
+#
+#   Error: adapting config using caddyfile: unrecognized global option: reverse_proxy
+{$BUILDCV_DOMAIN} {
+	# The web container, by service name on the compose network. It publishes nothing to the host in
+	# this topology -- the proxy is the only thing that does.
+	reverse_proxy web:3000
+
+	# Caddy sets X-Forwarded-For and X-Forwarded-Proto on its own. What matters is the OTHER half:
+	# BuildCv.Api ignores both unless Network:ForwardedHeaders names this proxy, and without that every
+	# client collapses into one rate-limit partition -- a 5-per-minute auth window for the entire
+	# deployment. The compose file pins this container's address so that entry can be exact.
+	#
+	# It deliberately does NOT forward X-Forwarded-Host: the API never honours it, and sending a header
+	# that is ignored invites somebody to start trusting it.
+
+	encode gzip
+
+	log {
+		output stdout
+		format json
+	}
+}
