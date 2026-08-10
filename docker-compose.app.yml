@@ -16,10 +16,20 @@ services:
     environment:
       ACCEPT_EULA: "Y"
       MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD:?set MSSQL_SA_PASSWORD in .env}
-      MSSQL_PID: Developer
+      # DEVELOPER EDITION IS NOT LICENSED FOR PRODUCTION. It is free and full-featured, which is why it
+      # is the default here, and Microsoft's terms restrict it to development and test use — so this
+      # service as written cannot legally serve a live product.
+      #
+      # Overriding the variable is NOT the fix on its own. The recommended production answer is to not
+      # run this service at all: point ConnectionStrings__BuildCv at a managed instance, which also
+      # brings the backups, patching and point-in-time restore that a docker volume does not have. See
+      # docs/deployment.md.
+      MSSQL_PID: ${MSSQL_PID:-Developer}
     # No published port. The API reaches it over the compose network; publishing it would put a
     # database on the host for the convenience of nobody in this file.
     volumes:
+      # A NAMED VOLUME IS NOT A BACKUP. `docker compose down -v` erases it, and so does a lost host.
+      # Nothing in this file backs it up; see docs/deployment.md before putting real CVs in here.
       - buildcv-app-sqlserver-data:/var/opt/mssql
     healthcheck:
       test:
@@ -94,6 +104,12 @@ services:
     expose:
       - "8080"
     restart: unless-stopped
+    # A ceiling, not a tuning knob. POST /resumes/import accepts 2 MiB of candidate text and the DOCX
+    # reader was measured turning 150 KB into 662 MiB of DOM before it was made to stream -- so an
+    # unbounded container is one unlucky upload away from taking the database down with it. Limits mean
+    # the API dies alone and `restart: unless-stopped` brings it back.
+    mem_limit: 1g
+    cpus: 2.0
 
   web:
     build:

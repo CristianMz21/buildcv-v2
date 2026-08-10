@@ -41,6 +41,10 @@ Los tests de integración (`[Trait("Category", "Integration")]`) requieren un da
 
 El documento OpenAPI (`/openapi/v1.json`, solo en Development) sigue siendo la fuente de las *formas*: rutas, campos y códigos de estado se generan desde el código y no pueden desincronizarse. `api-contract.md` cubre lo que un esquema no puede expresar.
 
+## Desplegar
+
+`docs/deployment.md` es el runbook para quien lo pone en producción, escrito para operar y no para modificar el código. Empieza por lo único que puede causar pérdida irrecuperable: **el anillo de claves de cifrado no está en la base de datos**, así que un backup de SQL Server contiene el texto cifrado y ninguna clave — perderlo deja cada CV ilegible para siempre. Cubre además la configuración de `Network:ForwardedHeaders` sin la cual el rate limiting colapsa en una denegación de servicio autoinfligida, por qué SQL Server en el compose no está licenciado para producción, las dos migraciones que destruyen datos, y la checklist previa a anunciarlo.
+
 ## Arquitectura
 
 ```
