@@ -145,7 +145,19 @@ services:
       # The only thing on the host. Everything a user touches goes through here.
       - "127.0.0.1:3000:3000"
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health || exit 1"]
+      # 127.0.0.1, NOT localhost. Inside this image `localhost` resolves to ::1 ONLY -- `getent hosts
+      # localhost` returns the IPv6 address and nothing else -- while Next.js listens on IPv4. So the
+      # probe was refused on every attempt and the container sat PERMANENTLY UNHEALTHY while serving
+      # every real request perfectly: 127.0.0.1 answers {"status":"ok"} from the same shell that gets
+      # "Connection refused" from localhost.
+      #
+      # It looks harmless because the app works. It is not: anything gating on health -- an orchestrator
+      # deciding where to route, another service's depends_on: service_healthy -- reads this as an app
+      # that never came up.
+      #
+      # The API container does not have the bug because Kestrel binds `http://+:8080`, which is
+      # dual-stack; a Node server bound to 0.0.0.0 is IPv4 only.
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/health || exit 1"]
       interval: 15s
       timeout: 3s
       start_period: 15s
