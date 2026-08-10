@@ -106,6 +106,48 @@ Three things that cost time if nobody wrote them down:
 **Then start the stack normally.** `migrator` runs its idempotent script over the restored schema and
 exits 0 — a restore does not need a different startup path.
 
+### Taking them on a schedule
+
+There is a `backup` sidecar, **off unless you ask for it**:
+
+```bash
+mkdir -p ./backups
+# The directory must be writable by SQL Server, which runs as uid 10001. Via Docker rather than host
+# sudo, because sudo is not available everywhere Docker is:
+docker run --rm -v "$(pwd)/backups:/b" alpine chown 10001:10001 /b
+
+docker compose -f docker-compose.app.yml --profile backup up -d
+```
+
+It backs up, **reads the file back with `RESTORE VERIFYONLY`**, prunes past the retention window, sleeps
+and repeats. A backup nobody has read is a belief, and the only cheap moment to find out is when it is
+written.
+
+| Variable | Default | |
+|---|---|---|
+| `BACKUP_INTERVAL_HOURS` | 24 | |
+| `BACKUP_RETENTION_DAYS` | 14 | |
+| `BACKUP_DIRECTORY` | `./backups` | A **host** path, so it survives `docker compose down -v` |
+
+**The numbers are not decided here.** How often and how long to keep are your policy; that a backup
+happens at all, and that somebody checks it is readable, are not.
+
+Four things about it that are not obvious:
+
+- **It is behind a profile** so a laptop does not silently start writing dumps, and a production
+  deployment does not get them by accident either.
+- **The directory is mounted on `sqlserver`, not on the sidecar.** `BACKUP DATABASE ... TO DISK` writes
+  on the **server**; sqlcmd only sends the statement. Mounted on the sidecar it produced *"Operating
+  system error 5(Access is denied)"* from a path that container could see and the server could not — a
+  backup service that never wrote a byte. Measured.
+- **Do not run it against a managed instance.** Azure SQL, RDS and Cloud SQL all do this better, with
+  point-in-time recovery this cannot offer.
+- **Files land mode `640`, owned by uid 10001**, which means your host user cannot read them without
+  going through a container. That is correct: a `.bak` is the entire database.
+
+**It does not back up the key ring**, and it prints that on every start. Nothing automated here can: the
+keys live in configuration, and a dump restored without them returns every row and no readable one.
+
 ### What the rehearsal proves, and it is the point of §0
 
 Restoring the database is **half** of a recovery. Executed here with a marked CV written before the

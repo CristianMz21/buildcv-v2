@@ -49,6 +49,14 @@ services:
     # MSSQL_MEMORY_LIMIT_MB under mem_limit, or the backstop becomes the primary.
     mem_limit: ${MSSQL_MEM_LIMIT:-3g}
     volumes:
+      # THE BACKUP DIRECTORY IS MOUNTED HERE, NOT ON THE BACKUP SIDECAR, and that is not a preference:
+      # `BACKUP DATABASE ... TO DISK` writes on the SERVER. sqlcmd only sends the statement. Mounted on
+      # the sidecar it produced "Operating system error 5(Access is denied)" from a path that container
+      # could see and this one could not -- a backup service that never wrote a byte.
+      #
+      # It needs to be writable by uid 10001 (mssql). See docs/deployment.md; the sidecar's first
+      # failure names the command.
+      - ${BACKUP_DIRECTORY:-./backups}:/backups
       # A NAMED VOLUME IS NOT A BACKUP. `docker compose down -v` erases it, and so does a lost host.
       # Nothing in this file backs it up; see docs/deployment.md before putting real CVs in here.
       - buildcv-app-sqlserver-data:/var/opt/mssql
@@ -84,6 +92,46 @@ services:
     # NOT `unless-stopped`: this container is meant to exit 0, and a restart policy would relaunch it
     # forever on success.
     restart: "no"
+
+  # Scheduled backups of the bundled SQL Server, OFF unless you ask for them:
+  #
+  #   docker compose -f docker-compose.app.yml --profile backup up -d
+  #
+  # Behind a profile because a laptop running this stack does not want an hourly dump, and a production
+  # deployment must not get one by accident either -- it writes to a host directory, and a service that
+  # silently starts writing files somewhere is worse than one you had to turn on.
+  #
+  # DO NOT RUN THIS AGAINST A MANAGED INSTANCE. Azure SQL, RDS and Cloud SQL all do this better, with
+  # point-in-time recovery this cannot offer. It exists for the case where the sqlserver service above
+  # is the real database, which docs/deployment.md advises against.
+  #
+  # THE NUMBERS ARE NOT DECIDED HERE. How often and how long to keep are operational policy; the
+  # mechanism, and the fact that every backup is read back with RESTORE VERIFYONLY before it is trusted,
+  # are not.
+  backup:
+    profiles: ["backup"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: backup
+    environment:
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD:?set MSSQL_SA_PASSWORD in .env}
+      BACKUP_INTERVAL_HOURS: ${BACKUP_INTERVAL_HOURS:-24}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+    # NO VOLUME HERE ON PURPOSE. This container issues BACKUP DATABASE and RESTORE VERIFYONLY; SQL
+    # Server does the writing, on its own filesystem, so the directory is mounted on the sqlserver
+    # service above. A mount here would be an empty directory this process never touches.
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+      # THE DATABASE, NOT THE SERVER -- the third time this repository has had to learn the difference.
+      # A healthy SQL Server has no BuildCv database until the migrator has run, so without this the
+      # first backup on a fresh deployment fails with "Database 'BuildCv' does not exist" and then, on
+      # the old code, slept the full interval before trying again. Measured.
+      migrator:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    mem_limit: 512m
 
   api:
     build:
