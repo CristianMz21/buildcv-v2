@@ -56,8 +56,14 @@ for attempt in $(seq 1 12); do
   # A REJECTED LOGIN IS NOT A SLOW START, and waiting sixty seconds before saying so sends whoever
   # typed the password wrong looking at the network instead. SQL Server answers 18456 the moment it
   # is up, so there is nothing to wait for -- give up immediately and quote what it actually said.
+  # A REJECTED LOGIN IS NOT A SLOW START. But "Cannot open database" is NOT a rejected login, however
+  # much its message looks like one -- SQL Server appends "Login failed for user" to error 4060, which
+  # it raises while a database is still recovering. Treating that as fatal is what made every restart
+  # of this stack fail. Only a bare login failure is fast-fatal.
   case "$probe" in
-    *"Login failed"*|*"Cannot open database"*)
+    *"Cannot open database"*)
+      : ;;
+    *"Login failed"*)
       echo "migrate: $SERVER rejected the login for user '$USER_NAME'" >&2
       echo "$probe" >&2
       exit 1
@@ -97,6 +103,36 @@ fi
 #
 # Measured. Without -I the run dies at the first filtered index, which is early enough that almost
 # nothing is created and late enough that the database exists.
+# THE SERVER BEING UP IS NOT THE DATABASE BEING UP, and the difference is every restart of this stack.
+# SQL Server accepts connections against master while a user database is still RECOVERING, so the probe
+# above passes and the apply below then fails with 4060 -- "Cannot open database ... Login failed for
+# user", on a database that exists and a password that is correct. Measured: `docker compose down`
+# followed by `up` failed here every time.
+#
+# So wait for the thing we are about to write to, not for the thing that answers first.
+for attempt in $(seq 1 30); do
+  if probe=$("$SQLCMD" "${BASE[@]}" -d "$DATABASE" -Q "SELECT 1" 2>&1); then
+    break
+  fi
+
+  case "$probe" in
+    *"Cannot open database"*)
+      : ;;   # still recovering, or not created yet on a managed instance -- keep waiting
+    *)
+      echo "migrate: [$DATABASE] on $SERVER is not usable" >&2
+      echo "$probe" >&2
+      exit 1
+      ;;
+  esac
+
+  if [ "$attempt" -eq 30 ]; then
+    echo "migrate: [$DATABASE] did not come online after 30 attempts" >&2
+    echo "$probe" >&2
+    exit 1
+  fi
+  sleep 2
+done
+
 echo "migrate: applying $SCRIPT to [$DATABASE]"
 "$SQLCMD" "${BASE[@]}" -I -d "$DATABASE" -i "$SCRIPT"
 
