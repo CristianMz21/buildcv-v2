@@ -32,6 +32,26 @@ jobs:
       - name: Test
         run: dotnet test BuildCv.slnx -c Release --no-build --filter "Category!=Integration" --collect:"XPlat Code Coverage"
 
+      # A VULNERABILITY DISCLOSED TOMORROW NEEDS NOBODY TO REMEMBER. Until this step existed the audit
+      # only ran when a human typed it, which means the answer was accurate on the day somebody asked
+      # and unknown every day after -- and the interesting case is always a package that was clean when
+      # it was added.
+      #
+      # --include-transitive is the point. Nothing here references Azure.Identity or
+      # Microsoft.Identity.Client directly; they arrive four levels down from
+      # EntityFrameworkCore.SqlServer, which is exactly where a direct-only audit would miss them.
+      #
+      # `dotnet list package` reports findings and still EXITS 0, so the grep is what fails the build.
+      # A step that cannot fail is a step that says nothing.
+      - name: Vulnerable package audit
+        run: |
+          dotnet list BuildCv.slnx package --vulnerable --include-transitive 2>&1 | tee /tmp/audit.txt
+          if grep -qiE '^\s*>' /tmp/audit.txt; then
+            echo "::error::Vulnerable packages found -- see the listing above."
+            exit 1
+          fi
+          echo "No vulnerable packages."
+
   integration-test:
     runs-on: ubuntu-latest
     timeout-minutes: 15
