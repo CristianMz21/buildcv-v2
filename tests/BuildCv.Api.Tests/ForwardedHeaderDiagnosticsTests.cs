@@ -1,5 +1,6 @@
 using BuildCv.Api.Security;
 using FluentAssertions;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Primitives;
@@ -80,6 +81,53 @@ public sealed class ForwardedHeaderDiagnosticsTests
     [InlineData("2001:db8::1, 203.0.113.7")]
     public void Sanitize_ARealChain_IsKeptVerbatim(string chain) =>
         ForwardedHeaderDiagnostics.Sanitize(new StringValues(chain)).Should().Be(chain);
+
+    // Every name appears on every line, present or not. An absent header that simply vanished would be
+    // indistinguishable from a name nobody thought to check — and the question these answer is exactly
+    // "did the client address reach this process under ANY name", where a silent omission is the wrong
+    // answer to report.
+    [Fact]
+    public void DescribeClientAddressHeaders_NamesEveryHeader_EvenTheAbsentOnes()
+    {
+        var headers = new HeaderDictionary { ["CF-Connecting-IP"] = "203.0.113.7" };
+
+        var described = ForwardedHeaderDiagnostics.DescribeClientAddressHeaders(headers);
+
+        described.Should().Be(
+            $"CF-Connecting-IP=203.0.113.7 "
+            + $"True-Client-IP={ForwardedHeaderDiagnostics.Absent} "
+            + $"X-Real-IP={ForwardedHeaderDiagnostics.Absent}");
+    }
+
+    // These are as caller-supplied as X-Forwarded-For is; reporting one is not believing it.
+    [Fact]
+    public void DescribeClientAddressHeaders_SanitizesEveryValue()
+    {
+        var headers = new HeaderDictionary { ["CF-Connecting-IP"] = $"1.2.3.4 {InjectionSentinel}" };
+
+        ForwardedHeaderDiagnostics.DescribeClientAddressHeaders(headers)
+            .Should().Contain($"CF-Connecting-IP={ForwardedHeaderDiagnostics.Unsafe}")
+            .And.NotContain(InjectionSentinel);
+    }
+
+    // Observational only. The whole reason these are logged is to decide whether trusting one is even
+    // possible, and a diagnostic that quietly rewrote the peer would have answered its own question.
+    [Fact]
+    public async Task ACfConnectingIpHeader_IsReported_AndChangesNothingAboutThePeer()
+    {
+        var recorder = new RecordingLoggerProvider();
+        using var factory = new ApiTestFactory(configureServices: RecordingLogging.Capturing(recorder));
+        using var client = factory.CreateClient();
+
+        client.DefaultRequestHeaders.TryAddWithoutValidation("CF-Connecting-IP", "203.0.113.7");
+        (await client.GetAsync(new Uri("/health/live", UriKind.Relative))).EnsureSuccessStatusCode();
+
+        var line = DiagnosticLines(recorder).Should().ContainSingle().Subject;
+
+        line.Message.Should().Contain("CF-Connecting-IP=203.0.113.7");
+        // The peer is whatever the connection said it was; this header did not become it.
+        line.Message.Should().NotContain("peer is now 203.0.113.7");
+    }
 
     // THE NEGATIVE CONTROL for the test below it. An address is personal data and a log line carries
     // none of this repository's encryption, so "off unless asked" is a property and not a default that
