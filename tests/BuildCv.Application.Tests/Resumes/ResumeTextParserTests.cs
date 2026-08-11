@@ -395,6 +395,81 @@ public sealed class ResumeTextParserTests
         phone!.Suggestion.Should().BeNull("no country was named, so any prefix would be invented");
     }
 
+    // A BULLET THAT WRAPPED IS ONE BULLET. Measured on a real import: five of six experiences arrived
+    // with a fragment of the PREVIOUS job's achievements as their title and employer, because the
+    // unmarked second line of a wrapped bullet was never consumed and became context for the next dated
+    // entry. Those read like data rather than like blanks, which is the more dangerous of the two
+    // failures — a blank is obviously wrong, "Title: dashboards." looks filled in.
+    [Fact]
+    public void Parse_AWrappedBullet_StaysWithItsOwnEntry()
+    {
+        var (draft, _) = ResumeTextParser.Parse(
+            """
+            Sam Doe
+            sam@example.com
+
+            Experience
+            L2/L3 Support Analyst, SIESA – Cali, Colombia   June 2024 – Dec 2024
+            • Resolved L2/L3 escalations of complex incidents in SIESA ERP, against
+              aggressive SLAs.
+            Python Developer, American Telnet – Cali, Colombia   July 2023 – Dec 2023
+            • Led architecture of a Python automation suite.
+            """);
+
+        draft.Experiences.Should().HaveCount(2);
+
+        // The wrapped tail joined its own bullet instead of becoming the next job's title.
+        draft.Experiences![0]!.Highlights.Should().ContainSingle()
+            .Which.Should().Be(
+                "Resolved L2/L3 escalations of complex incidents in SIESA ERP, against aggressive SLAs.");
+
+        // The next entry's title comes from its OWN line. It still carries the employer inside it, for the
+        // "Role, Company – City" separator reason documented below — but it is that entry's own text
+        // rather than the previous job's achievements, which is the corruption this fixes.
+        draft.Experiences[1]!.Position.Should().StartWith("Python Developer");
+        draft.Experiences[1]!.Position.Should().NotContain("aggressive");
+        draft.Experiences[1]!.Position.Should().NotContain("SLAs");
+    }
+
+    // A hyphen at a line break is the PDF splitting a word, not the candidate's punctuation. Joining with
+    // a space would invent two words where the document had one.
+    [Fact]
+    public void Parse_AWordSplitAcrossLines_IsRejoinedWithoutTheHyphen()
+    {
+        var (draft, _) = ResumeTextParser.Parse(
+            """
+            Sam Doe
+            sam@example.com
+
+            Experience
+            Technologist, SENA   Apr 2020 – Apr 2022
+            • Studied software analysis and develop-
+              ment across two years.
+            """);
+
+        draft.Experiences![0]!.Highlights.Should().ContainSingle()
+            .Which.Should().Be("Studied software analysis and development across two years.");
+    }
+
+    // THE ONE-LINE HEADER, which is what a modern CV uses. Tested whole, this line is disqualified by the
+    // first guard it meets -- it has an @, and digits, and a URL-shaped run -- so the location was simply
+    // not extracted. That cost the phone its country hint too, which is why both fields came back empty
+    // on a real import.
+    [Fact]
+    public void Parse_ALocationSharingItsLineWithContactDetails_IsStillRead()
+    {
+        var (draft, confidence) = ResumeTextParser.Parse(
+            """
+            Cristian Arellano Muñoz
+            Cali, Valle del Cauca, Colombia | hi@cristianarellano.com | 310 4580645
+            """);
+
+        draft.Contact!.Location.Should().Be("Cali, Valle del Cauca, Colombia");
+
+        // And with a country finally in reach, the phone gets its proposal.
+        Provenance(confidence, "contact.phoneNumber")!.Suggestion.Should().Be("+573104580645");
+    }
+
     // THE LAYOUT OUR USER'S OWN CV USES, and the one that produced the empty rows on the review screen
     // that started this work. Role, employer and period on ONE line with the period at the right margin:
     // looking backwards for context finds nothing, because the context was never on a line of its own.
