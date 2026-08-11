@@ -395,6 +395,46 @@ public sealed class ResumeTextParserTests
         phone!.Suggestion.Should().BeNull("no country was named, so any prefix would be invented");
     }
 
+    // THE SHAPE PdfPig ACTUALLY EMITS, captured by running the real extractor over the real document
+    // rather than by reading it in an editor. Three details defeated three attempts at this bug and all
+    // three are in this fixture: no indentation, a BLANK LINE between some bullets and not others, and a
+    // bullet ending in "70%" — which is mid-sentence and matches no list of "continuation characters"
+    // anybody writes down.
+    [Fact]
+    public void Parse_BulletsSeparatedByBlankLines_AllBelongToTheEntryAbove()
+    {
+        var (draft, _) = ResumeTextParser.Parse(
+            """
+            Sam Doe
+            sam@example.com
+
+            Experience
+            Python Developer & Technical Support, American Telnet – Cali, Colombia July 2023 – Dec 2023
+            • Led architecture of a Python automation suite orchestrating workflows — 70%
+            reduction in operational response time (SLA).
+            • Configured enterprise security: JWT RS256, RBAC, and rate limiting.
+
+            • Implemented semantic search with Meilisearch for product embeddings.
+
+            • End-to-end observability with Sentry and structlog.
+
+            Inventory & Automation Analyst, Tigo Colombia – Cali, Colombia Sept 2022 – June 2023
+            • Digitized inventory control across regional warehouses.
+            """);
+
+        draft.Experiences.Should().HaveCount(2);
+
+        // THE PROPERTY THAT KEPT BREAKING: the last bullets of one job became the next job's title and
+        // employer, because a blank line ended the highlight block and left them for the context reader.
+        draft.Experiences![1]!.Position.Should().StartWith("Inventory & Automation Analyst");
+        draft.Experiences[1]!.Position.Should().NotContain("observability");
+        draft.Experiences[1]!.Organization.Should().NotContain("Implemented semantic search");
+
+        // And the "70%" line kept its continuation instead of stopping the block there.
+        draft.Experiences[0]!.Highlights.Should().Contain(h =>
+            h!.Contains("70% reduction in operational response time", StringComparison.Ordinal));
+    }
+
     // THE FIXTURES HERE ARE UNINDENTED ON PURPOSE. The first version of this fix keyed on indentation,
     // passed its tests, deployed, and changed nothing in production — because the API reads what PdfPig's
     // ContentOrderTextExtractor produces, and that rebuilds text from glyph positions with no leading
