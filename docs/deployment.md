@@ -347,30 +347,61 @@ load, which only your own traffic will.
 `POST /v1/resumes/import/propose` is the one to watch: it is the only endpoint whose cost is driven by a
 file somebody else chose, and it parses inside the request because there are no background jobs.
 
-### The rate limiter cannot tell your users apart, and that is measured
+### The rate limiter and the real client address — measured twice, with different answers
 
-**In the BFF topology every request reaches the API from the web container**, so `RateLimitPartitions`
-sees one address for the entire deployment. The `auth` window is 5 per minute *per partition*, and there
-is only one partition.
+This section said the limiter **could not** tell users apart. On the Azure deployment that is no longer
+true, and the correction is here rather than as an edit because both measurements were honest and the
+difference between them is the useful part.
 
-Measured through the proxy, with seven login attempts from **seven different addresses**:
+**On Azure Container Apps it works.** Read out of the API itself with the diagnostic below, driving
+`POST /v1/auth/login` through the public front door:
+
+```
+peer is now 104.28.166.241, was [::ffff:100.100.0.141]:40976 before trust ran;
+unconsumed X-Forwarded-For is <absent>.
+```
+
+`104.28.166.241` is the real client's public address, confirmed against an external echo service in the
+same minute. Three facts, all of them load-bearing:
+
+- **`was …` is populated**, so `UseForwardedHeaders` ran and the peer was on the allowlist. That is the
+  half that was silently failing before, and it is what makes the resolved address trustworthy at all.
+- **The resolved peer is the client**, not the web container. `RateLimitPartitions.ClientKey` reads the
+  same `Connection.RemoteIpAddress`, so two clients now land in two partitions.
+- **`unconsumed` is `<absent>`**, so the chain held exactly two entries and `ForwardLimit: 2` consumed
+  both. That number stops being a guess for this topology.
+
+**A caller cannot pick its own partition, and that was tested rather than argued.** Three forged chains
+— `9.9.9.9`, `8.8.8.8, 9.9.9.9`, and `1.1.1.1, 2.2.2.2, 3.3.3.3` — all resolved to the same real address,
+and `unconsumed` stayed `<absent>` in every case. If a forged entry had arrived, the chain would have
+been longer than two and something would have been left over. **Nothing was**, so a hop in front is
+**replacing** `X-Forwarded-For` rather than appending to it.
+
+That is worth stating plainly because it inverts the usual reading: an overwriting hop is normally the
+thing that *defeats* forwarded headers, and here it is the thing that makes them safe — every entry the
+API sees was written by infrastructure, not by a caller. **The safety therefore rests on the overwrite,
+not on `ForwardLimit`.** A `ForwardLimit` raised past the real hop count is harmless only while that
+holds; if a future front door starts appending, the same number begins reading attacker input. Re-run
+the diagnostic whenever anything is added in front — that is the whole reason it exists.
+
+**The earlier measurement was correct when it was taken, and is retained because the failure it
+describes is the one you will meet first.** In the compose topology, with seven login attempts from
+seven different addresses:
 
 ```
 400 400 400 400 429 429 429
 ```
 
-The fifth is throttled. Five failed logins by anybody — a bot, a typo, one confused user — and **nobody
-else can log in, register, refresh a token or request a password reset for a minute**.
+The fifth is throttled: five failed logins by anybody and nobody else can log in, register, refresh or
+request a password reset for a minute. The cause was that **the BFF did not forward the header**, so
+`Network:ForwardedHeaders:KnownProxies` naming the web container was inert — verified at the time by
+sending `X-Forwarded-For: 203.0.113.77` through the proxy with `Enabled=true` and watching the API
+record the web container's address anyway.
 
-**Both halves are needed and only one is here.** The compose file names the web container in
-`Network:ForwardedHeaders:KnownProxies`, and that is inert on its own: verified by sending
-`X-Forwarded-For: 203.0.113.77` through the proxy with `Enabled=true` and watching the API record the
-web container's address anyway. **The BFF does not forward the header**, so there is nothing for the API
-to read. Until it does, `BUILDCV_FORWARDED_HEADERS` should stay `false` — enabling it changes nothing
-except which addresses are trusted.
-
-Until then, rate limiting that distinguishes users has to live **in front of** the web container. Caddy
-can do it, and so can any ingress or CDN you put there.
+Two halves are needed, and the compose stack still only has one. Where the BFF does not forward, rate
+limiting that distinguishes users has to live **in front of** the web container; Caddy can do it, as can
+any ingress or CDN. **Do not carry either result across topologies** — this is exactly the setting whose
+correct value is a fact about a deployment rather than about this code.
 
 #### How to check it yourself, instead of taking the paragraph above on trust
 
