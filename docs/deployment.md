@@ -555,9 +555,22 @@ limiter partitions on you, and says nothing about whether the product works. Wai
 `2` exists as a separate code because "nothing is known to be broken" is not "everything was checked",
 and a pipeline that conflates them is how silent coverage loss goes unnoticed.
 
+**It cleans up after itself.** The throwaway account is deleted at the end of the run, so nothing
+accumulates in the product's own database — and deleting is the only honest way to check deletion, so
+that costs a row and buys two checks: the `204`, and that the deleted account can no longer log in
+(the `204` alone would look identical if the tombstone never landed).
+
 Run it **on a machine that is not behind a VPN**, or with `dig` installed: the script resolves the
 hostname through `1.1.1.1` and pins the address, because a local resolver on a WARP-style VPN can hand
 back the *origin*, which then refuses with `403 RBAC: access denied` and reads exactly like an outage.
+
+**`.github/workflows/verify-deployment.yml` runs the HTTP half daily**, and on demand via
+`workflow_dispatch`. On a schedule rather than on deploy, because none of what it catches is caused by
+a deploy — a certificate lapses, a DNS record is edited, an ingress restriction is widened, a CDN
+setting changes, one of two image tags drifts. All of that happens *between* deploys. It carries **no
+secrets**: the Azure-side checks need a credential, and a scheduled job holding one that can read the
+production app is a standing risk taken to catch drift a human running the script locally catches
+anyway. Run the full thing by hand after deploying.
 
 ### Deploying to Azure Container Apps
 

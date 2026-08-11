@@ -119,10 +119,31 @@ else
   # prevent -- error 4060 while /health/live still answers 200.
   if [ "$THROTTLED" = "1" ]; then
     huh "authenticated read -- not attempted, there is no session"
+    huh "account cleanup -- not attempted, there is no session"
   else
     BODY=$(req -b "$JAR" "$SITE/api/resumes")
     if printf '%s' "$BODY" | rg -q '"items"'; then ok "authenticated read returns a page"
     else bad "authenticated read did not return a page: ${BODY:0:120}"; fi
+
+    # IT CLEANS UP AFTER ITSELF. A verification that leaves a row behind every time it runs is a slow
+    # leak into the product's own database -- and this is meant to be run often and on a schedule.
+    # Deleting is also the only honest way to check deletion, so the cost buys a check rather than
+    # merely avoiding one.
+    DEL=$(code -b "$JAR" -c "$JAR" -X DELETE "$SITE/api/auth/me" -H 'Content-Type: application/json' \
+      -d '{"currentPassword":"Str0ngPassw0rd!2026"}')
+    if [ "$DEL" = "204" ]; then ok "the throwaway account deletes itself -> 204"
+    else bad "account deletion -> $DEL (a row is now left behind: $EMAIL)"; fi
+
+    # The tombstone, not just the 204. Delete writes a domain status AND a shadow DeletedAt, and the
+    # global query filter is what makes the account unreachable; a 204 that left the row loadable would
+    # look identical from here.
+    AFTER=$(code -X POST "$SITE/api/auth/login" -H 'Content-Type: application/json' \
+      -d "{\"email\":\"$EMAIL\",\"password\":\"Str0ngPassw0rd!2026\"}")
+    case "$AFTER" in
+      200) bad "a deleted account can still log in" ;;
+      429) huh "post-deletion login -> 429, throttled; the tombstone was not checked" ;;
+      *)   ok "a deleted account cannot log in ($AFTER)" ;;
+    esac
   fi
 fi
 
