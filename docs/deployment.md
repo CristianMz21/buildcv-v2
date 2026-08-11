@@ -119,10 +119,38 @@ was `Online` throughout — only ten minutes idle against a sixty-minute delay �
 cold start *alone*, with no database wake in it at all. Reverted; the deployment is back to
 `min-replicas 1`, verified 15/15.
 
-**The deciding constraint is the BFF's request timeout, which is ~20s and lives in the web tier.** Until
-that is long enough to sit through a cold start (and a database resume, which is the *other* 30–60s this
-measurement never reached), scale-to-zero trades a bill for a broken first visit. Three options, none of
-them free of cost:
+**There are two different cold-start failures, and only one of them is a timeout anybody can raise.**
+The first reading above used `curl -o /dev/null`, so it recorded a status and could not see a body —
+which is no basis for saying whose 504 it was. Re-run with `-i`, from fully cold:
+
+```
+HTTP/2 504
+content-type: text/plain; charset=UTF-8
+server: cloudflare
+cf-ray: a29747a51c7aa25e-MIA
+error code: 504
+                                             time_total = 55.6s
+```
+
+Not the API's and not the BFF's: both emit `application/problem+json`, and the BFF's carries an
+`x-correlation-id`. This one is the **edge's own error page**, and it arrived at **55.6s** rather than
+the 20.4s of the first reading — so the two measurements are not the same event.
+
+The coherent reading, with the caveat that only the first has been captured with headers:
+
+| what was cold | who gave up | when |
+|---|---|---|
+| web **and** API | the edge — plain-text `error code: 504` | ~55s |
+| API only, web already warm | **unconfirmed**; consistent with the BFF's 20s budget, never captured with a body | ~20s |
+
+**Raising the BFF's timeout addresses at most the second row.** The first is the whole chain waking with
+nobody serving yet, and no application-level timeout is involved in it.
+
+Once anything is warm the picture is completely different — the request immediately after the 504
+answered **400 in 1.5s** with proper `application/problem+json`. Nothing here is broken; it is cold-start
+cost, and it is paid by exactly one visitor.
+
+Three options, none of them free of cost:
 
 | | Cost |
 |---|---|
