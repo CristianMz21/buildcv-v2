@@ -174,7 +174,7 @@ az containerapp create -g "$GROUP" -n buildcv-api --environment "$ENVIRONMENT" \
              "Encryption__BlindIndex__ActiveKeyId=b1" \
              "Encryption__BlindIndex__Keys__b1=secretref:blind" \
              "ASPNETCORE_ENVIRONMENT=Production" \
-             "Network__ForwardedHeaders__Enabled=${TRUST_INGRESS:-false}" \
+             "Network__ForwardedHeaders__Enabled=${TRUST_INGRESS:-true}" \
              "Network__ForwardedHeaders__KnownNetworks__0=100.100.0.0/16" \
              "Network__ForwardedHeaders__ForwardLimit=2" -o none
 
@@ -189,12 +189,26 @@ az containerapp create -g "$GROUP" -n buildcv-api --environment "$ENVIRONMENT" \
 # trusts anything in the ENVIRONMENT. That is proportionate while the environment holds only these two
 # apps, and stops being proportionate the moment a third lands in it.
 #
-# Default false: it is only correct if the ingress OVERWRITES a client-supplied X-Forwarded-For rather
-# than passing it through, and believing the header without that hands the limiter to the caller --
-# strictly worse than the shared bucket. Set TRUST_INGRESS=true once that is verified against the real
-# ingress, not assumed. With both halves on, the API still recorded the environment-internal address
-# rather than either the real client or a spoofed one, so ForwardLimit:2 is a guess at a hop count
-# nobody has enumerated: client -> external ingress -> web -> internal ingress -> api is four.
+# DEFAULT TRUE, and only because it was measured on this exact topology rather than reasoned about.
+# Trusting a forwarded header is correct only if the hop in front OVERWRITES a client-supplied
+# X-Forwarded-For rather than passing it through; believing it without that hands the rate limiter to
+# the caller, which is strictly worse than one shared bucket.
+#
+# Read out of the API with Security logging at Debug (see docs/deployment.md 4), driving a login
+# through the public front door:
+#
+#   peer is now 104.28.166.241, was [::ffff:100.100.0.141]:40976 before trust ran;
+#   unconsumed X-Forwarded-For is <absent>.
+#
+# The resolved peer is the real client, confirmed against an external echo in the same minute. Three
+# forged chains -- 9.9.9.9; 8.8.8.8, 9.9.9.9; 1.1.1.1, 2.2.2.2, 3.3.3.3 -- all resolved to that same
+# address with nothing left unconsumed, so no forged entry ever arrived: Azure's ingress replaces the
+# header. ForwardLimit 2 consumed exactly the chain that was there, which is why it is 2.
+#
+# THE SAFETY RESTS ON THE OVERWRITE, NOT ON THE NUMBER. Put anything in front of this deployment -- a
+# CDN, another proxy, a custom domain through Cloudflare -- and the chain changes; a front door that
+# APPENDS turns the same configuration into attacker-controlled input. Re-run the diagnostic after any
+# such change, and set TRUST_INGRESS=false in the meantime if you cannot.
 add_probes() {
   local APP="$1" LIVE="$2" READY="$3"
   # CONTAINER APPS DOES NOT CONSULT THE IMAGE'S HEALTHCHECK. Probes exist only if declared here, and a
