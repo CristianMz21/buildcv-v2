@@ -109,6 +109,54 @@ public static class AuthEndpoints
         .ProducesResultProblems()
         .ProducesProblem(StatusCodes.Status429TooManyRequests);
 
+        group.MapPost("/external", async Task<IResult> (
+            ExternalSignInRequest request,
+            ICommandHandler<SignInWithExternalProviderCommand, Result<AuthResult>> handler,
+            IOptions<JwtSettings> jwt,
+            ILogger<Program> logger,
+            HttpContext httpContext,
+            CancellationToken cancellationToken) =>
+        {
+            var result = await handler.Handle(
+                new SignInWithExternalProviderCommand(request.Provider, request.IdToken), cancellationToken);
+
+            if (!result.IsSuccess)
+            {
+                // NO ADDRESS IS LOGGED, unlike the password paths beside it. Those receive the address
+                // from the caller and audit it because a failed login IS the thing worth correlating;
+                // here the only address in play was decoded from a token this server just refused, so
+                // writing it would put an unverified claim into the audit trail as though it were a
+                // fact about somebody.
+                AuditLog.Log(logger, "external_signin_failure", null, httpContext);
+                return result.ToHttpResult();
+            }
+
+            AuthCookies.SetTokens(httpContext, result.Value!);
+            AuditLog.Log(logger, "external_signin_success", result.Value!.AccountId, httpContext);
+            return Results.Ok(new TokenResponse(result.Value!.AccessToken, jwt.Value.AccessTokenMinutes * 60));
+        })
+        .AllowAnonymous()
+        // The SAME window as password login, on purpose. This endpoint mints exactly the session
+        // /login does, so leaving it off the policy would offer an unthrottled door to the thing the
+        // throttle protects -- and it is the cheaper door, because a token is verified without the
+        // deliberately slow password hash.
+        .RequireRateLimiting(RateLimitPolicies.Auth)
+        .WithSummary("Signs in with an external identity provider, creating the account if needed.")
+        .WithDescription(
+            "The body carries the provider's identity token verbatim; this API verifies its signature "
+            + "against the provider's published keys and checks the audience, so a token minted for "
+            + "another application is refused. An address the provider has not verified is refused "
+            + "too.\n\n"
+            + "A provider address matching an existing password account signs INTO that account rather "
+            + "than creating a second one. An address already linked to a DIFFERENT identity at the "
+            + "same provider is refused: provider addresses can be reassigned, and the previous "
+            + "holder's data is not the new holder's.\n\n"
+            + "Every refusal answers the same message and the same status, so no caller learns whether "
+            + "an address is registered here.")
+        .Produces<TokenResponse>(StatusCodes.Status200OK)
+        .ProducesResultProblems()
+        .ProducesProblem(StatusCodes.Status429TooManyRequests);
+
         group.MapPost("/refresh", async Task<IResult> (
             HttpContext httpContext,
             ICommandHandler<RefreshAccessTokenCommand, Result<AuthResult>> handler,
@@ -400,7 +448,12 @@ public static class AuthEndpoints
             }
 
             var result = await handler.Handle(
-                new DeleteAccountCommand(accountId, request.CurrentPassword), cancellationToken);
+                new DeleteAccountCommand(
+                    accountId,
+                    request.CurrentPassword,
+                    request.ExternalProvider,
+                    request.ExternalIdToken),
+                cancellationToken);
 
             if (!result.IsSuccess)
                 return result.ToHttpResult();

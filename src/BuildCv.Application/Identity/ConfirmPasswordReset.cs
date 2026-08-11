@@ -66,6 +66,18 @@ public sealed class ConfirmPasswordResetHandler(
             if (account is null || account.Status != AccountStatus.Active)
                 return Result.Failure(InvalidTokenError);
 
+            // UNREACHABLE THROUGH ANY TOKEN THIS SERVER MINTS, and refused anyway. RequestPasswordReset
+            // never issues one for a password-less account, and it could not: the signature is computed
+            // OVER the password hash, so there is nothing to sign. This is the belt to that braces --
+            // it costs one comparison and it means the invariant survives a future change to how tokens
+            // are minted, rather than depending on a second file continuing to behave.
+            //
+            // It shares InvalidTokenError with every other refusal here on purpose: the caller holds an
+            // unverified string, so telling them WHY it failed would let them learn about an account
+            // from a token they forged.
+            if (account.Password is null)
+                return Result.Failure(InvalidTokenError);
+
             var verified = tokenProtector.Verify(command.Token, account.Id, account.Password.Hash);
             if (!verified.IsSuccess)
                 return Result.Failure(InvalidTokenError);

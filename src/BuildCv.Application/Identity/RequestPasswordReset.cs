@@ -67,6 +67,37 @@ public sealed class RequestPasswordResetHandler(
             if (account is null || account.Status != AccountStatus.Active)
                 return Result.Success();
 
+            // A PASSWORD-LESS ACCOUNT IS TOLD TO USE ITS PROVIDER, and is never given a reset link.
+            //
+            // Letting this flow MINT a first password would silently downgrade the account: it is
+            // anchored to a provider that may enforce two-factor or a hardware key, and a link in an
+            // inbox would make "possess the mailbox" sufficient to take it over. That is strictly less
+            // protection than the account had a moment earlier, arranged by an attacker rather than
+            // chosen by the owner.
+            //
+            // The HTTP answer is IDENTICAL to every other branch here, so this discloses nothing: the
+            // difference lives only in the message body, which reaches exactly one mailbox -- and
+            // somebody holding that mailbox could have completed a real reset anyway. Refusing at the
+            // API instead would have been the leak, because a distinguishable response would let anyone
+            // ask this endpoint which addresses sign in with Google.
+            //
+            // The design enforces itself, which is why this is a branch and not a guard: the token is
+            // signed OVER the password hash, so no valid token can exist for an account without one.
+            if (account.Password is null)
+            {
+                await emailSender.SendAsync(
+                    new EmailMessage(
+                        account.Email.Value,
+                        "Signing in to BuildCv",
+                        "Somebody asked to reset the password on your BuildCv account.\n\n"
+                        + "This account does not have one -- it signs in with Google. Use the "
+                        + "\"Continue with Google\" button and you are in.\n\n"
+                        + "If this was not you, nothing has changed and you can ignore this message."),
+                    cancellationToken);
+
+                return Result.Success();
+            }
+
             var token = tokenProtector.Protect(account.Id, account.Password.Hash);
             var link = command.ResetUrlTemplate.Replace(
                 TokenPlaceholder, Uri.EscapeDataString(token), StringComparison.Ordinal);

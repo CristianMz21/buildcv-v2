@@ -31,7 +31,7 @@ public sealed class AuthContractTests
 {
     // The full property list, in order, for the one shape three routes answer.
     private static readonly string[] AccountFields =
-        ["id", "email", "role", "status", "isEmailVerified", "createdAt", "lastLoginAt"];
+        ["id", "email", "role", "status", "isEmailVerified", "createdAt", "lastLoginAt", "signInMethods"];
 
     [Fact]
     public async Task TheThreeAuthRoutesThatAnswerAnAccount_AllAnswerTheSameShape()
@@ -123,7 +123,11 @@ public sealed class AuthContractTests
             "Active",
             IsEmailVerified: true,
             CreatedAt: new DateTimeOffset(2026, 8, 9, 10, 30, 0, TimeSpan.Zero),
-            LastLoginAt: hasLoggedIn ? new DateTimeOffset(2026, 8, 9, 11, 0, 0, TimeSpan.Zero) : null);
+            LastLoginAt: hasLoggedIn ? new DateTimeOffset(2026, 8, 9, 11, 0, 0, TimeSpan.Zero) : null,
+            // Two entries rather than one, so the assertion below covers a real list: a single-element
+            // array and a scalar serialize differently enough that a one-item case could pass while a
+            // mapping that flattened the collection stayed broken.
+            SignInMethods: ["password", "google"]);
 
         var before = JsonSerializer.Serialize(dto, options);
         var after = JsonSerializer.Serialize(AccountResponse.From(dto), options);

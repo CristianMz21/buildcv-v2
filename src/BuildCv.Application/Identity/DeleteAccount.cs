@@ -41,17 +41,59 @@ using BuildCv.Domain.Organizations;
 /// since nothing is left to inherit it.
 /// </para>
 /// </remarks>
-public sealed record DeleteAccountCommand(AccountId AccountId, string CurrentPassword) : ICommand<Result>;
+/// <param name="ExternalIdToken">
+/// A fresh provider token, required instead of a password when the account has none. Optional on the
+/// wire so a password account is unaffected.
+/// </param>
+public sealed record DeleteAccountCommand(
+    AccountId AccountId,
+    string CurrentPassword,
+    string? ExternalProvider = null,
+    string? ExternalIdToken = null) : ICommand<Result>;
 
 public sealed class DeleteAccountHandler(
     IAccountRepository accountRepository,
     IPasswordHasher passwordHasher,
+    IEnumerable<IExternalIdentityVerifier> externalVerifiers,
     IResumeRepository resumeRepository,
     IJobPostingRepository jobPostingRepository,
     IOrganizationRepository organizationRepository,
     IRefreshTokenRepository refreshTokenRepository)
     : ICommandHandler<DeleteAccountCommand, Result>
 {
+    /// <summary>Reported when a password-less account tries to delete without re-proving itself.</summary>
+    public const string ExternalReauthRequiredError =
+        "Sign in with your provider again to confirm deleting this account.";
+
+    /// <summary>
+    /// Whether the caller supplied a currently-valid token from a provider this server verifies.
+    /// </summary>
+    /// <remarks>
+    /// The token is verified for its own sake and the identity in it is deliberately NOT compared to
+    /// the account: the caller already proved which account they are by holding its access token, and
+    /// this second factor answers a different question — is the person at the keyboard still the one
+    /// the provider knows, right now. Matching the address as well would be free, so it is worth saying
+    /// why it is absent: the provider address can legitimately differ from the account's after an
+    /// address change at the provider, and refusing deletion in that case strands somebody with an
+    /// account they cannot close.
+    /// </remarks>
+    private async Task<bool> ReProvenExternallyAsync(
+        DeleteAccountCommand command,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(command.ExternalIdToken))
+            return false;
+
+        var verifier = externalVerifiers.FirstOrDefault(candidate =>
+            string.Equals(candidate.Provider, command.ExternalProvider, StringComparison.OrdinalIgnoreCase));
+
+        if (verifier is null || !verifier.IsConfigured)
+            return false;
+
+        var verification = await verifier.VerifyAsync(command.ExternalIdToken, cancellationToken);
+        return verification.IsSuccess;
+    }
+
     public async Task<Result> Handle(DeleteAccountCommand command, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(command);
@@ -67,8 +109,22 @@ public sealed class DeleteAccountHandler(
             // employment history with no way back. The refusal deliberately reuses that endpoint's
             // wording rather than saying "wrong password for deletion" -- a message that varies by
             // endpoint tells an attacker which of them they reached.
-            if (!passwordHasher.Verify(command.CurrentPassword, account.Password.Hash))
+            // AN ACCOUNT WITH NO PASSWORD RE-PROVES ITSELF TO ITS PROVIDER INSTEAD, and that is the same
+            // property rather than a relaxation of it. The check above exists because an access token is
+            // a bearer credential and a stolen one must not be enough to erase somebody's employment
+            // history; accepting the session alone here -- the obvious shortcut -- would give exactly
+            // that capability to every external account and quietly make them the weakest ones on the
+            // platform. Re-authenticating with the provider is the same "prove it again, now" the
+            // password provides.
+            if (!account.HasPassword)
+            {
+                if (!await ReProvenExternallyAsync(command, cancellationToken))
+                    return Result.Failure(ExternalReauthRequiredError);
+            }
+            else if (!passwordHasher.Verify(command.CurrentPassword, account.Password!.Hash))
+            {
                 return Result.Failure("Current password is incorrect.");
+            }
 
             // Checked BEFORE anything is destroyed. A refusal has to leave the account exactly as it was,
             // and a caller who is told "remove the other members first" must still have their CVs when
