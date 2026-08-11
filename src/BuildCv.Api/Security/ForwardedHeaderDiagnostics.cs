@@ -19,9 +19,16 @@ namespace BuildCv.Api.Security;
 /// So this logs the three facts that do distinguish them: what the peer was before
 /// <c>UseForwardedHeaders</c> ran, what it is after, and what remains unconsumed in the chain.
 /// <c>ForwardedHeadersMiddleware</c> preserves the first as <c>X-Original-For</c> and truncates the
-/// entries it consumed off <c>X-Forwarded-For</c>, so reading both after it has run says how many
-/// hops were really there — which is the number <c>ForwardLimit</c> is supposed to equal and is
-/// otherwise a guess.
+/// entries it consumed off <c>X-Forwarded-For</c>, so what is left says whether the chain outgrew
+/// <c>ForwardLimit</c> — and if it did, by how many.
+/// </para>
+/// <para>
+/// <b>It does not count the chain.</b> This reports what the middleware LEFT, not what ARRIVED, so an
+/// empty remainder means "no longer than <c>ForwardLimit</c>" rather than "exactly
+/// <c>ForwardLimit</c>" — a shorter chain leaves the header equally empty and resolves to the same
+/// address. That weaker claim is the one worth having: a leftover entry is precisely where a caller's
+/// forged value would be sitting, so an empty remainder is the safety property and an exact hop count
+/// is not.
 /// </para>
 /// <para>
 /// <b>Debug level, so it is off in production by default</b> and costs one <c>IsEnabled</c> check.
@@ -66,9 +73,14 @@ public sealed class ForwardedHeaderDiagnostics(RequestDelegate next, ILogger<For
     /// shows the header arriving.
     /// </para>
     /// <para>
-    /// A <b>closed list</b>, not configuration. A caller-nameable header would turn a debug switch into
-    /// "log me an arbitrary request header", and these three are the whole population of the convention
-    /// — Cloudflare, Akamai/Cloudflare Enterprise, and the nginx-derived spelling most proxies emit.
+    /// A <b>closed list</b>, not configuration: a caller-nameable header would turn a debug switch into
+    /// "log me an arbitrary request header". These three cover the edges this deployment has actually
+    /// had in front of it — Cloudflare, its Enterprise/Akamai spelling, and the nginx-derived one most
+    /// proxies emit. <b>They are not the whole convention</b>: <c>Fastly-Client-IP</c>,
+    /// <c>X-Client-IP</c> and <c>X-Cluster-Client-IP</c> exist too. Adding a name is a one-line change
+    /// and should be made when a deployment gains an edge that uses one, rather than pre-emptively —
+    /// a name that no edge in front ever sets reports <c>&lt;absent&gt;</c> forever and reads like an
+    /// answer.
     /// </para>
     /// <para>
     /// <b>They are not equally trustworthy, and the difference was measured rather than assumed.</b>
@@ -91,9 +103,19 @@ public sealed class ForwardedHeaderDiagnostics(RequestDelegate next, ILogger<For
     public const string Absent = "<absent>";
 
     /// <summary>
-    /// Ten hops of IPv6-with-port is roughly 500 characters, so this is generous for anything real
-    /// while refusing the 8 KB header a caller is free to send.
+    /// Holds about five hops of worst-case IPv6-with-port and refuses more.
     /// </summary>
+    /// <remarks>
+    /// A bracketed IPv6 literal with a port is 47 characters at its widest, so 256 fits five of them
+    /// with separators (243) and not six. Real chains are two to four hops — the measured one here is
+    /// two — so this is generous for anything a deployment produces while refusing the 8 KB header a
+    /// caller is free to send.
+    /// <para>
+    /// A longer chain is reported as <see cref="Unsafe"/> rather than truncated, which is the same
+    /// ruling the character check makes: a truncated chain has a different hop count from the one that
+    /// arrived, and hop count is the thing this line exists to report.
+    /// </para>
+    /// </remarks>
     public const int MaxLength = 256;
 
     private readonly RequestDelegate _next = next;

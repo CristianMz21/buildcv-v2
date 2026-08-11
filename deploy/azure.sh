@@ -203,7 +203,10 @@ az containerapp create -g "$GROUP" -n buildcv-api --environment "$ENVIRONMENT" \
 # The resolved peer is the real client, confirmed against an external echo in the same minute. Three
 # forged chains -- 9.9.9.9; 8.8.8.8, 9.9.9.9; 1.1.1.1, 2.2.2.2, 3.3.3.3 -- all resolved to that same
 # address with nothing left unconsumed, so no forged entry ever arrived: Azure's ingress replaces the
-# header. ForwardLimit 2 consumed exactly the chain that was there, which is why it is 2.
+# header. ForwardLimit 2 consumed the chain whole with nothing left over, which makes 2 demonstrably
+# SUFFICIENT -- not exact. A shorter chain would leave the header equally empty, and the diagnostic
+# reports what the middleware left rather than what arrived, so it cannot tell those apart. Nothing
+# left over is the property that matters: a leftover entry is where a forged value would sit.
 #
 # THE SAFETY RESTS ON THE OVERWRITE, NOT ON THE NUMBER. Put anything in front of this deployment -- a
 # CDN, another proxy, a custom domain through Cloudflare -- and the chain changes; a front door that
