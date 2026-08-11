@@ -62,10 +62,30 @@ public enum OverallConfidence
 /// month and day. Lets the review screen show the candidate exactly what it saw. Null when there is
 /// nothing to quote (a field that was simply not found, or one extracted verbatim).
 /// </param>
+/// <param name="Suggestion">
+/// A corrected value the review screen may offer as one click — the "autocorrect" the candidate presses
+/// instead of retyping. Null when there is nothing safe to propose.
+/// </param>
+/// <remarks>
+/// <para>
+/// <b>A suggestion is never applied by this API and never reaches the database on its own.</b> The
+/// candidate accepts it and posts the result back through <c>POST /resumes/import</c>, which validates
+/// exactly as strictly as before. That order is the whole design: the machine does the typing, the
+/// person does the deciding, and nothing incorrect can be stored because nothing skips validation.
+/// </para>
+/// <para>
+/// <b>Only where no fact is invented.</b> Writing <c>https://</c> in front of a host the candidate
+/// already typed completes what they wrote. Putting a country code in front of a national phone number
+/// asserts something they did not write, so it is proposed only from evidence found in their own
+/// document — and where there is no evidence there is no suggestion, because a plausible guess accepted
+/// without reading is exactly the wrong information this product may not hold.
+/// </para>
+/// </remarks>
 public sealed record FieldProvenance(
     string Path,
     FieldConfidence Confidence,
-    string? SourceText = null);
+    string? SourceText = null,
+    string? Suggestion = null);
 
 /// <summary>
 /// The confidence and provenance that travel beside a proposed <see cref="ResumeDraft"/> — advice to the
