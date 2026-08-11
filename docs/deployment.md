@@ -518,6 +518,47 @@ while looking exactly like one they did. A repeated header is refused for a subt
 renders two headers of one hop identically to one header of two, and counting hops is the entire point
 of the line.
 
+### Verifying the deployment: `deploy/verify.sh`
+
+```bash
+./deploy/verify.sh                                   # the live deployment
+SITE=https://staging.example.com ./deploy/verify.sh  # somewhere else
+SKIP_AZURE=1 ./deploy/verify.sh                      # HTTP checks only, no az login
+```
+
+Thirteen checks, and **not one of them reads a health status**. `healthState` is a small closed value
+that a working app and an unprobed one produce identically, and a revision reports `Running` with no
+probes declared at all — so every check either drives the product or reads a concrete configured value.
+Each one corresponds to something that actually went wrong here: a dropped environment variable, a
+registry credential outliving its registry, a `latest` tag moving under a running app, probes declared
+the wrong way round, the diagnostic left at `Debug`, the origin hostname still answering after a CDN
+went in front.
+
+**It found real drift on its first run** — the migrator was two deployments behind the API, because the
+API had been repointed twice and the job left behind. Harmless that day, since neither commit carried a
+migration; the failure mode it prevents is an API expecting a table the migrator never created, which
+surfaces as runtime errors rather than as anything a deploy reports.
+
+Three exit codes, because there are three outcomes:
+
+| exit | meaning |
+|---|---|
+| 0 | everything checked, everything passed |
+| 1 | something is wrong |
+| 2 | **inconclusive** — something could not be checked |
+
+**The script throttles itself, and that is the rate limiter working.** The auth window is 5/min per
+partition and the partition is now the client, so running this twice inside a minute earns a 429 from
+your own deployment. That is reported as inconclusive rather than as a failure: a 429 here proves the
+limiter partitions on you, and says nothing about whether the product works. Wait a minute.
+
+`2` exists as a separate code because "nothing is known to be broken" is not "everything was checked",
+and a pipeline that conflates them is how silent coverage loss goes unnoticed.
+
+Run it **on a machine that is not behind a VPN**, or with `dig` installed: the script resolves the
+hostname through `1.1.1.1` and pins the address, because a local resolver on a WARP-style VPN can hand
+back the *origin*, which then refuses with `403 RBAC: access denied` and reads exactly like an outage.
+
 ### Deploying to Azure Container Apps
 
 `deploy/azure.sh` maps this stack onto Container Apps. Five things it teaches that are not obvious, all
