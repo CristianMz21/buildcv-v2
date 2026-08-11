@@ -339,13 +339,115 @@ public static class ResumeTextParser
 
     // ------------------------------------------------------------------ skills
 
+    /// <summary>
+    /// Splits one skills line into the individual technologies it names.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Splitting on every comma was wrong in two ways at once on a real line:
+    /// </para>
+    /// <code>
+    /// Languages &amp; Frameworks: Python (Django, DRF, FastAPI, Strawberry GraphQL, Celery), TypeScript, SQL
+    /// </code>
+    /// <para>
+    /// It produced <c>"Languages &amp; Frameworks: Python (Django"</c> and a lone <c>"Celery)"</c>, and
+    /// forty-four "skills" from a handful of real ones — every unbalanced fragment then arriving as a
+    /// row the candidate has to delete by hand.
+    /// </para>
+    /// <para>
+    /// <b>The category label is not a skill.</b> "Languages &amp; Frameworks:", "Data &amp; Cache:",
+    /// "Quality &amp; Practices:" head a list; they name the shelf rather than anything on it. Only a
+    /// leading label is stripped, and only when it is short — a colon inside an item ("Note: uses X") is
+    /// left alone.
+    /// </para>
+    /// <para>
+    /// <b>A parenthetical is a list of its own, and both halves are kept.</b> "Python (Django, DRF)"
+    /// means the candidate knows Python AND Django AND DRF; emitting only the outer one loses three real
+    /// skills the scoring engine matches on, and emitting only the inner ones loses the language. What is
+    /// NOT flattened is a parenthetical the level reader claims — "Spanish (Native)" — because that one
+    /// is a proficiency rather than a list, and it already has a home.
+    /// </para>
+    /// </remarks>
+    private static IEnumerable<string> SkillTokens(string line)
+    {
+        var text = line.Trim();
+
+        // A leading "Category:" heads the list rather than belonging to it. Bounded so a colon deep in
+        // an item cannot swallow the first real skill with it.
+        var colon = text.IndexOf(':', StringComparison.Ordinal);
+        var firstParen = text.IndexOf('(', StringComparison.Ordinal);
+        if (colon is > 0 and <= 40 && (firstParen < 0 || colon < firstParen))
+            text = text[(colon + 1)..].Trim();
+
+        foreach (var token in SplitOutsideParentheses(text))
+        {
+            var item = token.Trim();
+            if (item.Length == 0)
+                continue;
+
+            var open = item.IndexOf('(', StringComparison.Ordinal);
+            var close = item.LastIndexOf(')');
+
+            // A LIST HAS SEPARATORS; A LEVEL DOES NOT. "Python (Django, DRF)" enumerates; "Spanish
+            // (Native)" qualifies — and flattening the second turns a proficiency into a skill called
+            // "Native". Keyed on the separator rather than on a vocabulary of level words, because the
+            // vocabularies disagree: LevelWords knows "Advanced" as a SKILL level and not "Native",
+            // which is a LANGUAGE proficiency living in a different enum. A rule that had to know both
+            // would be wrong for the next word neither of them lists.
+            var inner = close > open ? item[(open + 1)..close] : string.Empty;
+            if (open <= 0 || close <= open || !inner.Contains(',', StringComparison.Ordinal))
+            {
+                yield return item;
+                continue;
+            }
+
+            yield return item[..open].Trim();
+            foreach (var nestedToken in SplitOutsideParentheses(inner))
+            {
+                var nested = nestedToken.Trim();
+                if (nested.Length > 0)
+                    yield return nested;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Splits on the item separators, ignoring any that sit inside parentheses.
+    /// </summary>
+    private static IEnumerable<string> SplitOutsideParentheses(string text)
+    {
+        var depth = 0;
+        var start = 0;
+
+        for (var i = 0; i < text.Length; i++)
+        {
+            var c = text[i];
+            if (c is '(')
+            {
+                depth++;
+            }
+            else if (c is ')')
+            {
+                if (depth > 0)
+                    depth--;
+            }
+            else if (depth == 0 && c is ',' or ';' or '|' or '•' or '·' or '‣' or '▪' or '◦' or '\t')
+            {
+                yield return text[start..i];
+                start = i + 1;
+            }
+        }
+
+        yield return text[start..];
+    }
+
     private static IReadOnlyList<SkillDraft>? BuildSkills(
         IReadOnlyList<string> body, List<FieldProvenance> fields)
     {
         var skills = new List<SkillDraft>();
         foreach (var line in body)
         {
-            foreach (var token in ItemSeparators.Split(LeadingBullet.Replace(line, string.Empty)))
+            foreach (var token in SkillTokens(LeadingBullet.Replace(line, string.Empty)))
             {
                 var name = token.Trim();
                 if (name.Length is 0 or > 60)

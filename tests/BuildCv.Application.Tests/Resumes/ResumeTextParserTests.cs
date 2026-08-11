@@ -395,6 +395,52 @@ public sealed class ResumeTextParserTests
         phone!.Suggestion.Should().BeNull("no country was named, so any prefix would be invented");
     }
 
+    // THE SKILLS LINE A REAL CV WRITES, verbatim. Splitting on every comma broke it in two ways at once:
+    // the category label arrived as a skill, and the parenthetical list was cut open — producing
+    // "Languages & Frameworks: Python (Django" and a lone "Celery)". Forty-four "skills" came out of a
+    // handful of real ones, each unbalanced fragment a row the candidate has to delete by hand.
+    [Fact]
+    public void Parse_ASkillsLineWithACategoryAndAParenthetical_NamesOnlyRealSkills()
+    {
+        var (draft, _) = ResumeTextParser.Parse(
+            """
+            Sam Doe
+            sam@example.com
+
+            Skills
+            Languages & Frameworks: Python (Django, DRF, FastAPI, Strawberry GraphQL, Celery), TypeScript, SQL
+            """);
+
+        var names = draft.Skills!.Select(s => s!.Name).ToList();
+
+        // The language AND its frameworks: knowing Python and knowing Django are two things the scoring
+        // engine matches separately, so keeping only one of them loses real skills.
+        names.Should().Contain(["Python", "Django", "DRF", "FastAPI", "Strawberry GraphQL", "Celery",
+            "TypeScript", "SQL"]);
+
+        // The shelf is not a thing on it, and no fragment survives unbalanced.
+        names.Should().NotContain(n => n!.Contains("Languages & Frameworks", StringComparison.Ordinal));
+        names.Should().NotContain(n => n!.Contains('(', StringComparison.Ordinal)
+            || n.Contains(')', StringComparison.Ordinal));
+    }
+
+    // A parenthetical that states a LEVEL is not a list, and flattening it would turn a proficiency into
+    // a skill called "Native".
+    [Fact]
+    public void Parse_ASkillWhoseParentheticalIsALevel_IsNotFlattened()
+    {
+        var (draft, _) = ResumeTextParser.Parse(
+            """
+            Sam Doe
+            sam@example.com
+
+            Skills
+            Spanish (Native), English (Advanced)
+            """);
+
+        draft.Skills!.Select(s => s!.Name).Should().NotContain("Native");
+    }
+
     // THE SHAPE PdfPig ACTUALLY EMITS, captured by running the real extractor over the real document
     // rather than by reading it in an editor. Three details defeated three attempts at this bug and all
     // three are in this fixture: no indentation, a BLANK LINE between some bullets and not others, and a
