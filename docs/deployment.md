@@ -88,6 +88,34 @@ retention policy anywhere in this repository, because backup policy is an operat
 Azure SQL, RDS and Cloud SQL all bring automated backups and point-in-time restore that a volume does
 not.
 
+#### On the Azure deployment there IS a backup, and it has three limits worth naming
+
+Read off the live database rather than assumed:
+
+```
+short-term retention   7 days point-in-time, differential every 12 hours
+long-term retention    weekly PT0S · monthly PT0S · yearly PT0S   ← none
+```
+
+So the heading above is true of the bundled container and **false of the Azure deployment**. What is
+actually there:
+
+- **Seven days, and then nothing.** Corruption or a bad migration noticed on day eight is unrecoverable.
+  Long-term retention is off; turning it on is `az sql db ltr-policy set` and it bills for backup
+  storage, which is why it is a decision and not a default here. For a portfolio deployment with no
+  customers, seven days is defensible — say so deliberately rather than by omission.
+- **The backups die with the server.** `az group delete` removes the database and its point-in-time
+  history in one command. A backup that only exists inside the thing it protects covers operator error,
+  not loss of the account.
+- **A restore returns ciphertext.** Every encrypted column comes back sealed, so a restore without the
+  key ring is a database that still will not load a single resume — see §0. The restore and the keys are
+  two halves of one recovery, and §0's rule that they be stored apart is what makes them two.
+
+**Not rehearsed on Azure**, and that is a gap rather than an omission. The rehearsal below is written
+for the bundled container; on the free serverless tier a restore creates a *second* database, which is
+outside the one-free-database grant and therefore bills. Stated instead of quietly skipped, because
+"we have backups" and "we have restores" are different claims and only one of them is checked here.
+
 ### Rehearsing the restore, with the commands that work
 
 Do this before the first real candidate signs up, not after. It has been executed end to end against
@@ -631,6 +659,12 @@ setting changes, one of two image tags drifts. All of that happens *between* dep
 secrets**: the Azure-side checks need a credential, and a scheduled job holding one that can read the
 production app is a standing risk taken to catch drift a human running the script locally catches
 anyway. Run the full thing by hand after deploying.
+
+**GitHub disables a scheduled workflow after 60 days with no repository activity**, and it does so
+quietly — the check stops running and nothing announces it, which is the same failure mode as everything
+else on this page. On a repository under active development this never fires; on one that goes quiet
+for two months, the daily verification is gone at exactly the point nobody is watching it. Re-enable it
+from the Actions tab, or take a manual `workflow_dispatch` run as the reminder that it lapsed.
 
 ### Deploying to Azure Container Apps
 
