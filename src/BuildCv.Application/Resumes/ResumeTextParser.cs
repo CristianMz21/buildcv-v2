@@ -329,17 +329,7 @@ public static class ResumeTextParser
                 if (line.Length is 0 or > 60 || line.Contains('@') || line.Any(char.IsDigit) || Url.IsMatch(line))
                     continue;
 
-                var parts = line.Split(',');
-                if (parts.Length is < 2 or > 3)
-                    continue;
-
-                bool SideIsPlace(string side)
-                {
-                    var words = side.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
-                    return words.Length is >= 1 and <= 3 && words.All(w => w.All(c => char.IsLetter(c) || c is '-'));
-                }
-
-                if (parts.All(SideIsPlace))
+                if (LooksLikeAPlace(line))
                     return line;
             }
         }
@@ -709,6 +699,59 @@ public static class ResumeTextParser
     // Two context lines: the first is read as the position/degree, the second as the organisation — the
     // "Title\nCompany" order most CVs use. One line with a separator is split; one plain line becomes the
     // organisation and leaves the position blank and flagged. All of this is a low-confidence guess.
+    /// <summary>
+    /// Whether <paramref name="text"/> reads as a place — "Cali, Colombia", "Popayán, Colombia".
+    /// </summary>
+    /// <remarks>
+    /// The same shape <see cref="FirstLocation"/> recognises in the header, stated once so a line that
+    /// ends in a location is read the same way wherever it appears.
+    /// </remarks>
+    private static bool LooksLikeAPlace(string text)
+    {
+        var parts = text.Split(',');
+        if (parts.Length is < 2 or > 3)
+            return false;
+
+        return parts.All(part =>
+        {
+            var words = part.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            return words.Length is >= 1 and <= 3
+                && words.All(word => word.All(c => char.IsLetter(c) || c is '-'));
+        });
+    }
+
+    /// <summary>
+    /// Drops a trailing " – City, Country" from an entry's context line.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Real CVs write the whole entry on one line and put the workplace's city last:
+    /// </para>
+    /// <code>
+    /// IT Support &amp; Systems, CDA La Luna – Cali, Colombia
+    /// </code>
+    /// <para>
+    /// The dash is tried before the comma below — correctly, for the far more common
+    /// "Senior Engineer — Company" — so with the city still attached the split lands in the wrong place:
+    /// the employer stays inside the role and <b>the city becomes the employer</b>. Measured on a real
+    /// import: five of six entries had "Cali, Colombia" in the company field, which is not a gap the
+    /// candidate can see is wrong at a glance.
+    /// </para>
+    /// <para>
+    /// Only the LAST dash-separated segment is considered, and only when it reads as a place, so an
+    /// employer whose own name contains a dash keeps it.
+    /// </para>
+    /// </remarks>
+    private static string WithoutTrailingPlace(string line)
+    {
+        var cut = line.LastIndexOfAny(['—', '–', '-']);
+        if (cut <= 0)
+            return line;
+
+        var tail = line[(cut + 1)..].Trim();
+        return tail.Length > 0 && LooksLikeAPlace(tail) ? line[..cut].Trim() : line;
+    }
+
     private static (string? First, string? Second) SplitContext(IReadOnlyList<string> context)
     {
         if (context.Count >= 2)
@@ -716,7 +759,7 @@ public static class ResumeTextParser
         if (context.Count == 0)
             return (null, null);
 
-        var line = context[0];
+        var line = WithoutTrailingPlace(context[0]);
         var separator = line.IndexOfAny(['—', '–', '|']);
         if (separator > 0)
             return (line[..separator].Trim(), line[(separator + 1)..].Trim());

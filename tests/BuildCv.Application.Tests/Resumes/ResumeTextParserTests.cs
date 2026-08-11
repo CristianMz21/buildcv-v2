@@ -551,15 +551,13 @@ public sealed class ResumeTextParserTests
 
         draft.Experiences![0]!.Position.Should().Be("Backend Engineer");
 
-        // AND A LIMIT WORTH STATING RATHER THAN HIDING. The second line is "Role, Company – City", where
-        // the comma separates role from employer and the dash separates employer from location — so
-        // SplitContext, which tries the dash first, keeps the company inside the role and puts the city in
-        // the employer field. Asserted as it behaves, not as it should: the entry is now reviewable
-        // instead of blocking, which is the win, and re-ordering those separators would break the
-        // "Senior Engineer — Company" shape that is more common. Fixing it properly means recognising the
-        // trailing location, which the document already states in its contact block.
-        draft.Experiences[1]!.Position.Should().Be("IT Support & Systems, CDA La Luna");
-        draft.Experiences[1]!.Organization.Should().Be("Cali, Colombia");
+        // "Role, Company – City" READ CORRECTLY, which it was not until the trailing place was stripped.
+        // The dash is tried before the comma — right for the far more common "Senior Engineer — Company" —
+        // so with the city still attached the split landed one field over: the employer stayed inside the
+        // role and the CITY became the employer. Five of six entries on a real import said
+        // "Cali, Colombia" in the company field, which is not a mistake a candidate spots at a glance.
+        draft.Experiences[1]!.Position.Should().Be("IT Support & Systems");
+        draft.Experiences[1]!.Organization.Should().Be("CDA La Luna");
 
         // The date is gone from the role either way. A half-stripped period sitting in a job title is the
         // failure that sharing one grammar with CvDateParser exists to avoid.
