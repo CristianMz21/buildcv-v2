@@ -46,6 +46,44 @@ public sealed class ForwardedHeaderDiagnostics(RequestDelegate next, ILogger<For
 
     private const string ForwardedForHeader = "X-Forwarded-For";
 
+    /// <summary>
+    /// Single-value client-address headers, reported alongside the chain and <b>never trusted</b>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// These exist because of what the chain measurement found: Azure Container Apps' external ingress
+    /// <b>replaces</b> <c>X-Forwarded-For</c> with the address it sees rather than appending to it. That
+    /// is what makes forged chains harmless — but put a CDN in front and the address it sees is the
+    /// CDN's, so the real client is discarded before the API can read it. `ForwardLimit` cannot recover
+    /// it: there is no entry left to unwind to.
+    /// </para>
+    /// <para>
+    /// A CDN's own single-value header may survive that rewrite, since the ingress rewrites only
+    /// <c>X-Forwarded-For</c>. <b>May</b> — which is the entire reason this list is observational. It
+    /// answers "does the client address reach this process at all, under any name", and nothing here
+    /// reads these into <see cref="HttpContext.Connection"/> or any partition key. Trusting one is a
+    /// separate decision that needs its own allowlist, and it should not be taken before a reading
+    /// shows the header arriving.
+    /// </para>
+    /// <para>
+    /// A <b>closed list</b>, not configuration. A caller-nameable header would turn a debug switch into
+    /// "log me an arbitrary request header", and these three are the whole population of the convention
+    /// — Cloudflare, Akamai/Cloudflare Enterprise, and the nginx-derived spelling most proxies emit.
+    /// </para>
+    /// <para>
+    /// <b>They are not equally trustworthy, and the difference was measured rather than assumed.</b>
+    /// Through a Cloudflare-proxied hostname, a client-supplied <c>CF-Connecting-IP</c> is refused by
+    /// Cloudflare itself with a 403 — its own, distinguishable from this API's because ours are
+    /// <c>application/problem+json</c>. A client-supplied <c>True-Client-IP</c> passed **straight
+    /// through** to the origin in the same experiment. So one of these three is forgeable by any caller
+    /// on exactly the deployment where it looks most authoritative. Nothing here reads any of them, and
+    /// anything that ever does must name which edge writes it and verify that edge overwrites a
+    /// supplied value — for each header separately, on the deployment in question.
+    /// </para>
+    /// </remarks>
+    public static readonly string[] ClientAddressHeaders =
+        ["CF-Connecting-IP", "True-Client-IP", "X-Real-IP"];
+
     /// <summary>Stand-in for a value that could not be logged safely.</summary>
     public const string Unsafe = "<unsafe>";
 
@@ -71,14 +109,35 @@ public sealed class ForwardedHeaderDiagnostics(RequestDelegate next, ILogger<For
         {
             _logger.LogDebug(
                 "Forwarded-header resolution: peer is now {Peer}, was {OriginalPeer} before trust ran; "
-                + "unconsumed {ForwardedForHeader} is {ForwardedFor}.",
+                + "unconsumed {ForwardedForHeader} is {ForwardedFor}. Untrusted single-value headers: "
+                + "{ClientAddressHeaders}.",
                 ClientAddress.Describe(context),
                 Sanitize(context.Request.Headers[OriginalForHeader]),
                 ForwardedForHeader,
-                Sanitize(context.Request.Headers[ForwardedForHeader]));
+                Sanitize(context.Request.Headers[ForwardedForHeader]),
+                DescribeClientAddressHeaders(context.Request.Headers));
         }
 
         return _next(context);
+    }
+
+    /// <summary>
+    /// Renders every header in <see cref="ClientAddressHeaders"/> as one <c>name=value</c> string.
+    /// </summary>
+    /// <remarks>
+    /// One string rather than one placeholder each, so adding a name to the list does not change the
+    /// message template — the template is what a log aggregator groups on, and a template that shifts
+    /// whenever the list grows splits one line into two unrelated series. Every value goes through
+    /// <see cref="Sanitize"/>: these are as caller-supplied as <c>X-Forwarded-For</c> is, and reporting
+    /// one is not the same as believing it.
+    /// </remarks>
+    public static string DescribeClientAddressHeaders(IHeaderDictionary headers)
+    {
+        ArgumentNullException.ThrowIfNull(headers);
+
+        return string.Join(
+            ' ',
+            ClientAddressHeaders.Select(name => $"{name}={Sanitize(headers[name])}"));
     }
 
     /// <summary>

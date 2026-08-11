@@ -403,6 +403,38 @@ limiting that distinguishes users has to live **in front of** the web container;
 any ingress or CDN. **Do not carry either result across topologies** — this is exactly the setting whose
 correct value is a fact about a deployment rather than about this code.
 
+#### Adding a CDN in front silently breaks it, and `ForwardLimit` cannot fix that
+
+Putting Cloudflare in front of the same deployment regressed it, in a way no error reports:
+
+```
+before the CDN   peer=104.28.166.241   ← the real client
+after the CDN    peer=104.22.86.40     ← Cloudflare's edge
+```
+
+Both readings show **exactly two entries, fully consumed**. The chain did not get longer, so raising
+`ForwardLimit` recovers nothing — there is no third entry to unwind to.
+
+That is the overwrite showing its other face. **Azure Container Apps' external ingress replaces
+`X-Forwarded-For` with the address it sees.** Before the CDN it saw the client, so the header carried
+the client; afterwards it sees the CDN, so whatever the CDN appended is discarded before this API can
+read it. The property that makes forged chains harmless is the same property that loses the client.
+
+**The fix belongs at the BFF, not here.** Cloudflare's `CF-Connecting-IP` survives the rewrite because
+the ingress rewrites only `X-Forwarded-For`, so the BFF reads that and forwards it. Confirmed by
+re-reading the diagnostic afterwards — the peer returned to the real client address, matching an
+external echo, on three consecutive probes.
+
+**`True-Client-IP` is forgeable and must never be read.** Measured on this deployment: a client-supplied
+`CF-Connecting-IP` is refused by Cloudflare with its own 403, while a client-supplied `True-Client-IP`
+passed straight through to the origin. Two headers of the same convention, one protected and one not.
+`ForwardedHeaderDiagnostics` reports all three so the question can be asked again after the next change,
+and reads none of them — reporting a header is not believing it.
+
+The operational rule: **re-run the diagnostic after anything is added in front of this deployment.**
+Nothing fails, no probe turns red, and the only visible symptom is that a throttle everyone shares stops
+being a throttle anyone notices.
+
 #### How to check it yourself, instead of taking the paragraph above on trust
 
 The measurement above is dated the moment anything in the chain changes — a proxy added, a CDN put in
