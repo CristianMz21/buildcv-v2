@@ -16,6 +16,10 @@ public sealed class ChangePasswordHandler(
     IRefreshTokenRepository refreshTokenRepository)
     : ICommandHandler<ChangePasswordCommand, Result<AccountDto>>
 {
+    /// <summary>Reported when the account has no password to change.</summary>
+    public const string NoPasswordError =
+        "This account signs in with an external provider and has no password to change.";
+
     public async Task<Result<AccountDto>> Handle(ChangePasswordCommand command, CancellationToken cancellationToken = default)
     {
         try
@@ -40,7 +44,20 @@ public sealed class ChangePasswordHandler(
             if (account.IsLocked)
                 return Result<AccountDto>.Failure("Account is temporarily locked. Try again later.");
 
-            if (!passwordHasher.Verify(command.CurrentPassword, account.Password.Hash))
+            // NAMED PLAINLY HERE, unlike on the login path, and the difference is who is asking: this
+            // caller is already authenticated AS this account, so telling them how their own account
+            // signs in discloses nothing they could not see on their own settings page. The refusal on
+            // login stays generic because that caller has proved nothing.
+            //
+            // It refuses rather than SETTING a first password. Establishing a credential is not a
+            // "change", and doing it from a session alone would let a stolen access token plant a
+            // password that outlives the token -- persistent access where today the attacker has
+            // fifteen minutes. That path needs its own proof (a fresh provider sign-in) and is not
+            // built; see docs/deployment.md.
+            if (!account.HasPassword)
+                return Result<AccountDto>.Failure(NoPasswordError);
+
+            if (!passwordHasher.Verify(command.CurrentPassword, account.Password!.Hash))
             {
                 account.RecordFailedLogin();
                 await accountRepository.UpdateAsync(account, cancellationToken);

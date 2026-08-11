@@ -59,11 +59,33 @@ internal sealed class AccountConfiguration : IEntityTypeConfiguration<Account>
 
         // Not encrypted, on purpose: it is already a one-way salted Argon2id digest. Encrypting a
         // hash buys nothing and adds a key-loss failure mode to the login path.
+        // NULLABLE, because an account created through an external identity provider has no password at
+        // all. Not "an empty one" and not a random unguessable one: the column being null is the only
+        // representation that lets `HasPassword` answer honestly, and every read path treats null as
+        // "cannot sign in with a password" rather than as a value that failed to match.
+        // ANALYTICAL, plaintext. "How many accounts sign in with Google" is an internal question this
+        // schema should answer, the value comes from a closed set this code controls, and it is what
+        // `signInMethods` reports on the wire. Nothing about it is personal on its own.
+        builder.Property(account => account.ExternalProvider)
+            .HasColumnName("ExternalProvider")
+            .HasMaxLength(32);
+
+        // ENCRYPTED, and it is the newest entry in this classification. It reads like an opaque
+        // identifier and it is one -- but it is a STABLE identifier for a person at a third party, so
+        // in the clear it links a BuildCv account to a Google account for anybody who reaches the
+        // table. It passes the test this repository actually applies: nothing queries it. Sign-in
+        // resolves the account by the email blind index and compares this in memory afterwards, so
+        // sealing it costs no query -- which is what made the ruling cheap, exactly as with
+        // Language.Fluency.
+        builder.Property(account => account.ExternalSubject)
+            .HasColumnName("ExternalSubject")
+            .IsEncryptedText(_encryptor, "Account.ExternalSubject");
+
         builder.Property(account => account.Password)
             .HasColumnName("PasswordHash")
             .HasConversion<PasswordConverter>()
             .HasMaxLength(PasswordConverter.MaxLength)
-            .IsRequired();
+            .IsRequired(false);
 
         // ANALYTICAL, plaintext. "Accounts by role", "how many are suspended" are the internal
         // questions this schema exists to answer, and tinyint keeps the enums narrow and indexable.

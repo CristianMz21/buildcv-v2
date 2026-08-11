@@ -89,7 +89,13 @@ esac
 if [ ${#RESOLVE[@]} -gt 0 ]; then
   # cf-ray proves the request went THROUGH the CDN. Without it every header assertion below could be
   # reading the origin's own response, which is a different set of values.
-  if req -I "$SITE/" | rg -qi '^cf-ray:'; then ok "went through the CDN (cf-ray present)"
+  #
+  # CAPTURED FIRST, NEVER PIPED INTO `rg -q`. Under `pipefail`, `rg -q` exits on the first match, curl
+  # dies of SIGPIPE, and the pipeline reports failure BECAUSE the match succeeded -- a check that goes
+  # red exactly when the property holds. It survives here only because response headers are small
+  # enough that curl finishes writing first, which is a race rather than a guarantee.
+  HEADERS=$(req -I "$SITE/")
+  if rg -qi '^cf-ray:' <<< "$HEADERS"; then ok "went through the CDN (cf-ray present)"
   else note "no cf-ray -- headers below are the origin's, not what a browser receives"; fi
 fi
 
@@ -146,7 +152,7 @@ else
     huh "account cleanup -- not attempted, there is no session"
   else
     BODY=$(req -b "$JAR" "$SITE/api/resumes")
-    if printf '%s' "$BODY" | rg -q '"items"'; then ok "authenticated read returns a page"
+    if rg -q '"items"' <<< "$BODY"; then ok "authenticated read returns a page"
     else bad "authenticated read did not return a page: ${BODY:0:120}"; fi
 
     # IT CLEANS UP AFTER ITSELF. A verification that leaves a row behind every time it runs is a slow
@@ -204,7 +210,7 @@ azure_checks() {
   local IMAGE; IMAGE=$(printf '%s' "$APP" | jq -r '.properties.template.containers[0].image')
   # A TAG IS A DEPLOYMENT RECORD. `latest` moves under a running app: a replica that restarts, or an
   # app waking from zero, pulls whatever it points at then -- which nobody chose.
-  if printf '%s' "$IMAGE" | rg -q ':[0-9a-f]{40}$'; then ok "API pinned to a 40-char SHA"
+  if rg -q ':[0-9a-f]{40}$' <<< "$IMAGE"; then ok "API pinned to a 40-char SHA"
   else bad "API image is not SHA-pinned: $IMAGE"; fi
 
   # An empty registries array is what proves the public-GHCR path really works. A leftover credential

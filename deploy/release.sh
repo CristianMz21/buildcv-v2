@@ -35,7 +35,7 @@ SHA="${1:-$(git rev-parse HEAD 2>/dev/null)}"
 # waking from zero, pulls whatever it points at then, which nobody chose and no record names. A short
 # sha is refused for the same reason it is refused in verify.sh: the tag CI publishes is the long one,
 # and a short one would simply not be found, one step later and less clearly.
-printf '%s' "$SHA" | rg -q '^[0-9a-f]{40}$' || die "Not a 40-character commit SHA: '$SHA'"
+rg -q '^[0-9a-f]{40}$' <<< "$SHA" || die "Not a 40-character commit SHA: '$SHA'"
 
 API_IMAGE="ghcr.io/${GHCR_OWNER}/buildcv-api:${SHA}"
 MIGRATOR_IMAGE="ghcr.io/${GHCR_OWNER}/buildcv-migrator:${SHA}"

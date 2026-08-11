@@ -34,7 +34,17 @@ public sealed class LoginHandler(
             if (account.IsLocked)
                 return Result<AuthResult>.Failure("Account is temporarily locked. Try again later.");
 
-            if (!passwordHasher.Verify(command.Password, account.Password.Hash))
+            // AN ACCOUNT WITH NO PASSWORD TAKES THE SAME BRANCH AS A WRONG ONE, and says the same thing.
+            // Answering "this account uses Google" would tell any prober which addresses are external,
+            // which is a fact about a person's other accounts that this endpoint has no business
+            // disclosing to somebody who has proved nothing.
+            //
+            // The residual is a TIMING difference and it is accepted rather than hidden: Argon2id
+            // verification is deliberately slow, so the null path returns measurably sooner. Closing it
+            // means verifying against a decoy hash, which is real work to build convincingly and buys
+            // less than it looks — the same distinction is available from the sign-up flow, which must
+            // tell somebody their address is already registered.
+            if (account.Password is null || !passwordHasher.Verify(command.Password, account.Password.Hash))
             {
                 account.RecordFailedLogin();
                 await accountRepository.UpdateAsync(account, cancellationToken);

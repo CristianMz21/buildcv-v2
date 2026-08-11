@@ -112,6 +112,7 @@ view, plan for it to be able to open a resume and *not* its score history.
 ```
 POST /v1/auth/register     → 201, the account. DOES NOT LOG YOU IN.
 POST /v1/auth/login        → 200 { accessToken, expiresIn }  + both cookies
+POST /v1/auth/external     → 200 { accessToken, expiresIn }  + both cookies   (same shape as login)
    ... schedule a refresh off expiresIn ...
 POST /v1/auth/refresh      → 200 { accessToken, expiresIn }  + both cookies, rotated
 POST /v1/auth/logout       → 204, cookies cleared AND every refresh token revoked
@@ -123,6 +124,22 @@ Notes that cost people an afternoon:
   `Location` header points at `/v1/auth/me`, and following it immediately answers **401** — correctly.
   Call `/v1/auth/login` next.
 - **`expiresIn` is seconds**, and it describes the JWT, not the cookie. Default 900.
+- **`POST /v1/auth/external` signs in with an identity provider** — body `{ provider, idToken }` — and
+  answers exactly what `/v1/auth/login` answers, cookies included. Send the provider's `id_token`
+  **verbatim, without decoding it**: this API verifies the signature against the provider's published
+  keys and checks the audience, so a body carrying `{ email }` would make whatever can reach this
+  endpoint the authority on identity. Four behaviours worth knowing before you build a screen on it:
+  - It **creates the account** if the address is new, and **signs into the existing one** if that
+    address already has a password account. There is no separate "sign up with Google" call.
+  - An address the provider has **not verified** is refused. Google issues tokens for those.
+  - An address already linked to a **different identity at the same provider** is refused — provider
+    addresses get reassigned, and the previous holder's CVs are not the new holder's.
+  - **Every refusal is the same status and the same message**, so nothing here tells you whether an
+    address is registered. Do not write a UI branch that depends on telling them apart; there isn't one.
+- **`signInMethods` on the account tells you what a person can actually do.** It is a list —
+  `["password"]`, `["google"]`, or both — and an account created through a provider has no password, so
+  the change-password form and the password field on delete would both refuse it. Read this before
+  rendering either.
 - **`POST /v1/auth/refresh` reads the refresh token from a cookie only.** There is no body and no header
   form. A BFF that wants long-lived sessions therefore has to hold and forward that cookie itself; a BFF
   that re-logs-in instead is also fine, at the cost of the 5/min auth window (§5).

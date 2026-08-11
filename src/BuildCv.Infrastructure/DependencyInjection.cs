@@ -133,6 +133,21 @@ public static class DependencyInjection
         else
             services.AddSingleton<IEmailSender, SmtpEmailSender>();
 
+        // EXTERNAL IDENTITY PROVIDERS, registered as a collection because the use case selects by name
+        // and a second provider must not require touching the handler. A verifier is registered even
+        // when unconfigured: it answers IsConfigured false and opens no socket, which keeps "is Google
+        // enabled here" a question with one answer rather than a difference between the container and
+        // the behaviour.
+        //
+        // SINGLETON, and that is load-bearing: the verifier owns a ConfigurationManager that caches and
+        // rotates Google's signing keys in the background. Per-request instances would re-fetch the
+        // discovery document on every sign-in, making Google's availability a dependency of every
+        // request rather than of a refresh.
+        var googleSettings = new GoogleAuthSettings();
+        configuration.GetSection(GoogleAuthSettings.SectionName).Bind(googleSettings);
+        services.AddSingleton(googleSettings);
+        services.AddSingleton<IExternalIdentityVerifier, GoogleIdentityVerifier>();
+
         // TryAdd so the Api can register an HttpContext-backed principal without removing this one.
         // Nothing in Application consumes ICurrentUser yet; the audit interceptor does.
         services.TryAddSingleton<ICurrentUser, UnknownCurrentUser>();
@@ -180,6 +195,9 @@ public static class DependencyInjection
         services.AddScoped<ICommandHandler<RefreshAccessTokenCommand, Result<AuthResult>>, RefreshAccessTokenHandler>();
         services.AddScoped<IQueryHandler<GetAccountQuery, Result<AccountDto>>, GetAccountHandler>();
         services.AddScoped<ICommandHandler<ChangePasswordCommand, Result<AccountDto>>, ChangePasswordHandler>();
+        services.AddScoped<
+            ICommandHandler<SignInWithExternalProviderCommand, Result<AuthResult>>,
+            SignInWithExternalProviderHandler>();
         services.AddScoped<ICommandHandler<DeleteAccountCommand, Result>, DeleteAccountHandler>();
         services.AddScoped<ICommandHandler<RequestPasswordResetCommand, Result>, RequestPasswordResetHandler>();
         services.AddScoped<ICommandHandler<ConfirmPasswordResetCommand, Result>, ConfirmPasswordResetHandler>();

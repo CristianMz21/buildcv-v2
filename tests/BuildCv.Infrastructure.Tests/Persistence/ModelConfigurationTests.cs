@@ -30,6 +30,12 @@ public sealed class ModelConfigurationTests
         // The login identifier. Encrypted, and searchable only through its blind index.
         ["Account.Email"] = "Account.Email",
 
+        // Reads like an opaque id and is one -- but it is a STABLE identifier for a person at a third
+        // party, so in the clear it links a BuildCv account to a Google account for anybody who reaches
+        // the table. Nothing queries it: sign-in resolves the account by the email blind index and
+        // compares this in memory afterwards, so sealing it cost no query.
+        ["Account.ExternalSubject"] = "Account.ExternalSubject",
+
         // A bearer credential: whoever holds the plaintext IS the user until it expires.
         ["RefreshToken.Token"] = "RefreshToken.Token",
 
@@ -244,6 +250,13 @@ public sealed class ModelConfigurationTests
         // path, since it is the only thing standing between IPasswordHasher's output and the column.
         ["Account.Password"] = length =>
             Account.Create(SomeEmail, Password.Create(Argon2idHashOf(length)), Role.Candidate),
+
+        // A closed set today -- the value is a verifier's own Provider, never anything a caller sends.
+        // It is in this ledger anyway, because "no free text reaches it" is a property of today's
+        // callers rather than of the column, and this ledger exists to make that distinction stop
+        // mattering.
+        ["Account.ExternalProvider"] = length =>
+            Account.CreateExternal(SomeEmail).LinkExternal(Filler(length), "a-subject"),
 
         ["JobPosting.CompanyName"] = length =>
             JobPosting.Create(SomeAccount, "Backend Developer", OrganizationName.Create(Filler(length))),
