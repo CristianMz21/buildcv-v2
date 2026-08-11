@@ -201,6 +201,23 @@ public static class ResumeTextParser
             Summary: summaryValue);
     }
 
+    /// <summary>
+    /// Whether <paramref name="previous"/> stopped mid-sentence, so the next unmarked line continues it.
+    /// </summary>
+    /// <remarks>
+    /// A soft hyphen counts as well as an ordinary one: PDF producers use U+00AD to break a word across
+    /// lines, and it is invisible in every tool a reader would check the text with.
+    /// </remarks>
+    private static bool ContinuesTheLineBefore(string? previous)
+    {
+        var text = previous?.TrimEnd();
+        if (string.IsNullOrEmpty(text))
+            return false;
+
+        var last = text[^1];
+        return char.IsLower(last) || last is ',' or '-' or '­' or '/' or '(';
+    }
+
     private static string? FirstEmail(string text)
     {
         var match = Email.Match(text);
@@ -590,11 +607,21 @@ public static class ResumeTextParser
                 // six entries were wrong this way, and they read like data rather than like blanks, which
                 // is the more dangerous failure of the two.
                 //
-                // INDENTATION is what separates a continuation from the next entry: a wrapped line is
-                // indented under its bullet, while the next role starts at the margin. Requiring an
-                // existing highlight as well means a stray indented line before any bullet is still left
-                // alone for the context reader.
-                if (highlights.Count > 0 && body[k].Length > 0 && char.IsWhiteSpace(body[k][0]))
+                // THE SIGNAL IS THE PREVIOUS LINE ENDING MID-SENTENCE, not indentation.
+                //
+                // Indentation was the obvious choice and it does not survive: this parser reads what
+                // PdfPigTextExtractor produces, and that is `ContentOrderTextExtractor`, which rebuilds
+                // text from glyph positions in reading order and emits no leading whitespace. The
+                // indentation is real in the PDF and real in `pdftotext -layout` — and absent from the
+                // string this code actually receives. Verified the wrong way once already: a fix written
+                // against `pdftotext` output shipped, deployed, and changed nothing.
+                //
+                // A wrapped line is one whose predecessor stopped in the middle of a sentence — ending in
+                // a lowercase letter, a comma or a hyphen. That holds whatever the extractor does with
+                // whitespace, because it is a property of the sentence rather than of the layout.
+                // Requiring an existing highlight as well means a stray line before any bullet is still
+                // left alone for the context reader.
+                if (highlights.Count > 0 && ContinuesTheLineBefore(highlights[^1]))
                 {
                     var continuation = body[k].Trim();
                     if (continuation.Length == 0)
@@ -603,8 +630,9 @@ public static class ResumeTextParser
                     var previous = highlights[^1] ?? string.Empty;
 
                     // A hyphen at the break is the PDF's word-splitting, not the candidate's punctuation:
-                    // "Develop-" + "ment" is one word and joining with a space would invent two.
-                    highlights[^1] = previous.EndsWith('-')
+                    // "Develop-" + "ment" is one word and joining with a space would invent two. The soft
+                    // hyphen is the same case and is what real producers emit.
+                    highlights[^1] = previous.EndsWith('-') || previous.EndsWith('­')
                         ? previous[..^1] + continuation
                         : $"{previous} {continuation}";
 

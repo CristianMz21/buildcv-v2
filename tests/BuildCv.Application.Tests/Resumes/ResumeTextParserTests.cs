@@ -395,6 +395,13 @@ public sealed class ResumeTextParserTests
         phone!.Suggestion.Should().BeNull("no country was named, so any prefix would be invented");
     }
 
+    // THE FIXTURES HERE ARE UNINDENTED ON PURPOSE. The first version of this fix keyed on indentation,
+    // passed its tests, deployed, and changed nothing in production — because the API reads what PdfPig's
+    // ContentOrderTextExtractor produces, and that rebuilds text from glyph positions with no leading
+    // whitespace at all. The indentation was real in the PDF, real in `pdftotext -layout`, and absent
+    // from the string this parser receives. A fixture that keeps it would certify a signal the running
+    // system does not have.
+    //
     // A BULLET THAT WRAPPED IS ONE BULLET. Measured on a real import: five of six experiences arrived
     // with a fragment of the PREVIOUS job's achievements as their title and employer, because the
     // unmarked second line of a wrapped bullet was never consumed and became context for the next dated
@@ -411,7 +418,7 @@ public sealed class ResumeTextParserTests
             Experience
             L2/L3 Support Analyst, SIESA – Cali, Colombia   June 2024 – Dec 2024
             • Resolved L2/L3 escalations of complex incidents in SIESA ERP, against
-              aggressive SLAs.
+            aggressive SLAs.
             Python Developer, American Telnet – Cali, Colombia   July 2023 – Dec 2023
             • Led architecture of a Python automation suite.
             """);
@@ -444,7 +451,7 @@ public sealed class ResumeTextParserTests
             Experience
             Technologist, SENA   Apr 2020 – Apr 2022
             • Studied software analysis and develop-
-              ment across two years.
+            ment across two years.
             """);
 
         draft.Experiences![0]!.Highlights.Should().ContainSingle()
