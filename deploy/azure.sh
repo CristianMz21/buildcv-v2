@@ -265,10 +265,20 @@ cat <<SUMMARY
   Images came from GHCR, built by CI. Nothing here builds, and no container
   registry is created -- that was the one line billing from day one.
 
-  KEEP THESE. They are generated, printed once, and stored nowhere else. The
-  encryption key in particular is NOT in the database: a SQL backup holds the
-  ciphertext and none of the keys, so losing it makes every CV permanently
-  unreadable. Put both in a password manager before you close this terminal.
+  KEEP THESE -- but not because closing this terminal loses them. They are also
+  stored as Container Apps secrets and can be read back while this deployment
+  exists:
+
+    az containerapp secret show -g ${GROUP} -n buildcv-api --secret-name enc --query value -o tsv
+
+  What a copy actually guards against is 'az group delete' (the teardown line
+  below), losing the subscription, or moving off Azure -- in all three the keys
+  vanish with the platform and nothing carries them for you. The encryption key
+  is NOT in the database: a SQL backup holds the ciphertext and none of the keys,
+  so without it every CV is permanently unreadable.
+
+  Store the key copy APART from any database backup. The two together are one
+  artifact holding both halves, which is what the encryption exists to prevent.
 
     BUILDCV_ENCRYPTION_KEY   = ${ENCRYPTION_KEY}
     BUILDCV_BLIND_INDEX_KEY  = ${BLIND_INDEX_KEY}
