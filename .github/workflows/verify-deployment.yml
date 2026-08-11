@@ -1,0 +1,55 @@
+# Runs deploy/verify.sh against the LIVE product on a schedule.
+#
+# WHY A SCHEDULE RATHER THAN A DEPLOY HOOK. The failures this catches are not caused by deploys. A
+# certificate lapses, a DNS record is edited, an ingress restriction is widened, a CDN setting changes,
+# an image tag drifts because somebody repointed one of two things. Every one of those happens between
+# deploys, so a check that only runs on deploy would miss all of them.
+#
+# NO SECRETS, DELIBERATELY. It runs the HTTP half only (SKIP_AZURE=1): the front door, the origin
+# refusing, the product loop, and the error shape. The Azure-side checks need a credential, and a
+# scheduled job holding one that can read the production app is a standing risk taken to catch drift
+# that a human running the script locally catches too. Run the full thing by hand after a deploy.
+name: verify-deployment
+
+on:
+  schedule:
+    # Daily. The product loop creates one account and deletes it again, so nothing accumulates -- but
+    # the auth window is 5/min per client, so runs must not overlap. Daily is nowhere near that.
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      # The script is written in this repository's shell idiom and uses rg. Installed rather than
+      # assumed: a missing rg makes every `rg -q` fail, which reads as the property being absent.
+      - name: Install ripgrep
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ripgrep
+
+      - name: Verify the deployed product
+        id: verify
+        run: |
+          set +e
+          ./deploy/verify.sh
+          echo "code=$?" >> "$GITHUB_OUTPUT"
+        env:
+          SKIP_AZURE: '1'
+
+      # THREE OUTCOMES, THREE REACTIONS. Exit 2 means something could not be checked -- almost always
+      # the deployment throttling this runner, which is the rate limiter working. Failing the workflow
+      # on that would train everyone to ignore it, and passing silently would hide that coverage was
+      # narrowed. It is surfaced as a warning that says so.
+      - name: Interpret the result
+        run: |
+          case "${{ steps.verify.outputs.code }}" in
+            0) echo "::notice::Deployment verified." ;;
+            2) echo "::warning::Inconclusive -- something could not be checked. Usually this runner hit the 5/min auth window; see the run log." ;;
+            *) echo "::error::Deployment verification failed."; exit 1 ;;
+          esac
