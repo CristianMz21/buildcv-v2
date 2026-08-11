@@ -205,8 +205,20 @@ public static class ResumeTextParser
     /// Whether <paramref name="previous"/> stopped mid-sentence, so the next unmarked line continues it.
     /// </summary>
     /// <remarks>
-    /// A soft hyphen counts as well as an ordinary one: PDF producers use U+00AD to break a word across
-    /// lines, and it is invisible in every tool a reader would check the text with.
+    /// <para>
+    /// <b>Stated as what ENDS a sentence, not as what continues one.</b> The first version listed the
+    /// characters a continuation could follow — lowercase, comma, hyphen — and a bullet ending
+    /// <c>"… — 70%"</c> fell straight through the gap, taking the rest of that job's achievements with
+    /// it. Any list of allowed characters is a list somebody's CV will step outside; there are only four
+    /// ways a sentence ends.
+    /// </para>
+    /// <para>
+    /// This is permissive on purpose, and what makes it safe is the caller: the highlight loop already
+    /// stops at the next date line, which is where a real entry begins. The residual is a layout that
+    /// puts the role on a line of its own with no date — there, a bullet with no full stop would swallow
+    /// the role. That degrades to the empty-context path, which reads the role from the date line or the
+    /// line ahead, rather than to a wrong value.
+    /// </para>
     /// </remarks>
     private static bool ContinuesTheLineBefore(string? previous)
     {
@@ -214,8 +226,7 @@ public static class ResumeTextParser
         if (string.IsNullOrEmpty(text))
             return false;
 
-        var last = text[^1];
-        return char.IsLower(last) || last is ',' or '-' or '­' or '/' or '(';
+        return text[^1] is not ('.' or '!' or '?' or ':');
     }
 
     private static string? FirstEmail(string text)
@@ -580,6 +591,20 @@ public static class ResumeTextParser
             var k = (titleAhead >= 0 ? titleAhead : i) + 1;
             for (; k < body.Count && CvDateParser.FindRange(body[k]) is null; k++)
             {
+                // A BLANK LINE BETWEEN BULLETS IS SPACING, NOT A BOUNDARY — and treating it as one is
+                // what defeated the two previous attempts at this. PdfPig emits an empty line between
+                // some bullets and not others:
+                //
+                //     • Configured enterprise security: … rate limiting.
+                //                                                          <- empty
+                //     • Implemented semantic search …
+                //
+                // Stopping there left the remaining bullets unconsumed, and the last two of them became
+                // the next entry's job title and employer. Consuming the blank and carrying on costs
+                // nothing: the loop still ends at the next date line, which is the real boundary.
+                if (body[k].Trim().Length == 0)
+                    continue;
+
                 if (BulletLine.IsMatch(body[k]))
                 {
                     // Past the cap the line is still CONSUMED, just not kept. Stopping the loop instead
