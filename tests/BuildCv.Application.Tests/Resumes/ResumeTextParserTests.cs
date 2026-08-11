@@ -395,6 +395,57 @@ public sealed class ResumeTextParserTests
         phone!.Suggestion.Should().BeNull("no country was named, so any prefix would be invented");
     }
 
+    // THE LAYOUT OUR USER'S OWN CV USES, and the one that produced the empty rows on the review screen
+    // that started this work. Role, employer and period on ONE line with the period at the right margin:
+    // looking backwards for context finds nothing, because the context was never on a line of its own.
+    //
+    // Verbatim from that document rather than invented, because a fixture written to match the fix is a
+    // fixture that cannot fail for the right reason.
+    [Fact]
+    public void Parse_RoleEmployerAndPeriodOnOneLine_ReadsTheRoleFromThatLine()
+    {
+        var (draft, _) = ResumeTextParser.Parse(
+            """
+            Cristian Arellano Muñoz
+            hi@cristianarellano.com
+
+            Experience
+            Backend Engineer — Shoppipai, Independent Development – Cali, Colombia   Dec 2025 – present
+            • Designed the architecture of an enterprise e-commerce platform.
+            IT Support & Systems, CDA La Luna – Cali, Colombia   Jan 2025 – Nov 2025
+            • Administered network and server infrastructure.
+            """);
+
+        draft.Experiences.Should().HaveCount(2);
+
+        // THE PROPERTY THAT MATTERS: neither entry is blank. Before this, both arrived with an empty role
+        // and an empty employer — two required fields the candidate could not fill, because the text was
+        // sitting on a line the parser never looked at.
+        foreach (var experience in draft.Experiences!)
+        {
+            experience!.Position.Should().NotBeNullOrWhiteSpace();
+            experience.Organization.Should().NotBeNullOrWhiteSpace();
+        }
+
+        draft.Experiences![0]!.Position.Should().Be("Backend Engineer");
+
+        // AND A LIMIT WORTH STATING RATHER THAN HIDING. The second line is "Role, Company – City", where
+        // the comma separates role from employer and the dash separates employer from location — so
+        // SplitContext, which tries the dash first, keeps the company inside the role and puts the city in
+        // the employer field. Asserted as it behaves, not as it should: the entry is now reviewable
+        // instead of blocking, which is the win, and re-ordering those separators would break the
+        // "Senior Engineer — Company" shape that is more common. Fixing it properly means recognising the
+        // trailing location, which the document already states in its contact block.
+        draft.Experiences[1]!.Position.Should().Be("IT Support & Systems, CDA La Luna");
+        draft.Experiences[1]!.Organization.Should().Be("Cali, Colombia");
+
+        // The date is gone from the role either way. A half-stripped period sitting in a job title is the
+        // failure that sharing one grammar with CvDateParser exists to avoid.
+        draft.Experiences[0]!.Position.Should().NotContain("2025");
+        draft.Experiences[0]!.Organization.Should().NotContain("Dec 2025");
+        draft.Experiences[1]!.Organization.Should().NotContain("Jan 2025");
+    }
+
     // A date line with nothing naming it is not an entry. It used to become a row with an empty employer
     // and an empty role — two "Value is required" fields on something the candidate never wrote, and
     // could not fix because there was nothing to put in them.

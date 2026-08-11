@@ -113,6 +113,38 @@ public static class CvDateParser
         return new CvDateRange(start, End: null, EndIsPresent: false, line.Trim());
     }
 
+    /// <summary>
+    /// What is left of <paramref name="line"/> once every date span and "present" marker is removed.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// For the layout real CVs use most — role, employer and period on ONE line, the period pushed to the
+    /// right margin — this is the only way to read the role at all. The caller looks backwards for
+    /// context and finds nothing, because the context was never on a line of its own:
+    /// </para>
+    /// <code>
+    /// Backend Engineer — Shoppipai, Independent Development – Cali, Colombia     Dec 2025 – present
+    /// </code>
+    /// <para>
+    /// It lives HERE rather than in the parser that needs it, because this file is the one statement of
+    /// what a date looks like. A caller that stripped dates with its own regex would be a second, quieter
+    /// copy of that grammar — and the first month word this file learned that the copy did not would
+    /// leave half a date sitting in somebody's job title.
+    /// </para>
+    /// <para>
+    /// Trailing separators go too: removing the period from "… Colombia – present" leaves a dangling
+    /// dash that <c>SplitContext</c> would read as a field boundary and split an employer on.
+    /// </para>
+    /// </remarks>
+    public static string WithoutDates(string line)
+    {
+        ArgumentNullException.ThrowIfNull(line);
+
+        var stripped = PresentMarker.Replace(Atom.Replace(line, " "), " ");
+        var collapsed = string.Join(' ', stripped.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        return collapsed.Trim('-', '–', '—', '|', ',', ';', '·', '•', ' ').Trim();
+    }
+
     private static IEnumerable<CvDate> ScanAtoms(string text)
     {
         foreach (Match match in Atom.Matches(text))
