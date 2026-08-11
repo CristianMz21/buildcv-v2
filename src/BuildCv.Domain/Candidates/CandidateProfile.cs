@@ -87,6 +87,10 @@ public sealed class CandidateProfile
         UpdatedAt = now;
     }
 
+#pragma warning disable CS8618 // EF Core assigns every mapped member immediately after construction.
+    private CandidateProfile() { }
+#pragma warning restore CS8618
+
     public static CandidateProfile Create(AccountId ownerId, ContactInformation contactInformation)
     {
         ArgumentNullException.ThrowIfNull(ownerId);

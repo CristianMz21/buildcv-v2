@@ -33,8 +33,14 @@ internal sealed class ResumeConfiguration : IEntityTypeConfiguration<Resume>
     {
         ArgumentNullException.ThrowIfNull(encryptor);
         _encryptor = encryptor;
-        _items = new CvItemCollections(encryptor);
+        _items = new CvItemCollections(encryptor, ContextPrefix);
     }
+
+    // EMPTY, and it is the one owner that gets to be. These contexts were written unqualified
+    // ("Experience.Organization") and are the AAD of every envelope already on disk, so prefixing them
+    // now would make every existing resume fail to decrypt. Every later owner of these collections
+    // carries a prefix so its columns cannot share an AAD with this table — see CvItemCollections.
+    private const string ContextPrefix = "";
 
     public void Configure(EntityTypeBuilder<Resume> builder)
     {

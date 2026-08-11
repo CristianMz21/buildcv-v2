@@ -1,3 +1,4 @@
+using BuildCv.Domain.Candidates;
 using BuildCv.Domain.Identity;
 using BuildCv.Domain.Jobs;
 using BuildCv.Domain.Organizations;
@@ -33,3 +34,7 @@ internal sealed class AnalysisIdConverter() : ValueConverter<AnalysisId, Guid>(
 internal sealed class ReadabilityReportIdConverter() : ValueConverter<ReadabilityReportId, Guid>(
     id => id.Value,
     value => new ReadabilityReportId(value));
+
+internal sealed class CandidateProfileIdConverter() : ValueConverter<CandidateProfileId, Guid>(
+    id => id.Value,
+    value => new CandidateProfileId(value));

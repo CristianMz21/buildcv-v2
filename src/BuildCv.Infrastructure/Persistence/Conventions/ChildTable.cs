@@ -15,4 +15,5 @@ internal static class ChildTable
     public const string OrganizationForeignKey = "OrganizationId";
     public const string AnalysisForeignKey = "AnalysisId";
     public const string ReadabilityReportForeignKey = "ReadabilityReportId";
+    public const string CandidateProfileForeignKey = "CandidateProfileId";
 }

@@ -1,3 +1,4 @@
+using BuildCv.Domain.Candidates;
 using BuildCv.Domain.Common.ValueObjects;
 using BuildCv.Domain.Exceptions;
 using BuildCv.Domain.Identity;
@@ -23,9 +24,71 @@ namespace BuildCv.Infrastructure.Tests.Persistence;
 // getting a column wrong in either direction is invisible at the call site.
 public sealed class ModelConfigurationTests
 {
-    // The classification, stated once, as a table a reviewer can read against the brief without
-    // deriving it from six configuration files. Property path -> the AAD context it is sealed under.
-    private static readonly Dictionary<string, string> ExpectedEncryptedColumns = new(StringComparer.Ordinal)
+    // The block that names the human. Held by BOTH aggregates that describe a candidate, for the same
+    // reason and with the same verdict: full name, address, phone, personal site, the summary they wrote
+    // about themselves, and their social handles. There is no analytical use for any of it.
+    private static readonly string[] EncryptedContactColumns =
+    [
+        "ContactInformation.FullName",
+        "ContactInformation.Email",
+        "ContactInformation.PhoneNumber",
+        "ContactInformation.Location",
+        "ContactInformation.Website",
+        "ContactInformation.Summary",
+        "ContactInformation.Profiles",
+    ];
+
+    // The ten item collections a CV is made of, stated ONCE and expanded per owner below.
+    //
+    // Two aggregates hold them — a Resume and a CandidateProfile — and ONE mapping class configures
+    // both (CvItemCollections), so this ledger mirrors that shape rather than listing thirty-three
+    // entries twice. A second copy here would recreate exactly the drift that class exists to prevent:
+    // the copy a reviewer did not update is the copy that keeps the plaintext.
+    //
+    // WHAT THE EXPANSION DOES NOT WEAKEN, because deriving anything in a test is how a test stops
+    // failing. It derives the two owners' PATHS and nothing else: each owner names its own AAD prefix
+    // at the expansion site below, so a prefix that is wrong in production still fails here. And the
+    // property those prefixes exist for — that no envelope can be lifted from one of the two tables
+    // into the other and still decrypt — is asserted independently and more strongly by
+    // EncryptionContexts_MatchTheirConverterAndTheirColumn, which requires EVERY context in the model
+    // to be unique.
+    private static readonly string[] EncryptedCvItemColumns =
+    [
+        // Where a person worked, and what they wrote about it. Period and Type stay plaintext.
+        "Experience.Organization", "Experience.Position", "Experience.Summary", "Experience.Highlights",
+
+        // Where a person studied, and how well.
+        "Education.Institution", "Education.Degree", "Education.FieldOfStudy", "Education.Grade",
+
+        // Names and URLs that resolve to a named account. Technologies stay plaintext.
+        "Project.Name", "Project.Description", "Project.RepositoryUrl", "Project.LiveDemoUrl",
+        "Project.Highlights",
+
+        // A credential id resolves to a named person on the issuer's site.
+        "Certificate.Name", "Certificate.Issuer", "Certificate.CredentialId", "Certificate.CredentialUrl",
+
+        // Free text a candidate wrote about THEMSELVES -- "nativo, aprendido de mi abuela colombiana"
+        // describes the person, not a level. Sealing it costs no query: PR #16 made Language.Level the
+        // scoring input and forbade the engine from reading this, so it is display-only. Its
+        // structural twins Education.Degree and Education.Grade were already here; it was not.
+        "Language.Fluency",
+
+        "Award.Title", "Award.Awarder", "Award.Summary",
+
+        "Publication.Title", "Publication.Publisher", "Publication.Url", "Publication.Summary",
+
+        // Special-category material in practice: interests routinely reveal religion, politics,
+        // health and sexuality.
+        "Interest.Name", "Interest.Keywords",
+
+        // Personal data about a THIRD PARTY who never signed up and cannot delete it.
+        "Reference.Name", "Reference.Position", "Reference.Company", "Reference.Email",
+        "Reference.PhoneNumber", "Reference.ReferenceText",
+    ];
+
+    // Everything that belongs to one aggregate and to no other, written out. Property path -> the AAD
+    // context it is sealed under.
+    private static readonly Dictionary<string, string> EncryptedColumnsOfOneOwner = new(StringComparer.Ordinal)
     {
         // The login identifier. Encrypted, and searchable only through its blind index.
         ["Account.Email"] = "Account.Email",
@@ -39,79 +102,20 @@ public sealed class ModelConfigurationTests
         // A bearer credential: whoever holds the plaintext IS the user until it expires.
         ["RefreshToken.Token"] = "RefreshToken.Token",
 
-        // The block that names the human.
-        ["ContactInformation.FullName"] = "Resume.ContactInformation.FullName",
-        ["ContactInformation.Email"] = "Resume.ContactInformation.Email",
-        ["ContactInformation.PhoneNumber"] = "Resume.ContactInformation.PhoneNumber",
-        ["ContactInformation.Location"] = "Resume.ContactInformation.Location",
-        ["ContactInformation.Website"] = "Resume.ContactInformation.Website",
-        ["ContactInformation.Summary"] = "Resume.ContactInformation.Summary",
-        ["ContactInformation.Profiles"] = "Resume.ContactInformation.Profiles",
-
-        // Where a person worked, and what they wrote about it. Period and Type stay plaintext.
-        ["Experience.Organization"] = "Experience.Organization",
-        ["Experience.Position"] = "Experience.Position",
-        ["Experience.Summary"] = "Experience.Summary",
-        ["Experience.Highlights"] = "Experience.Highlights",
-
-        // Where a person studied, and how well.
-        ["Education.Institution"] = "Education.Institution",
-        ["Education.Degree"] = "Education.Degree",
-        ["Education.FieldOfStudy"] = "Education.FieldOfStudy",
-        ["Education.Grade"] = "Education.Grade",
-
-        // Names and URLs that resolve to a named account. Technologies stay plaintext.
-        ["Project.Name"] = "Project.Name",
-        ["Project.Description"] = "Project.Description",
-        ["Project.RepositoryUrl"] = "Project.RepositoryUrl",
-        ["Project.LiveDemoUrl"] = "Project.LiveDemoUrl",
-        ["Project.Highlights"] = "Project.Highlights",
-
-        // A credential id resolves to a named person on the issuer's site.
-        ["Certificate.Name"] = "Certificate.Name",
-        ["Certificate.Issuer"] = "Certificate.Issuer",
-        ["Certificate.CredentialId"] = "Certificate.CredentialId",
-        ["Certificate.CredentialUrl"] = "Certificate.CredentialUrl",
-
-        // Free text a candidate wrote about THEMSELVES -- "nativo, aprendido de mi abuela colombiana"
-        // describes the person, not a level. Sealing it costs no query: PR #16 made Language.Level the
-        // scoring input and forbade the engine from reading this, so it is display-only. Its
-        // structural twins Education.Degree and Education.Grade were already here; it was not.
-        ["Language.Fluency"] = "Language.Fluency",
-
         // What the candidate calls this CV among their others -- "CV para la entrevista en Globant"
         // names an employer they may have told nobody. It passes the test this repository actually
         // applies rather than the one it looks like: nothing queries it. No engine reads it, no index
         // needs it, no analytics groups by it, so sealing it costs no query.
+        //
+        // A profile has no counterpart on purpose: it is the candidate's whole history rather than one
+        // document, so there is nothing to tell apart from its siblings.
         ["Resume.Name"] = "Resume.Name",
-
-        ["Award.Title"] = "Award.Title",
-        ["Award.Awarder"] = "Award.Awarder",
-        ["Award.Summary"] = "Award.Summary",
-
-        ["Publication.Title"] = "Publication.Title",
-        ["Publication.Publisher"] = "Publication.Publisher",
-        ["Publication.Url"] = "Publication.Url",
-        ["Publication.Summary"] = "Publication.Summary",
-
-        // Special-category material in practice: interests routinely reveal religion, politics,
-        // health and sexuality.
-        ["Interest.Name"] = "Interest.Name",
-        ["Interest.Keywords"] = "Interest.Keywords",
-
-        // Personal data about a THIRD PARTY who never signed up and cannot delete it.
-        ["Reference.Name"] = "Reference.Name",
-        ["Reference.Position"] = "Reference.Position",
-        ["Reference.Company"] = "Reference.Company",
-        ["Reference.Email"] = "Reference.Email",
-        ["Reference.PhoneNumber"] = "Reference.PhoneNumber",
-        ["Reference.ReferenceText"] = "Reference.ReferenceText",
 
         // Generated advice, but not generic advice: the sentence quotes the resume and the posting it
         // was scored against back at the candidate. Its STRUCTURE — Section, Priority, Kind, Impact —
         // stays plaintext beside it, which is what keeps "which advice do we give most often"
         // answerable without the text.
-        ["Recommendation.Message"] = "Recommendation.Message",
+        ["Analysis.Recommendation.Message"] = "Recommendation.Message",
 
         // The same judgement on the readability side, and if anything a stronger case. This sentence
         // quotes the candidate's own bullet points and job titles back at them ("Add an entry covering
@@ -123,8 +127,40 @@ public sealed class ModelConfigurationTests
         // between scoring.Recommendations and readability.Recommendations and still decrypt, which is
         // exactly the binding the context exists to create.
         // EncryptionContexts_MatchTheirConverterAndTheirColumn asserts that uniqueness.
-        ["ReadabilityRecommendation.Message"] = "ReadabilityRecommendation.Message",
+        ["ReadabilityReport.ReadabilityRecommendation.Message"] = "ReadabilityRecommendation.Message",
     };
+
+    // The classification, as a table a reviewer can read against the brief without deriving it from
+    // seven configuration files.
+    private static readonly Dictionary<string, string> ExpectedEncryptedColumns = Classification();
+
+    private static Dictionary<string, string> Classification()
+    {
+        var columns = new Dictionary<string, string>(EncryptedColumnsOfOneOwner, StringComparer.Ordinal);
+
+        // THE RESUME'S ITEM CONTEXTS ARE UNQUALIFIED, and only its may be. They were written that way
+        // before a second owner existed and are the AAD of every envelope already on disk, so
+        // prefixing them now would make every stored resume fail to decrypt. Its CONTACT block is the
+        // exception that proves it was never a rule: those contexts were written "Resume.*" from the
+        // start, so the prefix that reads like the owner-prefix mechanism predates it.
+        AddOwned(columns, owner: "Resume", contextPrefix: "Resume.", EncryptedContactColumns);
+        AddOwned(columns, owner: "Resume", contextPrefix: "", EncryptedCvItemColumns);
+
+        // Every later owner carries one, which is what keeps its columns out of the resume's envelope
+        // namespace. Copying an entry into a generated CV is unaffected: that copy happens in memory,
+        // so the converter decrypts under this context and re-encrypts under the resume's.
+        AddOwned(columns, owner: "CandidateProfile", contextPrefix: "CandidateProfile.", EncryptedContactColumns);
+        AddOwned(columns, owner: "CandidateProfile", contextPrefix: "CandidateProfile.", EncryptedCvItemColumns);
+
+        return columns;
+    }
+
+    private static void AddOwned(
+        Dictionary<string, string> columns, string owner, string contextPrefix, string[] paths)
+    {
+        foreach (var path in paths)
+            columns[$"{owner}.{path}"] = contextPrefix + path;
+    }
 
     // The other half of the same requirement. Encrypting any of these would silently end a feature:
     // the scoring engine reads them, and internal analytics groups by them. Every entry here is a
@@ -137,7 +173,11 @@ public sealed class ModelConfigurationTests
     // is not needed here because ExpectedEncryptedColumns is asserted with exact set equality in BOTH
     // directions: nothing can gain encryption without being declared there, so nothing can slip out of
     // this list unnoticed. This one exists to make the intent of the classification legible.
-    private static readonly string[] HighValueAnalyticalColumns =
+    //
+    // The CV-item half is expanded for BOTH owners, for the reason EncryptedCvItemColumns gives: one
+    // mapping class configures them, so a list that named only the resume's would let the profile's
+    // copy of a column be sealed without this test noticing that a query had been ended.
+    private static readonly string[] AnalyticalCvItemColumns =
     [
         "Skill.Name", "Skill.Level", "Skill.YearsOfExperience", "Skill.Keywords",
         "Language.Name",
@@ -159,27 +199,40 @@ public sealed class ModelConfigurationTests
         "Certificate.ValidityPeriod",
         "Award.Date",
         "Publication.ReleaseDate",
-        "JobRequirement.Skill", "JobRequirement.Priority", "JobRequirement.Weight",
+    ];
+
+    private static readonly string[] HighValueAnalyticalColumns =
+    [
+        .. AnalyticalCvItemColumns.Select(path => $"Resume.{path}"),
+        .. AnalyticalCvItemColumns.Select(path => $"CandidateProfile.{path}"),
+
+        "JobPosting.JobRequirement.Skill", "JobPosting.JobRequirement.Priority",
+        "JobPosting.JobRequirement.Weight",
         "JobPosting.Title", "JobPosting.Description", "JobPosting.CompanyName", "JobPosting.Status",
 
         // The posting's side of the same two dimensions. JobPosting is wholly plaintext by design --
         // see the header comment on JobPostingConfiguration -- so these are here to state the intent,
         // not to defend a borderline call.
-        "JobPosting.EducationLevel", "LanguageRequirement.Name", "LanguageRequirement.MinimumLevel",
+        "JobPosting.EducationLevel",
+        "JobPosting.LanguageRequirement.Name", "JobPosting.LanguageRequirement.MinimumLevel",
         "Organization.Name", "Organization.Slug", "Organization.Status",
         "Account.Role", "Account.Status", "Account.FailedLoginCount",
         "Analysis.ScoredAt",
-        "ScoreBreakdown.SkillsScore", "ScoreBreakdown.LanguagesScore", "ScoreBreakdown.Weights",
+        "Analysis.ScoreBreakdown.SkillsScore", "Analysis.ScoreBreakdown.LanguagesScore",
+        "Analysis.ScoreBreakdown.Weights",
 
         // The half of a recommendation that survives its message being sealed. Encrypting any of
         // these would not lose a column, it would lose the rollup the encryption was traded for.
-        "Recommendation.Section", "Recommendation.Priority", "Recommendation.Kind", "Recommendation.Impact",
+        "Analysis.Recommendation.Section", "Analysis.Recommendation.Priority",
+        "Analysis.Recommendation.Kind", "Analysis.Recommendation.Impact",
 
         // The readability side of the identical trade, and it belongs on THIS list rather than in a
         // test of its own for the reason stated above it: these four carry the (Section, Priority)
         // index that readability.Recommendations is grouped by, so they really are queried.
-        "ReadabilityRecommendation.Section", "ReadabilityRecommendation.Priority",
-        "ReadabilityRecommendation.Kind", "ReadabilityRecommendation.Impact",
+        "ReadabilityReport.ReadabilityRecommendation.Section",
+        "ReadabilityReport.ReadabilityRecommendation.Priority",
+        "ReadabilityReport.ReadabilityRecommendation.Kind",
+        "ReadabilityReport.ReadabilityRecommendation.Impact",
     ];
 
     // ---------------------------------------------------------------------------------------------
@@ -207,8 +260,8 @@ public sealed class ModelConfigurationTests
     // the same job EncryptedColumns_AreExactlyTheClassifiedSet does for the classification above.
     //
     // TWO CATEGORIES, AND THE ISSUE THAT ROUTED THIS OVERSTATES THE FIRST. Its wording is "every
-    // bounded plaintext column currently has a Domain rule". Seventeen columns carry a width; ELEVEN
-    // have one. The other six are numbers and dates whose width comes from the shape of their
+    // bounded plaintext column currently has a Domain rule". Twenty-four columns carry a width;
+    // FOURTEEN have one. The other ten are numbers and dates whose width comes from the shape of their
     // serialization, and writing the issue's sentence at the top of a ledger that disproves it is the
     // defect this repository has spent its history removing — so it is corrected here rather than
     // repeated.
@@ -267,14 +320,20 @@ public sealed class ModelConfigurationTests
 
         // Both sides of the Technology limit, because one column reaching it does not prove the other
         // does: these are different entities on different aggregates that happen to share a type.
-        ["JobRequirement.Skill"] = length =>
+        ["JobPosting.JobRequirement.Skill"] = length =>
             JobRequirement.Create(Technology.Create(Filler(length)), RequirementPriority.MustHave),
-        ["Skill.Name"] = length => Skill.Create(Technology.Create(Filler(length))),
+
+        // The same Domain factory guards the resume's column and the profile's, because one mapping
+        // class configures both. Two entries anyway: the entry is what makes the COLUMN accounted for,
+        // and an unlisted bounded column is the omission this ledger exists to catch.
+        ["Resume.Skill.Name"] = length => Skill.Create(Technology.Create(Filler(length))),
+        ["CandidateProfile.Skill.Name"] = length => Skill.Create(Technology.Create(Filler(length))),
 
         // The column the rule was written for, and its opposite number in the Jobs context. They do not
         // share a type on purpose — see the header on LanguageRequirement — so they need two entries.
-        ["Language.Name"] = length => Language.Create(Filler(length)),
-        ["LanguageRequirement.Name"] = length =>
+        ["Resume.Language.Name"] = length => Language.Create(Filler(length)),
+        ["CandidateProfile.Language.Name"] = length => Language.Create(Filler(length)),
+        ["JobPosting.LanguageRequirement.Name"] = length =>
             LanguageRequirement.Create(Filler(length), LanguageProficiency.Professional),
 
         ["Organization.Name"] = length =>
@@ -282,13 +341,13 @@ public sealed class ModelConfigurationTests
         ["Organization.Slug"] = length =>
             Organization.Create(SomeCompany, Slug.Create(Filler(length)), SomeAccount),
 
-        ["Responsibility.Description"] = length => Responsibility.Create(Filler(length)),
+        ["JobPosting.Responsibility.Description"] = length => Responsibility.Create(Filler(length)),
     };
 
-    // The other six. They carry a width and have NO Domain length rule, and adding one would be
+    // The other ten. They carry a width and have NO Domain length rule, and adding one would be
     // inventing a guard against an input they cannot receive: nothing here is written from a string.
     //
-    //   - The four DateRange columns are serialized by DateRangeConverter as "<start>/<end>", each
+    //   - The eight DateRange columns are serialized by DateRangeConverter as "<start>/<end>", each
     //     endpoint being PartialDate.ToIsoString — "yyyy-MM-dd", "yyyy-MM" or "yyyy", the year
     //     formatted D4 against DateOnly's own four-digit range. Twenty-one characters is the widest
     //     string that grammar can produce, so the column is exactly as wide as its encoding.
@@ -301,12 +360,16 @@ public sealed class ModelConfigurationTests
     // what the leak would COST, which is why they are not merged and given one weaker rule.
     private static readonly string[] BoundedByTheirSerializedShape =
     [
-        "Certificate.ValidityPeriod",
-        "Education.Period",
-        "Experience.Period",
-        "Project.Period",
-        "ReadabilityBreakdown.Weights",
-        "ScoreBreakdown.Weights",
+        "Resume.Certificate.ValidityPeriod",
+        "Resume.Education.Period",
+        "Resume.Experience.Period",
+        "Resume.Project.Period",
+        "CandidateProfile.Certificate.ValidityPeriod",
+        "CandidateProfile.Education.Period",
+        "CandidateProfile.Experience.Period",
+        "CandidateProfile.Project.Period",
+        "ReadabilityReport.ReadabilityBreakdown.Weights",
+        "Analysis.ScoreBreakdown.Weights",
     ];
 
     // 'a' survives every normalization these factories apply — Trim, Normalize(FormC), the
@@ -323,16 +386,18 @@ public sealed class ModelConfigurationTests
         return prefix + Filler(length - prefix.Length);
     }
 
-    // SEVEN, not six. ReadabilityReport is an aggregate root of its own and not a part of Analysis:
-    // an Analysis requires a non-nullable JobPostingId, and a readability report is taken with no
-    // posting in existence. It therefore has to carry the same table shape every other root does --
-    // audit columns, soft delete, a rowversion and the clustered Seq index -- and this list is what
-    // makes "it is a root" a checked claim rather than a sentence in a comment.
+    // EIGHT. ReadabilityReport is an aggregate root of its own and not a part of Analysis: an Analysis
+    // requires a non-nullable JobPostingId, and a readability report is taken with no posting in
+    // existence. CandidateProfile is one for a different reason -- it outlives every CV made from it and
+    // is owned by the ACCOUNT, which is the whole point of separating it from Resume. Both therefore
+    // carry the same table shape every other root does -- audit columns, soft delete, a rowversion and
+    // the clustered Seq index -- and this list is what makes "it is a root" a checked claim rather than
+    // a sentence in a comment.
     private static readonly Type[] ExpectedAggregateRoots =
     [
         typeof(Account), typeof(RefreshToken), typeof(Resume),
         typeof(JobPosting), typeof(Organization), typeof(Analysis),
-        typeof(ReadabilityReport),
+        typeof(ReadabilityReport), typeof(CandidateProfile),
     ];
 
     [Fact]
@@ -675,11 +740,11 @@ public sealed class ModelConfigurationTests
         }
     }
 
-    // The ten resume collections plus the six elsewhere: three on JobPosting (Requirements,
-    // LanguageRequirements, Responsibilities), Organization.Members, Analysis.Recommendations and
-    // ReadabilityReport.Recommendations. Every getter returns _entries.AsReadOnly(), so EF reading
-    // through the property gets a ReadOnlyCollection it cannot add to; the failure is an exception on
-    // the first child insert, not at model build.
+    // The ten resume collections, the ten identical ones on CandidateProfile, plus the six elsewhere:
+    // three on JobPosting (Requirements, LanguageRequirements, Responsibilities), Organization.Members,
+    // Analysis.Recommendations and ReadabilityReport.Recommendations. Every getter returns
+    // _entries.AsReadOnly(), so EF reading through the property gets a ReadOnlyCollection it cannot add
+    // to; the failure is an exception on the first child insert, not at model build.
     [Fact]
     public void OwnedCollections_UseTheBackingField()
     {
@@ -690,7 +755,7 @@ public sealed class ModelConfigurationTests
             .Where(navigation => navigation.IsCollection)
             .ToList();
 
-        collections.Should().HaveCount(16);
+        collections.Should().HaveCount(26);
         collections.Should().OnlyContain(navigation =>
             navigation.GetPropertyAccessMode() == PropertyAccessMode.Field
             && navigation.FieldInfo != null);
@@ -738,13 +803,28 @@ public sealed class ModelConfigurationTests
         // become a table.
         // ImportSignals IS here, unlike SectionScore: it is a real optional owned reference mapped into
         // the Resumes row as four Import_* columns, so EF has to discover it as an entity type. Its
-        // absence would mean the whole value had stopped persisting.
+        // absence would mean the whole value had stopped persisting. It appears under Resume ONLY —
+        // a profile is fed from several documents, so "the document this came from" has no single answer
+        // there and the value is deliberately not owned by it.
         actual.Should().Equal(
-            "Account", "Analysis", "Award", "Certificate", "ContactInformation", "Education",
-            "Experience", "ImportSignals", "Interest", "JobPosting", "JobRequirement", "Language",
-            "LanguageRequirement", "Membership", "Organization", "Project", "Publication",
-            "ReadabilityBreakdown", "ReadabilityRecommendation", "ReadabilityReport", "Recommendation",
-            "Reference", "RefreshToken", "Responsibility", "Resume", "ScoreBreakdown", "Skill");
+            "Account",
+            "Analysis", "Analysis.Recommendation", "Analysis.ScoreBreakdown",
+            "CandidateProfile",
+            "CandidateProfile.Award", "CandidateProfile.Certificate",
+            "CandidateProfile.ContactInformation", "CandidateProfile.Education",
+            "CandidateProfile.Experience", "CandidateProfile.Interest", "CandidateProfile.Language",
+            "CandidateProfile.Project", "CandidateProfile.Publication", "CandidateProfile.Reference",
+            "CandidateProfile.Skill",
+            "JobPosting", "JobPosting.JobRequirement", "JobPosting.LanguageRequirement",
+            "JobPosting.Responsibility",
+            "Organization", "Organization.Membership",
+            "ReadabilityReport", "ReadabilityReport.ReadabilityBreakdown",
+            "ReadabilityReport.ReadabilityRecommendation",
+            "RefreshToken",
+            "Resume",
+            "Resume.Award", "Resume.Certificate", "Resume.ContactInformation", "Resume.Education",
+            "Resume.Experience", "Resume.ImportSignals", "Resume.Interest", "Resume.Language",
+            "Resume.Project", "Resume.Publication", "Resume.Reference", "Resume.Skill");
     }
 
     private static IEnumerable<(IEntityType EntityType, IProperty Property)> EncryptedProperties(IModel model) =>
@@ -772,5 +852,14 @@ public sealed class ModelConfigurationTests
             ?.FindProperty(path[(separator + 1)..]);
     }
 
-    private static string Name(IReadOnlyEntityType entityType) => entityType.ClrType.Name;
+    // An owned type is named by its OWNER, and that stopped being cosmetic the day a second aggregate
+    // started owning the same ten item types. "Experience.Organization" now describes TWO columns, in
+    // two tables, under two different AAD contexts — so a ledger keyed on the bare CLR name would
+    // silently collapse them into one entry, and the entry that survived would be whichever the model
+    // happened to enumerate last. Half the classification would then be unasserted while every test
+    // stayed green, which is the one failure mode this file exists to not have.
+    private static string Name(IReadOnlyEntityType entityType) =>
+        entityType.FindOwnership() is { } ownership
+            ? $"{Name(ownership.PrincipalEntityType)}.{entityType.ClrType.Name}"
+            : entityType.ClrType.Name;
 }

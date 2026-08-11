@@ -334,6 +334,7 @@ public static class DependencyInjection
         services.AddScoped<IOrganizationRepository, OrganizationRepository>();
         services.AddScoped<IAnalysisRepository, AnalysisRepository>();
         services.AddScoped<IReadabilityReportRepository, ReadabilityReportRepository>();
+        services.AddScoped<ICandidateProfileRepository, CandidateProfileRepository>();
     }
 
     // The in-memory store is a development convenience and a test double. It is registered as singletons
@@ -383,6 +384,14 @@ public static class DependencyInjection
         services.AddSingleton<IReadabilityReportRepository>(
             provider => provider.GetRequiredService<InMemoryReadabilityReportRepository>());
         services.AddSingleton<IResumeRepository, InMemoryResumeRepository>();
+
+        // CONCRETE FIRST here too, for the second of the two reasons above and not the first: nothing
+        // cascades into a profile, but the Api tests read its Count to observe that an import wrote the
+        // candidate's master data and not only a CV — which is the whole behaviour that separates the
+        // two, and one no assertion about a response body can make.
+        services.AddSingleton<InMemoryCandidateProfileRepository>();
+        services.AddSingleton<ICandidateProfileRepository>(
+            provider => provider.GetRequiredService<InMemoryCandidateProfileRepository>());
     }
 
     // Development gets it for free. Anything else has to say so — EXCEPT Production, which cannot say so

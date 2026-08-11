@@ -16,10 +16,10 @@ namespace BuildCv.Infrastructure.Persistence.Configurations;
 /// <para>
 /// <b>This is where the product's data classification lives or dies</b>, and it is a shared class
 /// precisely because there are now two owners of these collections: a <see cref="Resume"/> and a
-/// <c>CandidateProfile</c>. Copying the mapping into the second one would create a second place for the
-/// classification to live, and the first change to either — a new column, a re-classification, a
-/// context string — would silently apply to one and not the other. The half that kept the plaintext
-/// would be the half nobody noticed.
+/// <see cref="Domain.Candidates.CandidateProfile"/>. Copying the mapping into the second one would
+/// create a second place for the classification to live, and the first change to either — a new column,
+/// a re-classification, a context string — would silently apply to one and not the other. The half that
+/// kept the plaintext would be the half nobody noticed.
 /// </para>
 /// <para>
 /// The rule applied throughout: a value that IDENTIFIES OR DESCRIBES A PERSON is encrypted; a value that
@@ -34,16 +34,30 @@ namespace BuildCv.Infrastructure.Persistence.Configurations;
 /// where every candidate on the platform works.
 /// </para>
 /// <para>
-/// <b>The AAD context strings are deliberately owner-agnostic</b> — "Experience.Organization", not
-/// "Resume.Experience.Organization". The context is what binds a ciphertext to the kind of thing it is,
-/// and an experience is the same kind of thing wherever it is stored. Qualifying them per owner would
-/// mean a value copied from a profile into a generated CV could not be decrypted in its new home, which
-/// is exactly what generating a CV does.
+/// <b>What is shared is the classification, NOT the AAD.</b> Each owner passes its own
+/// <c>contextPrefix</c>, so <c>candidates.Experiences.Organization</c> seals under
+/// "CandidateProfile.Experience.Organization" while the resume's column keeps "Experience.Organization".
+/// That is the whole point of the AAD: it decides which column an envelope may decrypt in, and one
+/// shared string across two tables would let a ciphertext be moved between them at the DATABASE level
+/// and still open — the move <c>SchemaRoundTripTests</c> executes and asserts fails for the two
+/// recommendation tables. Copying an entry from a profile into a generated CV is unaffected, because
+/// that copy happens in memory: the converter decrypts under the source column's context and re-encrypts
+/// under the destination's.
+/// </para>
+/// <para>
+/// <b>The resume's prefix is empty, and that is history rather than taste.</b> Its contexts were written
+/// unqualified and are on disk in every row already encrypted, so qualifying them now would make every
+/// existing resume fail to decrypt. A prefix is exactly the thing that cannot be changed after the first
+/// write; new owners get one, and the first one does not.
 /// </para>
 /// </remarks>
-internal sealed class CvItemCollections(IFieldEncryptor encryptor)
+internal sealed class CvItemCollections(IFieldEncryptor encryptor, string contextPrefix)
 {
     private readonly IFieldEncryptor _encryptor = encryptor;
+    private readonly string _contextPrefix = contextPrefix;
+
+    /// <summary>The AAD for one column: this owner's prefix, then the item path.</summary>
+    private string Aad(string columnPath) => _contextPrefix + columnPath;
 
     public void Experiences<TOwner>(OwnedNavigationBuilder<TOwner, Experience> experience, string schema, string foreignKey)
         where TOwner : class
@@ -57,18 +71,18 @@ internal sealed class CvItemCollections(IFieldEncryptor encryptor)
         // than most direct identifiers do.
         experience.Property(entry => entry.Organization)
             .IsRequired()
-            .IsEncryptedOrganizationName(_encryptor, "Experience.Organization");
+            .IsEncryptedOrganizationName(_encryptor, Aad("Experience.Organization"));
 
         experience.Property(entry => entry.Position)
             .IsRequired()
-            .IsEncryptedText(_encryptor, "Experience.Position");
+            .IsEncryptedText(_encryptor, Aad("Experience.Position"));
 
         experience.Property(entry => entry.Summary)
-            .IsEncryptedText(_encryptor, "Experience.Summary");
+            .IsEncryptedText(_encryptor, Aad("Experience.Summary"));
 
         experience.Property(entry => entry.Highlights)
             .IsRequired()
-            .IsEncryptedStringList(_encryptor, "Experience.Highlights");
+            .IsEncryptedStringList(_encryptor, Aad("Experience.Highlights"));
 
         // PLAINTEXT: tenure length is what "years of experience" scoring is computed from.
         experience.Property(entry => entry.Period).IsRequired();
@@ -83,16 +97,16 @@ internal sealed class CvItemCollections(IFieldEncryptor encryptor)
         // the kind of thing a candidate would never expect to be readable in a dump.
         education.Property(entry => entry.Institution)
             .IsRequired()
-            .IsEncryptedOrganizationName(_encryptor, "Education.Institution");
+            .IsEncryptedOrganizationName(_encryptor, Aad("Education.Institution"));
 
         education.Property(entry => entry.Degree)
-            .IsEncryptedText(_encryptor, "Education.Degree");
+            .IsEncryptedText(_encryptor, Aad("Education.Degree"));
 
         education.Property(entry => entry.FieldOfStudy)
-            .IsEncryptedText(_encryptor, "Education.FieldOfStudy");
+            .IsEncryptedText(_encryptor, Aad("Education.FieldOfStudy"));
 
         education.Property(entry => entry.Grade)
-            .IsEncryptedText(_encryptor, "Education.Grade");
+            .IsEncryptedText(_encryptor, Aad("Education.Grade"));
 
         education.Property(entry => entry.Period).IsRequired();
 
@@ -105,6 +119,9 @@ internal sealed class CvItemCollections(IFieldEncryptor encryptor)
     // Wholly PLAINTEXT, and deliberately so. "Which skills at which level for how long" is the
     // corpus every match score is computed against and the only table internal analytics can group
     // by. A skill name is a fact about a technology, not about a person.
+    //
+    // STATIC, and that is the evidence rather than a style choice: a method that encrypts nothing needs
+    // no encryptor and no AAD prefix, so the signature itself says this collection is readable.
     public static void Skills<TOwner>(OwnedNavigationBuilder<TOwner, Skill> skill, string schema, string foreignKey)
         where TOwner : class
     {
@@ -132,20 +149,20 @@ internal sealed class CvItemCollections(IFieldEncryptor encryptor)
         // account. The description and highlights are free text the candidate wrote.
         project.Property(entry => entry.Name)
             .IsRequired()
-            .IsEncryptedText(_encryptor, "Project.Name");
+            .IsEncryptedText(_encryptor, Aad("Project.Name"));
 
         project.Property(entry => entry.Description)
-            .IsEncryptedText(_encryptor, "Project.Description");
+            .IsEncryptedText(_encryptor, Aad("Project.Description"));
 
         project.Property(entry => entry.RepositoryUrl)
-            .IsEncryptedUrl(_encryptor, "Project.RepositoryUrl");
+            .IsEncryptedUrl(_encryptor, Aad("Project.RepositoryUrl"));
 
         project.Property(entry => entry.LiveDemoUrl)
-            .IsEncryptedUrl(_encryptor, "Project.LiveDemoUrl");
+            .IsEncryptedUrl(_encryptor, Aad("Project.LiveDemoUrl"));
 
         project.Property(entry => entry.Highlights)
             .IsRequired()
-            .IsEncryptedStringList(_encryptor, "Project.Highlights");
+            .IsEncryptedStringList(_encryptor, Aad("Project.Highlights"));
 
         // PLAINTEXT: the technology list is scoring input, exactly like Skills. It says what was
         // used, not who used it.
@@ -165,17 +182,17 @@ internal sealed class CvItemCollections(IFieldEncryptor encryptor)
         // the issuer's site.
         certificate.Property(entry => entry.Name)
             .IsRequired()
-            .IsEncryptedText(_encryptor, "Certificate.Name");
+            .IsEncryptedText(_encryptor, Aad("Certificate.Name"));
 
         certificate.Property(entry => entry.Issuer)
             .IsRequired()
-            .IsEncryptedOrganizationName(_encryptor, "Certificate.Issuer");
+            .IsEncryptedOrganizationName(_encryptor, Aad("Certificate.Issuer"));
 
         certificate.Property(entry => entry.CredentialId)
-            .IsEncryptedText(_encryptor, "Certificate.CredentialId");
+            .IsEncryptedText(_encryptor, Aad("Certificate.CredentialId"));
 
         certificate.Property(entry => entry.CredentialUrl)
-            .IsEncryptedUrl(_encryptor, "Certificate.CredentialUrl");
+            .IsEncryptedUrl(_encryptor, Aad("Certificate.CredentialUrl"));
 
         certificate.Property(entry => entry.ValidityPeriod);
     }
@@ -217,7 +234,7 @@ internal sealed class CvItemCollections(IFieldEncryptor encryptor)
         // guessed cap truncates an AES-GCM envelope, and a truncated envelope destroys the row
         // rather than the tail of a string: the tag lives in the last 16 bytes.
         language.Property(entry => entry.Fluency)
-            .IsEncryptedText(_encryptor, "Language.Fluency");
+            .IsEncryptedText(_encryptor, Aad("Language.Fluency"));
 
         // Level is the column the engine reads; Fluency stays beside it as free text for display
         // and is never parsed into it. See the comment on Language.Level for why that direction
@@ -237,13 +254,13 @@ internal sealed class CvItemCollections(IFieldEncryptor encryptor)
         // CONFIDENTIAL: an award title and its awarder are a public record naming the recipient.
         award.Property(entry => entry.Title)
             .IsRequired()
-            .IsEncryptedText(_encryptor, "Award.Title");
+            .IsEncryptedText(_encryptor, Aad("Award.Title"));
 
         award.Property(entry => entry.Awarder)
-            .IsEncryptedOrganizationName(_encryptor, "Award.Awarder");
+            .IsEncryptedOrganizationName(_encryptor, Aad("Award.Awarder"));
 
         award.Property(entry => entry.Summary)
-            .IsEncryptedText(_encryptor, "Award.Summary");
+            .IsEncryptedText(_encryptor, Aad("Award.Summary"));
 
         award.Property(entry => entry.Date);
     }
@@ -256,16 +273,16 @@ internal sealed class CvItemCollections(IFieldEncryptor encryptor)
         // CONFIDENTIAL: a publication title plus a URL is a byline, which is a name.
         publication.Property(entry => entry.Title)
             .IsRequired()
-            .IsEncryptedText(_encryptor, "Publication.Title");
+            .IsEncryptedText(_encryptor, Aad("Publication.Title"));
 
         publication.Property(entry => entry.Publisher)
-            .IsEncryptedOrganizationName(_encryptor, "Publication.Publisher");
+            .IsEncryptedOrganizationName(_encryptor, Aad("Publication.Publisher"));
 
         publication.Property(entry => entry.Url)
-            .IsEncryptedUrl(_encryptor, "Publication.Url");
+            .IsEncryptedUrl(_encryptor, Aad("Publication.Url"));
 
         publication.Property(entry => entry.Summary)
-            .IsEncryptedText(_encryptor, "Publication.Summary");
+            .IsEncryptedText(_encryptor, Aad("Publication.Summary"));
 
         publication.Property(entry => entry.ReleaseDate);
     }
@@ -280,11 +297,11 @@ internal sealed class CvItemCollections(IFieldEncryptor encryptor)
         // special-category material that must never sit in a queryable column.
         interest.Property(entry => entry.Name)
             .IsRequired()
-            .IsEncryptedText(_encryptor, "Interest.Name");
+            .IsEncryptedText(_encryptor, Aad("Interest.Name"));
 
         interest.Property(entry => entry.Keywords)
             .IsRequired()
-            .IsEncryptedStringList(_encryptor, "Interest.Keywords");
+            .IsEncryptedStringList(_encryptor, Aad("Interest.Keywords"));
     }
 
     public void References<TOwner>(OwnedNavigationBuilder<TOwner, Reference> reference, string schema, string foreignKey)
@@ -297,22 +314,22 @@ internal sealed class CvItemCollections(IFieldEncryptor encryptor)
         // whole row is sealed without exception.
         reference.Property(entry => entry.Name)
             .IsRequired()
-            .IsEncryptedText(_encryptor, "Reference.Name");
+            .IsEncryptedText(_encryptor, Aad("Reference.Name"));
 
         reference.Property(entry => entry.Position)
-            .IsEncryptedText(_encryptor, "Reference.Position");
+            .IsEncryptedText(_encryptor, Aad("Reference.Position"));
 
         reference.Property(entry => entry.Company)
-            .IsEncryptedOrganizationName(_encryptor, "Reference.Company");
+            .IsEncryptedOrganizationName(_encryptor, Aad("Reference.Company"));
 
         reference.Property(entry => entry.Email)
-            .IsEncryptedEmail(_encryptor, "Reference.Email");
+            .IsEncryptedEmail(_encryptor, Aad("Reference.Email"));
 
         reference.Property(entry => entry.PhoneNumber)
-            .IsEncryptedPhoneNumber(_encryptor, "Reference.PhoneNumber");
+            .IsEncryptedPhoneNumber(_encryptor, Aad("Reference.PhoneNumber"));
 
         reference.Property(entry => entry.ReferenceText)
-            .IsEncryptedText(_encryptor, "Reference.ReferenceText");
+            .IsEncryptedText(_encryptor, Aad("Reference.ReferenceText"));
     }
 
     /// <summary>The child-table shape every one of these collections shares.</summary>
