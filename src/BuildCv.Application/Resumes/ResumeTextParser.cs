@@ -489,6 +489,25 @@ public static class ResumeTextParser
 
             var trimmedContext = context.Count > 2 ? context.GetRange(context.Count - 2, 2) : context;
 
+            // THE SAME-LINE LAYOUT, and it is the common one rather than an edge case. Real CVs put the
+            // role, the employer and the period on ONE line with the period pushed to the right margin:
+            //
+            //     Backend Engineer — Shoppipai, Independent Development – Cali, Colombia   Dec 2025 – present
+            //
+            // Looking backwards finds nothing here, because the context was never on a line of its own.
+            // Measured against our user's actual CV: every one of its entries is this shape, and every one
+            // arrived with an empty employer and an empty role — the "Value is required" pair on the review
+            // screen that prompted this work. Dropping those as orphans, which the guard below does, would
+            // have thrown the whole work history away instead of showing it half-read.
+            //
+            // CvDateParser.WithoutDates does the stripping, so the grammar of a date stays in one file.
+            if (trimmedContext.Count == 0)
+            {
+                var sameLine = CvDateParser.WithoutDates(body[i]);
+                if (sameLine.Length > 0)
+                    trimmedContext = [sameLine];
+            }
+
             // THE DATE-FIRST LAYOUT, which looking backwards alone cannot read. Plenty of CVs put the
             // period above the role:
             //
