@@ -268,26 +268,52 @@ public static class ResumeTextParser
     }
 
     // "City, Country" / "Madrid, España": one comma, letters and spaces either side, no digits, no @.
+    /// <summary>
+    /// The candidate's location, read from the header.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Each pipe-separated segment is tested on its own</b>, because the modern one-line header puts
+    /// everything on one row:
+    /// </para>
+    /// <code>
+    /// Cali, Valle del Cauca, Colombia | hi@cristianarellano.com | 310 4580645
+    /// </code>
+    /// <para>
+    /// Tested whole, that line is disqualified by the first guard it meets — it contains an <c>@</c>, and
+    /// digits, and a URL-shaped run — so the location was simply not extracted. Measured on a real CV,
+    /// where it also cost the phone its country hint and therefore its suggestion: two fields the
+    /// candidate had to fill because a third one was read as a single string.
+    /// </para>
+    /// <para>
+    /// Two or three comma parts, not exactly two. "Cali, Colombia" and "Cali, Valle del Cauca, Colombia"
+    /// are both ordinary, and a rule that admits only the shorter one silently prefers CVs written the
+    /// way it expects.
+    /// </para>
+    /// </remarks>
     private static string? FirstLocation(IReadOnlyList<string> header)
     {
         foreach (var raw in header)
         {
-            var line = raw.Trim();
-            if (line.Length is 0 or > 60 || line.Contains('@') || line.Any(char.IsDigit) || Url.IsMatch(line))
-                continue;
-
-            var parts = line.Split(',');
-            if (parts.Length != 2)
-                continue;
-
-            bool SideIsPlace(string side)
+            foreach (var segment in raw.Split('|', '·', '•'))
             {
-                var words = side.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
-                return words.Length is >= 1 and <= 3 && words.All(w => w.All(c => char.IsLetter(c) || c is '-'));
-            }
+                var line = segment.Trim();
+                if (line.Length is 0 or > 60 || line.Contains('@') || line.Any(char.IsDigit) || Url.IsMatch(line))
+                    continue;
 
-            if (SideIsPlace(parts[0]) && SideIsPlace(parts[1]))
-                return line;
+                var parts = line.Split(',');
+                if (parts.Length is < 2 or > 3)
+                    continue;
+
+                bool SideIsPlace(string side)
+                {
+                    var words = side.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                    return words.Length is >= 1 and <= 3 && words.All(w => w.All(c => char.IsLetter(c) || c is '-'));
+                }
+
+                if (parts.All(SideIsPlace))
+                    return line;
+            }
         }
 
         return null;
@@ -535,17 +561,58 @@ public static class ResumeTextParser
             // alone and would swallow an indented job title. A highlight has to carry an actual marker.
             var highlights = new List<string?>();
             var k = (titleAhead >= 0 ? titleAhead : i) + 1;
-            for (; k < body.Count && BulletLine.IsMatch(body[k]) && CvDateParser.FindRange(body[k]) is null; k++)
+            for (; k < body.Count && CvDateParser.FindRange(body[k]) is null; k++)
             {
-                // Past the cap the line is still CONSUMED, just not kept. Stopping the loop instead would
-                // hand the 51st bullet to the next entry as its job title, which is the exact corruption
-                // this block exists to prevent.
-                if (highlights.Count >= ResumeDraftLimits.TextItems)
-                    continue;
+                if (BulletLine.IsMatch(body[k]))
+                {
+                    // Past the cap the line is still CONSUMED, just not kept. Stopping the loop instead
+                    // would hand the 51st bullet to the next entry as its job title, which is the exact
+                    // corruption this block exists to prevent.
+                    if (highlights.Count >= ResumeDraftLimits.TextItems)
+                        continue;
 
-                var text = LeadingBullet.Replace(body[k], string.Empty).Trim();
-                if (text.Length > 0)
-                    highlights.Add(text);
+                    var text = LeadingBullet.Replace(body[k], string.Empty).Trim();
+                    if (text.Length > 0)
+                        highlights.Add(text);
+
+                    continue;
+                }
+
+                // A BULLET THAT WRAPPED, WHICH IS MOST OF THEM. A PDF breaks a long achievement across
+                // two lines and only the first carries the marker:
+                //
+                //     • Resolved L2/L3 escalations … coming from first-line support, against
+                //       aggressive SLAs.
+                //
+                // The old loop stopped at the second line, so it stayed unconsumed and became CONTEXT for
+                // the next dated entry — which is why entries two onward arrived with a fragment of the
+                // previous job's achievements as their title and employer. Measured on a real CV: five of
+                // six entries were wrong this way, and they read like data rather than like blanks, which
+                // is the more dangerous failure of the two.
+                //
+                // INDENTATION is what separates a continuation from the next entry: a wrapped line is
+                // indented under its bullet, while the next role starts at the margin. Requiring an
+                // existing highlight as well means a stray indented line before any bullet is still left
+                // alone for the context reader.
+                if (highlights.Count > 0 && body[k].Length > 0 && char.IsWhiteSpace(body[k][0]))
+                {
+                    var continuation = body[k].Trim();
+                    if (continuation.Length == 0)
+                        continue;
+
+                    var previous = highlights[^1] ?? string.Empty;
+
+                    // A hyphen at the break is the PDF's word-splitting, not the candidate's punctuation:
+                    // "Develop-" + "ment" is one word and joining with a space would invent two.
+                    highlights[^1] = previous.EndsWith('-')
+                        ? previous[..^1] + continuation
+                        : $"{previous} {continuation}";
+
+                    continue;
+                }
+
+                // Neither a bullet nor a continuation: it names whatever comes next, so leave it.
+                break;
             }
 
             // A DATE WITH NOTHING NAMING IT IS NOT AN ENTRY. Nothing behind it, nothing usable ahead of
