@@ -35,6 +35,32 @@ nothing it does decrypts anything. So a key problem presents to your monitoring 
 service*, while every candidate gets an error on every page — and the only signal is the log line naming
 `AesGcmFieldEncryptor` and a failed authentication tag.
 
+#### On Azure they are recoverable, and knowing that changes what you actually guard
+
+`deploy/azure.sh` prints the generated keys once and says to save them. It also **stores them as
+Container Apps secrets**, so on this deployment they can be read back:
+
+```bash
+az containerapp secret show -g buildcv-rg -n buildcv-api --secret-name enc   --query value -o tsv
+az containerapp secret show -g buildcv-rg -n buildcv-api --secret-name blind --query value -o tsv
+```
+
+Verified retrievable rather than assumed — checked by length and digest rather than by printing, since
+that command's output is a production encryption key and a terminal is a log.
+
+**This is a correction to the calibration, not a licence to stop keeping a copy.** What it changes is
+*which* event is catastrophic. Closing the terminal is not; the real single points of failure are:
+
+- **`az group delete`**, which destroys the secrets and the database in one command, and is the
+  suggested teardown at the end of `deploy/azure.sh`.
+- **Losing the subscription** — an expired card on a personal account reaches the same place.
+- **Migrating off Azure**, where the keys must travel *separately* from the data and nothing carries
+  them automatically.
+
+So keep the offline copy for those three, not against forgetfulness. And note the asymmetry that makes
+this worth stating at all: a database backup and a key backup taken together are one artifact holding
+both halves, which is the thing the encryption exists to prevent. Store them apart.
+
 Two consequences worth acting on:
 
 - **Alert on the 5xx rate, not only on the health probes.** A deployment watching liveness and readiness
