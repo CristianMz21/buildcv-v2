@@ -54,14 +54,32 @@ fi
 
 # Every request carries Origin: the BFF refuses cross-site writes, so a probe without it measures that
 # guard rather than the thing it was aiming at.
-req() { curl -s "${RESOLVE[@]}" -H "Origin: $SITE" "$@"; }
+# BOUNDED, because an unbounded curl turns "the site is hanging" into "this script is hanging" -- and on
+# a scheduled runner that is a job killed at its own timeout with no per-check output, which reads as
+# infrastructure trouble rather than as the deployment being unreachable. 10s to connect and 20s in
+# total is generous against a cold start on this tier and still fails inside a minute.
+req() { curl -s --connect-timeout 10 --max-time 20 "${RESOLVE[@]}" -H "Origin: $SITE" "$@"; }
 code() { req -o /dev/null -w '%{http_code}' "$@"; }
 
 head_ "1. The front door, through the edge"
 
-STATUS=$(code "$SITE/")
+# RETRIED, because the first request after a release is a cold one. Measured: run straight after
+# `deploy/release.sh` replaced the revision, this answered 000 -- curl's code for a connection that
+# never completed -- and the very next request succeeded. A single bounded attempt turns "waking up"
+# into "down", which is the false alarm most likely to get a check ignored. Three tries over ~30s
+# distinguishes a cold start from an outage; nothing real recovers on the fourth.
+STATUS=000
+for ATTEMPT in 1 2 3; do
+  STATUS=$(code "$SITE/")
+  [ "$STATUS" != "000" ] && break
+  [ "$ATTEMPT" -lt 3 ] && sleep 10
+done
+
 case "$STATUS" in
-  200|307|308) ok "$SITE answers ($STATUS)" ;;
+  200|307|308)
+    if [ "$ATTEMPT" = "1" ]; then ok "$SITE answers ($STATUS)"
+    else ok "$SITE answers ($STATUS), on attempt $ATTEMPT -- it was cold"; fi ;;
+  000) bad "$SITE did not respond after 3 attempts over ~30s" ;;
   403) bad "403 from $SITE"
        note "If this says 'RBAC: access denied' it is DNS, not the deployment: you reached the origin"
        note "directly. Install dig, or pass --resolve yourself. See docs/deployment.md 4." ;;
@@ -78,9 +96,15 @@ fi
 head_ "2. The origin hostname must refuse"
 # Not decoration: after the DNS moved to the CDN this hostname still answered 200, and every edge
 # control was one hostname away from being bypassed.
-ORIGIN_STATUS=$(curl -s -o /dev/null -w '%{http_code}' "https://$ORIGIN_HOST/" 2>/dev/null)
-if [ "$ORIGIN_STATUS" = "403" ]; then ok "$ORIGIN_HOST refuses (403)"
-else bad "$ORIGIN_HOST answered $ORIGIN_STATUS -- the CDN can be bypassed"; fi
+ORIGIN_STATUS=$(curl -s --connect-timeout 10 --max-time 20 -o /dev/null -w '%{http_code}' "https://$ORIGIN_HOST/" 2>/dev/null)
+case "$ORIGIN_STATUS" in
+  403) ok "$ORIGIN_HOST refuses (403)" ;;
+  # curl reports 000 for a connection it never completed. That is not the same as a refusal and must
+  # not be counted as one -- a host that times out today may answer tomorrow, and reading a timeout as
+  # "locked down" is how a bypass survives a check that looks green.
+  000) huh "$ORIGIN_HOST did not respond; whether it refuses is unknown" ;;
+  *)   bad "$ORIGIN_HOST answered $ORIGIN_STATUS -- the CDN can be bypassed" ;;
+esac
 
 head_ "3. The product, driven rather than probed"
 EMAIL="verify-$(od -An -N6 -tx1 /dev/urandom | tr -d ' ')@example.com"

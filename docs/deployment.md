@@ -522,6 +522,36 @@ while looking exactly like one they did. A repeated header is refused for a subt
 renders two headers of one hop identically to one header of two, and counting hops is the entire point
 of the line.
 
+### Releasing: `deploy/release.sh`
+
+```bash
+./deploy/release.sh                  # whatever main is at right now
+./deploy/release.sh <40-char-sha>    # a specific build
+```
+
+**Releasing used to be one command for one of the two things that have to move together** — the
+`az containerapp update ... --image` below — and that is exactly how the migrator ended up two
+deployments behind the API. `verify.sh` catches that drift afterwards; this makes it impossible.
+
+Five steps, and the order is the point:
+
+1. **Both images are confirmed anonymously pullable** — before anything is touched, because a missing
+   image otherwise surfaces as a revision stuck in `Activating`, or as a migration job that never starts
+   after the old one has already been repointed.
+2. Migrator repointed.
+3. **The schema is applied and waited on.** Same order `docker-compose.app.yml` enforces with
+   `service_completed_successfully`: a job runs to completion *before* the process serving traffic is
+   replaced. Backwards, the new API serves against a schema it expects and does not have — surfacing as
+   runtime errors on whichever request touches the new column first, not as anything the deploy reports.
+   **A failed migration stops here and does not touch the API**, so the running deployment is unchanged.
+4. API updated with `--image` (never `--yaml`), then waited on until the revision is `Running`. A
+   revision that fails to start is not an outage — the previous one keeps serving.
+5. **`verify.sh` runs**, and its exit code becomes the release's. A release is the update *plus*
+   evidence.
+
+It refuses a tag that is not a 40-character SHA, and refuses a SHA with no published image — both
+before mutating anything, because every check is cheaper before the change than after it.
+
 ### Verifying the deployment: `deploy/verify.sh`
 
 ```bash
