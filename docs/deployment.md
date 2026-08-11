@@ -435,6 +435,45 @@ The operational rule: **re-run the diagnostic after anything is added in front o
 Nothing fails, no probe turns red, and the only visible symptom is that a throttle everyone shares stops
 being a throttle anyone notices.
 
+#### The same lesson in the other direction: a CDN rewrites *responses* too
+
+The request rewrite above has a mirror image, and it is easier to miss because the code looks correct
+and the tests pass. Measured through the proxied hostname:
+
+```
+strict-transport-security: max-age=15552000
+```
+
+That is the **zone's** value, not any application's. Whatever an origin sends for a header the CDN
+manages is replaced on the way out, so **a security header asserted in code is not a security header
+delivered to a browser** once anything sits in front. Assert the ones you care about *through the edge*,
+against the hostname a user actually types — a test that reads the origin's own response certifies a
+value that never leaves the building.
+
+**Not every header is rewritten, and which ones are is a per-edge fact.** Read off the same response:
+
+| header | delivered to the browser |
+|---|---|
+| `strict-transport-security` | **replaced** by the zone's `max-age=15552000` |
+| `content-security-policy` | passed through |
+| `x-content-type-options`, `referrer-policy`, `x-frame-options`, `permissions-policy` | passed through |
+
+So the rule is not "a CDN breaks your headers" but "a CDN owns the ones it manages". The only honest way
+to know which is to fetch through the edge and read them.
+
+**And the ones a browser receives are not this API's.** The CSP above is `default-src 'self'; script-src
+'self' 'unsafe-inline'; …` — the web tier's. `SecurityHeadersMiddleware` sends `default-src 'none';
+frame-ancestors 'none'`, which appears nowhere in that response, because the API is on **internal
+ingress** and the only client that ever reads its headers is the BFF: server-side code that implements
+no CSP, no HSTS and no framing policy.
+
+That makes this API's whole security-header surface — `SecurityHeadersMiddleware` and `UseHsts()` alike
+— **inert for browsers in the deployed topology**. Topology, not a defect, and worth keeping for the
+same reason the cookie path is kept: a direct browser client would meet it. But do not tune any of it
+expecting an effect on users, and do not read an assertion about it as an assertion about the product.
+Nothing here configures HSTS either, so it carries the ASP.NET Core defaults (30 days, no
+`includeSubDomains`) — which reach nobody.
+
 #### How to check it yourself, instead of taking the paragraph above on trust
 
 The measurement above is dated the moment anything in the chain changes — a proxy added, a CDN put in
