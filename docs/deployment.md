@@ -368,8 +368,12 @@ same minute. Three facts, all of them load-bearing:
   half that was silently failing before, and it is what makes the resolved address trustworthy at all.
 - **The resolved peer is the client**, not the web container. `RateLimitPartitions.ClientKey` reads the
   same `Connection.RemoteIpAddress`, so two clients now land in two partitions.
-- **`unconsumed` is `<absent>`**, so the chain held exactly two entries and `ForwardLimit: 2` consumed
-  both. That number stops being a guess for this topology.
+- **`unconsumed` is `<absent>`**, so the chain was **no longer than** `ForwardLimit` and was consumed
+  whole. That makes `2` demonstrably *sufficient* here. It does **not** make it exact: a one-entry chain
+  would leave the header equally empty and resolve to the same address, and this diagnostic reports what
+  the middleware *left* rather than what *arrived*, so it cannot tell those apart. What is established
+  is that nothing was left over — which is the property that matters, because a leftover entry is where
+  a caller's forged value would be sitting.
 
 **A caller cannot pick its own partition, and that was tested rather than argued.** Three forged chains
 — `9.9.9.9`, `8.8.8.8, 9.9.9.9`, and `1.1.1.1, 2.2.2.2, 3.3.3.3` — all resolved to the same real address,
@@ -412,8 +416,8 @@ before the CDN   peer=104.28.166.241   ← the real client
 after the CDN    peer=104.22.86.40     ← Cloudflare's edge
 ```
 
-Both readings show **exactly two entries, fully consumed**. The chain did not get longer, so raising
-`ForwardLimit` recovers nothing — there is no third entry to unwind to.
+Both readings show the chain **consumed whole, with nothing left over**. It did not outgrow
+`ForwardLimit`, so raising that number recovers nothing — there is no leftover entry to unwind to.
 
 That is the overwrite showing its other face. **Azure Container Apps' external ingress replaces
 `X-Forwarded-For` with the address it sees.** Before the CDN it saw the client, so the header carried
@@ -526,7 +530,7 @@ SITE=https://staging.example.com ./deploy/verify.sh  # somewhere else
 SKIP_AZURE=1 ./deploy/verify.sh                      # HTTP checks only, no az login
 ```
 
-Thirteen checks, and **not one of them reads a health status**. `healthState` is a small closed value
+Fifteen checks, and **not one of them reads a health status**. `healthState` is a small closed value
 that a working app and an unprobed one produce identically, and a revision reports `Running` with no
 probes declared at all — so every check either drives the product or reads a concrete configured value.
 Each one corresponds to something that actually went wrong here: a dropped environment variable, a
