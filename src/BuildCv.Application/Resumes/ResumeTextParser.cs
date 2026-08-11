@@ -171,11 +171,19 @@ public static class ResumeTextParser
         // Email, phone and URL are unambiguous patterns searched over the WHOLE document, because a CV
         // may put them under a "Contacto" heading rather than in the unlabelled header. Name and location
         // are POSITIONAL guesses and only read from the header, where the candidate's own details sit.
+        // Read before the phone is recorded, because it is the only evidence in the document that can
+        // turn a national number into a dialable one. Recorded in its original position below so the
+        // provenance list keeps the order a review screen renders.
+        var locationValue = FirstLocation(header);
+
         var email = Record(fields, "contact.email", FirstEmail(fullText), FieldConfidence.High);
-        var phone = Record(fields, "contact.phoneNumber", FirstPhone(fullText), FieldConfidence.Medium);
-        var website = Record(fields, "contact.website", FirstUrl(fullText), FieldConfidence.Medium);
+        var phone = Record(
+            fields, "contact.phoneNumber", FirstPhone(fullText), FieldConfidence.Medium,
+            value => PhoneSuggestion(value, locationValue));
+        var website = Record(
+            fields, "contact.website", FirstUrl(fullText), FieldConfidence.Medium, WebsiteSuggestion);
         var fullName = Record(fields, "contact.fullName", FirstName(header), FieldConfidence.Medium);
-        var location = Record(fields, "contact.location", FirstLocation(header), FieldConfidence.Low);
+        var location = Record(fields, "contact.location", locationValue, FieldConfidence.Low);
 
         var summaryText = summary.Count == 0
             ? null
@@ -377,9 +385,25 @@ public static class ResumeTextParser
             RecordContext(fields, $"{path}.position", position);
             RecordContext(fields, $"{path}.organization", organization);
             var (start, end) = RecordRange(fields, path, range);
-            // Type is never guessed: no CV states "Professional" vs "Volunteer" in a machine-readable way,
-            // and assuming one inflates or deflates the experience the candidate reviews.
-            fields.Add(new FieldProvenance($"{path}.type", FieldConfidence.NotExtracted));
+            // PROFESSIONAL, INFERRED FROM WHERE THE ENTRY WAS FOUND rather than from its words. This used
+            // to be left null on the reasoning that no CV states "Professional" vs "Volunteer" in a
+            // machine-readable way — true of the TEXT, and it missed that the section heading already
+            // said it. These entries come from the body of a heading classified as Experience.
+            //
+            // Leaving it null was not neutral, it was expensive: `ResumeDraftValidator` requires the type,
+            // so every imported entry arrived as a blocking error. Measured on a real import: nine
+            // experiences, nine mandatory clicks on a two-value enum, before anything could be created.
+            //
+            // MEDIUM, the same confidence every other positional read here carries, so the review screen
+            // marks it CHECK and the candidate sees a value they can correct rather than a hole they must
+            // fill. The validator stays strict — the draft now states the type, so nothing is defaulted
+            // behind anybody's back.
+            //
+            // A volunteering section is a different matter and is NOT covered: there is no
+            // SectionKind.Volunteer, so those bodies are skipped entirely today and the data is lost.
+            // That is a gap worth closing, and closing it is what would make this inference wrong.
+            fields.Add(new FieldProvenance(
+                $"{path}.type", FieldConfidence.Medium, nameof(ExperienceType.Professional)));
             // Medium, on the same reasoning as every other positional read here: the TEXT is verbatim, but
             // that these bullets belong to THIS role is inferred from them sitting under its date line.
             // Absent and flagged when the document listed none, never silently missing.
@@ -388,7 +412,8 @@ public static class ResumeTextParser
                 : new FieldProvenance($"{path}.highlights", FieldConfidence.NotExtracted));
 
             experiences.Add(new ExperienceDraft(
-                Type: null, Organization: organization, Position: position, Start: start, End: end,
+                Type: nameof(ExperienceType.Professional),
+                Organization: organization, Position: position, Start: start, End: end,
                 Highlights: highlights.Count == 0 ? null : highlights));
         }
 
@@ -464,10 +489,33 @@ public static class ResumeTextParser
 
             var trimmedContext = context.Count > 2 ? context.GetRange(context.Count - 2, 2) : context;
 
+            // THE DATE-FIRST LAYOUT, which looking backwards alone cannot read. Plenty of CVs put the
+            // period above the role:
+            //
+            //     2019 - 2021
+            //     Senior Developer, Globant
+            //
+            // Searching only behind finds nothing, and the title then becomes context for the NEXT date
+            // line — so one such block corrupts two entries: this one arrives nameless and the next one
+            // wears the wrong job. Taking the line ahead when there is nothing behind reads both layouts,
+            // and it is consumed below so it cannot be claimed twice.
+            var titleAhead = -1;
+            if (trimmedContext.Count == 0 && i + 1 < body.Count
+                && !BulletLine.IsMatch(body[i + 1])
+                && CvDateParser.FindRange(body[i + 1]) is null)
+            {
+                var ahead = LeadingBullet.Replace(body[i + 1], string.Empty).Trim();
+                if (ahead.Length > 0)
+                {
+                    trimmedContext = [ahead];
+                    titleAhead = i + 1;
+                }
+            }
+
             // BulletLine, not LeadingBullet: the latter is `^[\s...]+`, so it matches on indentation
             // alone and would swallow an indented job title. A highlight has to carry an actual marker.
             var highlights = new List<string?>();
-            var k = i + 1;
+            var k = (titleAhead >= 0 ? titleAhead : i) + 1;
             for (; k < body.Count && BulletLine.IsMatch(body[k]) && CvDateParser.FindRange(body[k]) is null; k++)
             {
                 // Past the cap the line is still CONSUMED, just not kept. Stopping the loop instead would
@@ -479,6 +527,21 @@ public static class ResumeTextParser
                 var text = LeadingBullet.Replace(body[k], string.Empty).Trim();
                 if (text.Length > 0)
                     highlights.Add(text);
+            }
+
+            // A DATE WITH NOTHING NAMING IT IS NOT AN ENTRY. Nothing behind it, nothing usable ahead of
+            // it — so there is no role, no employer, no degree, and no way for the candidate to fix it
+            // either: the review screen would show two "Value is required" fields with nothing to put in
+            // them, on a row they never wrote. Measured on a real import: one such row, blocking a
+            // submit, beside nine genuine entries.
+            //
+            // It is still CONSUMED (lastConsumed moves), so its bullets cannot drift onto the next entry
+            // and become somebody else's achievements. Dropping without consuming would trade a visible
+            // junk row for an invisible corruption, which is the worse of the two.
+            if (trimmedContext.Count == 0)
+            {
+                lastConsumed = k - 1;
+                continue;
             }
 
             yield return (trimmedContext, range, highlights);
@@ -570,13 +633,76 @@ public static class ResumeTextParser
 
     // ------------------------------------------------------------------ provenance helpers
 
+    /// <param name="suggestion">
+    /// Given the extracted value, a corrected one to offer as one click — or null when there is nothing
+    /// safe to propose. Consulted only when a value was actually extracted: a field the parser never
+    /// found has nothing to correct, and proposing a value there would be inventing one.
+    /// </param>
     private static string? Record(
-        List<FieldProvenance> fields, string path, string? value, FieldConfidence confidence)
+        List<FieldProvenance> fields,
+        string path,
+        string? value,
+        FieldConfidence confidence,
+        Func<string, string?>? suggestion = null)
     {
         fields.Add(value is null
             ? new FieldProvenance(path, FieldConfidence.NotExtracted)
-            : new FieldProvenance(path, confidence, value));
+            : new FieldProvenance(path, confidence, value, suggestion?.Invoke(value)));
         return value;
+    }
+
+    /// <summary>
+    /// Proposes an international form for a phone number that was written nationally, or nothing.
+    /// </summary>
+    /// <remarks>
+    /// Nothing is proposed without a country named in the candidate's own location: a prefix guessed
+    /// from anywhere else would be a fact this code invented, and a plausible one accepted without
+    /// reading is exactly the wrong data this product may not hold. See <see cref="PhoneCountryHints"/>.
+    /// </remarks>
+    private static string? PhoneSuggestion(string value, string? location)
+    {
+        // Already international. Nothing to correct, and re-prefixing would corrupt it.
+        if (value.TrimStart().StartsWith('+'))
+            return null;
+
+        var code = PhoneCountryHints.DialingCodeFor(location);
+        if (code is null)
+            return null;
+
+        var digits = new string(value.Where(char.IsDigit).ToArray());
+        var proposed = $"+{code}{digits}";
+
+        // Held to the same rule the Domain enforces, so a suggestion can never be a value that would be
+        // rejected the moment the candidate accepted it — which would be a worse experience than the
+        // refusal it replaces.
+        return proposed.Length is >= 8 and <= 16 && digits.Length > 0 ? proposed : null;
+    }
+
+    /// <summary>
+    /// Proposes the scheme a bare host is missing.
+    /// </summary>
+    /// <remarks>
+    /// Safe in a way the phone hint is not: this invents no fact about the candidate, it writes out in
+    /// full what they already wrote. `https` rather than `http` because a site that serves neither is
+    /// not reachable anyway, and one that serves both should be linked over the secure one.
+    /// </remarks>
+    private static string? WebsiteSuggestion(string value)
+    {
+        var trimmed = value.Trim();
+
+        if (Uri.TryCreate(trimmed, UriKind.Absolute, out var asWritten)
+            && asWritten.Scheme is "http" or "https")
+        {
+            return null;
+        }
+
+        var proposed = $"https://{trimmed}";
+        return Uri.TryCreate(proposed, UriKind.Absolute, out var uri)
+            && uri.Scheme == "https"
+            // A host with no dot is not a site — "localhost", or a stray word the URL matcher caught.
+            && uri.Host.Contains('.', StringComparison.Ordinal)
+            ? proposed
+            : null;
     }
 
     private static void RecordContext(List<FieldProvenance> fields, string path, string? value) =>

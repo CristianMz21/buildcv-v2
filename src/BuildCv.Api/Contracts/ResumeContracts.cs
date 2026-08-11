@@ -374,11 +374,25 @@ public sealed record DraftConfidenceResponse(
         confidence.Warnings);
 }
 
+/// <param name="Suggestion">
+/// A corrected value the review screen may offer as one click, or null when there is nothing safe to
+/// propose. <b>Never applied by this API</b>: the candidate accepts it and posts the result back through
+/// <c>POST /v1/resumes/import</c>, which validates exactly as strictly as it does for a hand-typed
+/// value. The machine does the typing; the person does the deciding; nothing skips validation.
+/// </param>
 public sealed record FieldConfidenceResponse(
     string Path,
     string Confidence,
-    string? SourceText)
+    string? SourceText,
+    string? Suggestion)
 {
-    public static FieldConfidenceResponse FromProvenance(FieldProvenance provenance) =>
-        new(provenance.Path, provenance.Confidence.ToString(), provenance.SourceText);
+    public static FieldConfidenceResponse FromProvenance(FieldProvenance provenance)
+    {
+        ArgumentNullException.ThrowIfNull(provenance);
+        return new(
+            provenance.Path,
+            provenance.Confidence.ToString(),
+            provenance.SourceText,
+            provenance.Suggestion);
+    }
 }

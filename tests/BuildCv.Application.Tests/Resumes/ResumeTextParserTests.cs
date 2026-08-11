@@ -292,8 +292,21 @@ public sealed class ResumeTextParserTests
         start.SourceText.Should().Be("03/95");
     }
 
+    // THE FIXTURE IS THE CASE THIS GETS WRONG, ON PURPOSE. A volunteer role listed under an EXPERIENCE
+    // heading is labelled Professional, because the inference is about WHERE the entry was found and not
+    // about what it says — and the words "Volunteer Coordinator" are exactly the sort of thing no parser
+    // should read a type out of, since "Volunteer Coordinator" at the Red Cross is frequently a paid job.
+    //
+    // This replaces Parse_ExperienceType_IsNeverGuessed, which pinned the opposite decision. That
+    // decision was not neutral: ResumeDraftValidator REQUIRES the type, so leaving it null turned every
+    // imported entry into a blocking error — nine of them on the real import that prompted this, each
+    // needing a manual click on a two-value enum before anything could be created.
+    //
+    // The trade: the candidate sees a value marked CHECK and corrects one field, instead of being forced
+    // to fill nine. Medium is what makes that honest — it is the same confidence every other positional
+    // read here carries, and it is what tells the review screen to flag rather than to hide.
     [Fact]
-    public void Parse_ExperienceType_IsNeverGuessed()
+    public void Parse_ExperienceType_IsInferredFromTheSection_EvenWhenTheWordsSayOtherwise()
     {
         var (draft, confidence) = ResumeTextParser.Parse(
             """
@@ -306,8 +319,127 @@ public sealed class ResumeTextParserTests
             15/03/2019 - 20/06/2021
             """);
 
-        draft.Experiences![0]!.Type.Should().BeNull("no CV states Professional vs Volunteer machine-readably");
-        Provenance(confidence, "experiences[0].type")!.Confidence.Should().Be(FieldConfidence.NotExtracted);
+        draft.Experiences![0]!.Type.Should().Be(
+            "Professional", "the entry was found under a heading classified as Experience");
+
+        var type = Provenance(confidence, "experiences[0].type")!;
+        type.Confidence.Should().Be(
+            FieldConfidence.Medium, "a positional inference must be flagged for review, not hidden");
+        type.SourceText.Should().Be("Professional");
+    }
+
+    // A bare host is completed, not rejected. This invents no fact about the candidate — it writes out in
+    // full what they already wrote — which is what separates it from the phone hint below.
+    [Fact]
+    public void Parse_ABareDomain_IsSuggestedWithAScheme()
+    {
+        var (_, confidence) = ResumeTextParser.Parse(
+            """
+            Sam Doe
+            sam@example.com
+            cristianarellano.com
+            """);
+
+        var website = Provenance(confidence, "contact.website")!;
+        website.SourceText.Should().Be("cristianarellano.com");
+        website.Suggestion.Should().Be("https://cristianarellano.com");
+    }
+
+    // Nothing to correct, and re-prefixing would corrupt it.
+    [Fact]
+    public void Parse_AUrlThatAlreadyHasAScheme_IsNotSuggested()
+    {
+        var (_, confidence) = ResumeTextParser.Parse(
+            """
+            Sam Doe
+            sam@example.com
+            https://cristianarellano.com
+            """);
+
+        Provenance(confidence, "contact.website")!.Suggestion.Should().BeNull();
+    }
+
+    // The country comes from the candidate's own location line. `310 4580645` is a real Colombian mobile
+    // and the ordinary way to write one; today it is REJECTED, which hands a correct reading back as an
+    // error.
+    [Fact]
+    public void Parse_ANationalPhone_IsSuggestedInInternationalForm_WhenTheLocationNamesACountry()
+    {
+        var (_, confidence) = ResumeTextParser.Parse(
+            """
+            Cristian Arellano
+            cristian@example.com
+            Bogotá, Colombia
+            310 4580645
+            """);
+
+        var phone = Provenance(confidence, "contact.phoneNumber")!;
+        phone.SourceText.Should().Be("310 4580645");
+        phone.Suggestion.Should().Be("+573104580645");
+    }
+
+    // THE LOAD-BEARING NEGATIVE. Without a country named in the document there is no evidence, and a
+    // plausible prefix accepted without reading is exactly the wrong data this product may not hold —
+    // so nothing is proposed and the candidate supplies the one thing nobody can know for them.
+    [Fact]
+    public void Parse_ANationalPhone_IsNotSuggested_WhenNoCountryIsKnown()
+    {
+        var (_, confidence) = ResumeTextParser.Parse(
+            """
+            Sam Doe
+            sam@example.com
+            310 4580645
+            """);
+
+        var phone = Provenance(confidence, "contact.phoneNumber");
+        phone!.Suggestion.Should().BeNull("no country was named, so any prefix would be invented");
+    }
+
+    // A date line with nothing naming it is not an entry. It used to become a row with an empty employer
+    // and an empty role — two "Value is required" fields on something the candidate never wrote, and
+    // could not fix because there was nothing to put in them.
+    [Fact]
+    public void Parse_ADateWithNothingNamingIt_IsNotAnEntry()
+    {
+        var (draft, _) = ResumeTextParser.Parse(
+            """
+            Sam Doe
+            sam@example.com
+
+            EXPERIENCE
+            01/2020 - 12/2020
+
+            Senior Developer
+            Globant
+            15/03/2021 - 20/06/2023
+            """);
+
+        draft.Experiences.Should().ContainSingle("the orphan date line names no role and no employer");
+        draft.Experiences![0]!.Position.Should().Be("Senior Developer");
+        draft.Experiences[0]!.Organization.Should().Be("Globant");
+    }
+
+    // THE DATE-FIRST LAYOUT, which looking backwards alone cannot read. Searching only behind finds
+    // nothing here and then steals the title as context for the NEXT date line, so one such block used to
+    // corrupt two entries at once.
+    [Fact]
+    public void Parse_ADateAboveTheRole_ReadsTheRoleBelowIt()
+    {
+        var (draft, _) = ResumeTextParser.Parse(
+            """
+            Sam Doe
+            sam@example.com
+
+            EXPERIENCE
+            15/03/2019 - 20/06/2021
+            Senior Developer, Globant
+            • Shipped the thing
+            """);
+
+        draft.Experiences.Should().ContainSingle();
+        draft.Experiences![0]!.Position.Should().Be("Senior Developer");
+        draft.Experiences[0]!.Organization.Should().Be("Globant");
+        draft.Experiences[0]!.Highlights.Should().ContainSingle().Which.Should().Be("Shipped the thing");
     }
 
     // Two columns are warned about, loudly and first, and drop the overall confidence to Low. The counter-
