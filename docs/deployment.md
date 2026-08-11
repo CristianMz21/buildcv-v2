@@ -88,6 +88,51 @@ retention policy anywhere in this repository, because backup policy is an operat
 Azure SQL, RDS and Cloud SQL all bring automated backups and point-in-time restore that a volume does
 not.
 
+#### The readiness probe keeps the database awake, and that is a bill rather than a bug
+
+`autoPauseDelay` on the serverless database is **60 minutes**, and it never fires. Measured: twelve
+consecutive hours of `cpu_percent` reporting **0.0%** — data every hour, so the database was awake and
+idle all night with no user traffic at all.
+
+The cause is this repository's own readiness probe. `/health/ready` runs every 15 seconds and calls
+`CanConnectAsync`; a connection is activity, so the idle timer never reaches 60 minutes. **Serverless
+bills per vCore-second while a database is online, not while it is working**, so a probe that exists to
+report health is also the thing keeping the meter running.
+
+The magnitude is arithmetic rather than measurement — the CLI's consumption API returns
+`billableQuantity: None` on this subscription, so read Cost Management in the portal for the real
+figure. At `minCapacity` 0.5 vCores, 24/7 is roughly **1.3M vCore-seconds a month against a 100k free
+grant**, with `freeLimitExhaustionBehavior` set to `BillOverUsage`.
+
+**Scaling the API to zero does not fix it today, and that was measured rather than assumed.** With
+`min-replicas 0` on both apps, from fully cold:
+
+```
+homepage                 200 in 32.1s
+login page               200 in  0.4s
+POST /api/auth/login     504 in 20.4s   ← failed
+POST /api/auth/login     400 in  9.6s   ← once warm
+```
+
+It does not degrade, it **breaks**: the first request that reaches the API answers 504. And the database
+was `Online` throughout — only ten minutes idle against a sixty-minute delay — so that 504 is the API's
+cold start *alone*, with no database wake in it at all. Reverted; the deployment is back to
+`min-replicas 1`, verified 15/15.
+
+**The deciding constraint is the BFF's request timeout, which is ~20s and lives in the web tier.** Until
+that is long enough to sit through a cold start (and a database resume, which is the *other* 30–60s this
+measurement never reached), scale-to-zero trades a bill for a broken first visit. Three options, none of
+them free of cost:
+
+| | Cost |
+|---|---|
+| Leave `min-replicas 1` | the bill above; the site is always fast |
+| Scale to zero **after** the BFF timeout is raised | first visit is slow — measure it again, it was never measured with the database also asleep |
+| Drop the database check from readiness | the database sleeps and the API stays warm, but the first DB-touching request still waits for the resume, so it needs the same BFF timeout |
+
+The third is the one that looks free and is not: it moves the wait from the API to the database without
+removing it.
+
 #### On the Azure deployment there IS a backup, and it has three limits worth naming
 
 Read off the live database rather than assumed:
