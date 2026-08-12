@@ -1,3 +1,4 @@
+using BuildCv.Domain.Candidates;
 using BuildCv.Domain.Common.ValueObjects;
 using BuildCv.Domain.Identity;
 using BuildCv.Domain.Jobs;
@@ -30,6 +31,7 @@ public sealed class BuildCvDbContext : DbContext
     public DbSet<Organization> Organizations => Set<Organization>();
     public DbSet<Analysis> Analyses => Set<Analysis>();
     public DbSet<ReadabilityReport> ReadabilityReports => Set<ReadabilityReport>();
+    public DbSet<CandidateProfile> CandidateProfiles => Set<CandidateProfile>();
 
     // Registered one by one instead of ApplyConfigurationsFromAssembly. Two reasons, and the first
     // is not stylistic: these configurations take a constructor dependency, and assembly scanning
@@ -53,6 +55,7 @@ public sealed class BuildCvDbContext : DbContext
         modelBuilder.ApplyConfiguration(new OrganizationConfiguration(_encryptor));
         modelBuilder.ApplyConfiguration(new AnalysisConfiguration(_encryptor));
         modelBuilder.ApplyConfiguration(new ReadabilityReportConfiguration(_encryptor));
+        modelBuilder.ApplyConfiguration(new CandidateProfileConfiguration(_encryptor));
     }
 
     // Global type-level conversions. Registering them here rather than per property is what covers
@@ -68,6 +71,7 @@ public sealed class BuildCvDbContext : DbContext
         configurationBuilder.Properties<OrganizationId>().HaveConversion<OrganizationIdConverter>();
         configurationBuilder.Properties<AnalysisId>().HaveConversion<AnalysisIdConverter>();
         configurationBuilder.Properties<ReadabilityReportId>().HaveConversion<ReadabilityReportIdConverter>();
+        configurationBuilder.Properties<CandidateProfileId>().HaveConversion<CandidateProfileIdConverter>();
 
         // Value objects whose classification is the same everywhere they appear. A DateRange is a
         // span of time and a Technology is a skill name — neither is ever confidential, so one

@@ -35,7 +35,8 @@ public sealed class ResumeImportIntegrationTests
 
         await using (var writer = _fixture.NewApplicationContext())
         {
-            var handler = new CreateResumeFromDraftHandler(TestRepositories.Resumes(writer), TestImportEvidence.Protector());
+            var handler = new CreateResumeFromDraftHandler(
+                TestRepositories.Resumes(writer), TestRepositories.CandidateProfiles(writer), TestImportEvidence.Protector());
             var result = await handler.Handle(new CreateResumeFromDraftCommand(owner, FullDraft()));
 
             result.FieldErrors.Should().BeEmpty();
@@ -70,7 +71,8 @@ public sealed class ResumeImportIntegrationTests
     public async Task Import_WithALanguageNameOverItsColumnLength_IsAFieldErrorAndNeverReachesTheDatabase()
     {
         await using var writer = _fixture.NewApplicationContext();
-        var handler = new CreateResumeFromDraftHandler(TestRepositories.Resumes(writer), TestImportEvidence.Protector());
+        var handler = new CreateResumeFromDraftHandler(
+                TestRepositories.Resumes(writer), TestRepositories.CandidateProfiles(writer), TestImportEvidence.Protector());
 
         var draft = FullDraft() with { Languages = [new LanguageDraft(new string('a', 101))] };
 
@@ -94,7 +96,8 @@ public sealed class ResumeImportIntegrationTests
 
         await using (var writer = _fixture.NewApplicationContext())
         {
-            var handler = new CreateResumeFromDraftHandler(TestRepositories.Resumes(writer), TestImportEvidence.Protector());
+            var handler = new CreateResumeFromDraftHandler(
+                TestRepositories.Resumes(writer), TestRepositories.CandidateProfiles(writer), TestImportEvidence.Protector());
             var result = await handler.Handle(new CreateResumeFromDraftCommand(
                 owner, FullDraft() with { Languages = [new LanguageDraft(name, "Bilingüe", "Native")] }));
 

@@ -2,6 +2,7 @@ namespace BuildCv.Api.Contracts;
 
 using BuildCv.Application.Common.Repositories;
 using BuildCv.Application.Resumes;
+using BuildCv.Domain.Candidates;
 using BuildCv.Domain.Common.ValueObjects;
 using BuildCv.Domain.Resumes;
 
@@ -65,37 +66,16 @@ public sealed record ResumeResponse(
             ContactInformationResponse.From(resume.ContactInformation),
             resume.CreatedAt,
             resume.UpdatedAt,
-            Project(resume.Experiences, ids.For(ResumeSection.Experiences), ExperienceResponse.From),
-            Project(resume.Educations, ids.For(ResumeSection.Educations), EducationResponse.From),
-            Project(resume.Skills, ids.For(ResumeSection.Skills), SkillResponse.From),
-            Project(resume.Projects, ids.For(ResumeSection.Projects), ProjectResponse.From),
-            Project(resume.Certificates, ids.For(ResumeSection.Certificates), CertificateResponse.From),
-            Project(resume.Languages, ids.For(ResumeSection.Languages), LanguageResponse.From),
-            Project(resume.Awards, ids.For(ResumeSection.Awards), AwardResponse.From),
-            Project(resume.Publications, ids.For(ResumeSection.Publications), PublicationResponse.From),
-            Project(resume.Interests, ids.For(ResumeSection.Interests), InterestResponse.From),
-            Project(resume.References, ids.For(ResumeSection.References), ReferenceResponse.From));
-    }
-
-    // THROWS RATHER THAN ZIPPING when the counts disagree, and the difference is the whole point.
-    // Enumerable.Zip stops at the shorter side, so an adapter that returned nine ids for ten skills
-    // would silently drop the tenth from the response — a candidate's skill vanishing from their own CV
-    // with no error anywhere. A mismatch is a bug in a repository, cannot be caused by any request, and
-    // is not something a client should be handed a half-answer for.
-    private static IReadOnlyList<TResponse> Project<TItem, TResponse>(
-        IReadOnlyList<TItem> items, IReadOnlyList<int> ids, Func<int, TItem, TResponse> project)
-    {
-        if (items.Count != ids.Count)
-        {
-            throw new InvalidOperationException(
-                $"Resume item ids are misaligned: {ids.Count} ids for {items.Count} entries.");
-        }
-
-        var projected = new TResponse[items.Count];
-        for (var position = 0; position < items.Count; position++)
-            projected[position] = project(ids[position], items[position]);
-
-        return projected;
+            ItemIdProjection.Project("Resume", resume.Experiences, ids.For(ResumeSection.Experiences), ExperienceResponse.From),
+            ItemIdProjection.Project("Resume", resume.Educations, ids.For(ResumeSection.Educations), EducationResponse.From),
+            ItemIdProjection.Project("Resume", resume.Skills, ids.For(ResumeSection.Skills), SkillResponse.From),
+            ItemIdProjection.Project("Resume", resume.Projects, ids.For(ResumeSection.Projects), ProjectResponse.From),
+            ItemIdProjection.Project("Resume", resume.Certificates, ids.For(ResumeSection.Certificates), CertificateResponse.From),
+            ItemIdProjection.Project("Resume", resume.Languages, ids.For(ResumeSection.Languages), LanguageResponse.From),
+            ItemIdProjection.Project("Resume", resume.Awards, ids.For(ResumeSection.Awards), AwardResponse.From),
+            ItemIdProjection.Project("Resume", resume.Publications, ids.For(ResumeSection.Publications), PublicationResponse.From),
+            ItemIdProjection.Project("Resume", resume.Interests, ids.For(ResumeSection.Interests), InterestResponse.From),
+            ItemIdProjection.Project("Resume", resume.References, ids.For(ResumeSection.References), ReferenceResponse.From));
     }
 }
 
@@ -183,6 +163,19 @@ public sealed record ResumeSectionCounts(
             resume.Publications.Count,
             resume.Interests.Count,
             resume.References.Count);
+
+    public static ResumeSectionCounts From(CandidateProfile profile) =>
+        new(
+            profile.Experiences.Count,
+            profile.Educations.Count,
+            profile.Skills.Count,
+            profile.Projects.Count,
+            profile.Certificates.Count,
+            profile.Languages.Count,
+            profile.Awards.Count,
+            profile.Publications.Count,
+            profile.Interests.Count,
+            profile.References.Count);
 }
 
 public sealed record ContactInformationResponse(

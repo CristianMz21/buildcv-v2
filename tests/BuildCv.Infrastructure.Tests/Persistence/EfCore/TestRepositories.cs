@@ -18,6 +18,8 @@ internal static class TestRepositories
 
     public static ResumeRepository Resumes(BuildCvDbContext context) => new(context);
 
+    public static CandidateProfileRepository CandidateProfiles(BuildCvDbContext context) => new(context);
+
     public static JobPostingRepository JobPostings(BuildCvDbContext context) => new(context);
 
     public static OrganizationRepository Organizations(BuildCvDbContext context) =>

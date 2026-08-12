@@ -464,6 +464,11 @@ Recruiter and Admin). `Recruiter` = Recruiter or Admin. `—` = anonymous.
 | `GET /v1/resumes/{id}/readability` | Candidate | Paged history, **oldest first** |
 | `GET /v1/readability/{reportId}` | Auth | One stored report |
 | `GET /v1/resumes/{id}/analyses` | Candidate | Paged score history, **oldest first** |
+| `GET /v1/profile` | Candidate | The caller's profile in full — every entry of every collection and the id that addresses each one. 404 until the first `PUT /v1/profile/contact` |
+| `PUT /v1/profile/contact` | Candidate | An upsert: the first call **creates** the profile so the item routes have one to write into, later calls update the contact. Carries `website` and `profiles` forward — they can only be set at import |
+| `POST /v1/profile/{section}` | Candidate | The same ten sections. Appends an entry to the caller's profile |
+| `PUT /v1/profile/{section}/{itemId}` | Candidate | Replaces outright — omitted fields are cleared, and the result has a **new id** |
+| `DELETE /v1/profile/{section}/{itemId}` | Candidate | `itemId` is an **int**, not a guid |
 | `POST /v1/scoring/score` | Auth | De-duplicated; see §7 |
 | `GET /v1/scoring/{analysisId}` | Auth | One stored analysis |
 | `POST /v1/jobs` | **Recruiter** | Create a posting |
@@ -502,10 +507,10 @@ Recruiter and Admin). `Recruiter` = Recruiter or Admin. `—` = anonymous.
   per-section routes (`POST /v1/resumes/{id}/experiences` and friends) accept a full `yyyy-MM-dd` only,
   so a candidate can *import* "June 2015" and cannot *type* it. Known asymmetry; plan your date picker
   around the full form.
-- **Deletes are soft, and there are only two of them.** `DELETE /v1/resumes/{id}` and
-  `DELETE /v1/resumes/{id}/{section}/{itemId}` (plus removing an organization *member*). A deleted
-  resume answers 404 afterwards and takes every analysis and readability report derived from it with it.
-  Nothing else in this API is deletable — see §11.
+- **Deletes are soft, and there are only three of them.** `DELETE /v1/resumes/{id}`,
+  `DELETE /v1/resumes/{id}/{section}/{itemId}` and `DELETE /v1/profile/{section}/{itemId}` (plus removing
+  an organization *member*). A deleted resume answers 404 afterwards and takes every analysis and
+  readability report derived from it with it. Nothing else in this API is deletable — see §11.
 - **`GET /v1/readability/{reportId}` and `GET /v1/scoring/{analysisId}` answer 404 for an id that never
   existed and 403 for one owned by someone else.** Do not surface the difference to end users.
 - Nothing about a CV ever reaches a log, a metric or a trace attribute. If you build server-side logging
@@ -526,11 +531,15 @@ these is a bug report; they are gaps in the surface, and the workaround is given
   Two fields cannot survive a round trip today, and the loss is silent: `AddExperienceRequest` has no
   `highlights` and `AddSkillRequest` no `keywords`, while the responses carry both. Warn before saving,
   or re-add what you cleared.
-- **The three `PUT`s are the whole edit surface**: the per-item one above, `/v1/resumes/{id}/contact`,
-  and `/v1/resumes/{id}/name`. Everything else is `POST` to add and `DELETE` to remove.
-- **Nothing is deletable except a resume, a resume's items, and an organization membership.** A job
-  posting, an imported job offer, an account and an organization are permanent once created. There is no
-  account-closure route.
+- **Running each cover of the editing surface — five `PUT`s, three surfaces.** `PUT /v1/resumes/{id}/contact`,
+  `PUT /v1/resumes/{id}/name` and per-item `PUT /v1/resumes/{id}/{section}/{itemId}` on resumes;
+  `PUT /v1/profile/contact` and per-item `PUT /v1/profile/{section}/{itemId}` on the caller's profile.
+  Everything else is `POST` to add and `DELETE` to remove. A profile's item routes share the ten section
+  names, and the PUT replaces outright there too — a new entry with a new id, so re-read the profile
+  before addressing it again.
+- **Nothing is deletable except a resume, a resume's items, a profile's items, and an organization
+  membership.** A job posting, an imported job offer, an account and an organization are permanent once
+  created. There is no account-closure route.
 - **A posting cannot be archived through the API**, only published (`POST /v1/jobs/{id}/publish`) and
   closed (`POST /v1/jobs/{id}/close`). `Archived` appears in the `status` enum and no route can produce
   it, so handle it defensively if you switch on the value and otherwise expect never to see it.

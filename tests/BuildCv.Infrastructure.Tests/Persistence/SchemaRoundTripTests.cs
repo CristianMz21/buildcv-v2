@@ -1,5 +1,6 @@
 using System.Text;
 using BuildCv.Application.Common.Services;
+using BuildCv.Domain.Candidates;
 using BuildCv.Domain.Common.ValueObjects;
 using BuildCv.Domain.Identity;
 using BuildCv.Domain.Jobs;
@@ -685,6 +686,160 @@ public sealed class SchemaRoundTripTests
 
         await act.Should().ThrowAsync<Exception>(
             "the envelope is authenticated against the column path it was sealed under");
+    }
+
+    // The candidates schema, against a real SQL Server running the committed migration: a new schema,
+    // eleven new tables, and ten owned collections mapped by a class SHARED with Resume. This is where a
+    // mapping that builds but cannot write shows up, and none of it is reachable from
+    // ModelConfigurationTests — that file asserts the model's shape without ever opening a connection.
+    [Fact]
+    public async Task CandidateProfile_RoundTrips_WithItsCollectionsAndFullContactInformation()
+    {
+        var contact = new ContactInformation(
+            PersonName.Create("Grace Hopper"),
+            Email.Create(UniqueEmail("profile")),
+            PhoneNumber.Create("+541155559876"),
+            "Buenos Aires, AR",
+            Url.Create("https://grace.example.com"),
+            "Compiler pioneer.")
+        {
+            Profiles = [new Profile("GitHub", "grace", Url.Create("https://github.com/grace"))],
+        };
+
+        var profile = CandidateProfile.Create(AccountId.New(), contact);
+        var period = DateRange.Create(new DateOnly(2018, 3, 1), new DateOnly(2024, 2, 29));
+
+        profile.AddExperience(new Experience(
+            ExperienceType.Professional,
+            OrganizationName.Create("Remington Rand"),
+            "Systems Engineer",
+            period,
+            "Wrote the first compiler.")
+        { Highlights = ["Shipped A-0", "Coined 'bug'"] });
+
+        profile.AddEducation(new Education(
+            OrganizationName.Create("Yale"), "PhD", "Mathematics", period, "Summa cum laude",
+            EducationLevel.Doctorate));
+
+        profile.AddSkill(Skill.Create(Technology.Create("COBOL"), SkillLevel.Expert, 30)
+            with
+        { Keywords = ["compilers", "mainframe"] });
+
+        profile.AddLanguage(Language.Create("English", "Native tongue", LanguageProficiency.Native));
+        profile.AddInterest(new Interest("Sailing") { Keywords = ["navigation"] });
+
+        await using (var context = _fixture.NewContext())
+        {
+            context.CandidateProfiles.Add(profile);
+            await context.SaveChangesAsync();
+        }
+
+        await using var reader = _fixture.NewContext();
+        var reloaded = await reader.CandidateProfiles
+            .AsSplitQuery()
+            .SingleAsync(entity => entity.Id == profile.Id);
+
+        reloaded.OwnerId.Should().Be(profile.OwnerId);
+
+        // BeEquivalentTo, not Be: ContactInformation is a record holding a LIST of profiles, and a
+        // record's generated equality compares that list by reference. Be() would fail on a value that
+        // round-tripped perfectly.
+        reloaded.ContactInformation.Should().BeEquivalentTo(contact);
+
+        reloaded.Experiences.Should().BeEquivalentTo(profile.Experiences);
+        reloaded.Educations.Should().BeEquivalentTo(profile.Educations);
+        reloaded.Skills.Should().BeEquivalentTo(profile.Skills);
+        reloaded.Interests.Should().BeEquivalentTo(profile.Interests);
+
+        // The mixed collection, both halves at once: Fluency rides back through its envelope while Level
+        // and Name stayed queryable beside it. Asserting only the reload would pass with the whole row
+        // sealed, which is the classification this schema shares with the resumes tables.
+        reloaded.Languages.Should().BeEquivalentTo(profile.Languages);
+        var level = await reader.Database
+            .SqlQuery<byte>(
+                $"SELECT [Level] AS [Value] FROM [candidates].[Languages] WHERE [CandidateProfileId] = {profile.Id.Value}")
+            .SingleAsync();
+        level.Should().Be((byte)LanguageProficiency.Native);
+    }
+
+    // ONE PROFILE PER ACCOUNT, enforced where it is actually true. A check in a handler would let two
+    // concurrent imports both read "no profile yet" and both insert, and the loser of that race is a
+    // second copy of the candidate's entire history that nothing reconciles.
+    [Fact]
+    public async Task CandidateProfiles_RejectASecondProfileForOneAccount()
+    {
+        var owner = AccountId.New();
+
+        await using (var context = _fixture.NewContext())
+        {
+            context.CandidateProfiles.Add(CandidateProfile.Create(owner, MinimalContact("first")));
+            await context.SaveChangesAsync();
+        }
+
+        await using var second = _fixture.NewContext();
+        second.CandidateProfiles.Add(CandidateProfile.Create(owner, MinimalContact("second")));
+
+        var act = async () => await second.SaveChangesAsync();
+
+        await act.Should().ThrowAsync<DbUpdateException>(
+            "the filtered unique index on OwnerId is what makes one-profile-per-account true");
+    }
+
+    // THE AAD PREFIX, EXECUTED — the same argument as the two recommendation tables above, applied to the
+    // pair this refactor created. CvItemCollections maps the resume's ten item collections AND the
+    // profile's, and the CLASSIFICATION is deliberately shared; the AAD deliberately is not. The
+    // profile's columns seal under "CandidateProfile.Experience.Organization", the resume's under
+    // "Experience.Organization", so an employer's name lifted out of resumes.Experiences and dropped into
+    // candidates.Experiences must FAIL to decrypt.
+    //
+    // Nothing about the model can see this: one shared context string would leave the annotation
+    // identical, the converter symmetric and every shape assertion green, while the two tables quietly
+    // became one envelope namespace.
+    [Fact]
+    public async Task AnOrganizationEnvelopeMovedFromAResumeIntoAProfile_FailsToDecrypt()
+    {
+        var period = DateRange.Create(new DateOnly(2021, 1, 1), new DateOnly(2022, 1, 1));
+
+        var resume = Resume.Create(AccountId.New(), MinimalContact("cv"));
+        resume.AddExperience(new Experience(
+            ExperienceType.Professional,
+            OrganizationName.Create($"Globant-{Guid.NewGuid():N}"),
+            "Backend Developer",
+            period));
+
+        var profile = CandidateProfile.Create(AccountId.New(), MinimalContact("master"));
+        profile.AddExperience(new Experience(
+            ExperienceType.Professional,
+            OrganizationName.Create("Mercado Libre"),
+            "Backend Developer",
+            period));
+
+        await using (var context = _fixture.NewContext())
+        {
+            context.Resumes.Add(resume);
+            context.CandidateProfiles.Add(profile);
+            await context.SaveChangesAsync();
+        }
+
+        await using (var mover = _fixture.NewContext())
+        {
+            await mover.Database.ExecuteSqlAsync(
+                $"""
+                UPDATE candidates.Experiences
+                SET [Organization] = (
+                    SELECT TOP 1 [Organization] FROM resumes.Experiences WHERE [ResumeId] = {resume.Id.Value})
+                WHERE [CandidateProfileId] = {profile.Id.Value}
+                """);
+        }
+
+        await using var reader = _fixture.NewContext();
+        var act = async () => await reader.CandidateProfiles
+            .AsSplitQuery()
+            .SingleAsync(entity => entity.Id == profile.Id);
+
+        await act.Should().ThrowAsync<Exception>(
+            "the envelope is authenticated against the column path it was sealed under, and these two "
+            + "columns hold the same kind of value in two different tables");
     }
 
     [Fact]

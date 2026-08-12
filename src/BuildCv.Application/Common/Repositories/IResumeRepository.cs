@@ -12,10 +12,11 @@ public interface IResumeRepository
     /// The same resume, plus the identity of every entry in its ten collections.
     /// </summary>
     /// <remarks>
-    /// SEPARATE FROM <see cref="GetByIdAsync"/> ON PURPOSE, and not merged into it. The ids are only
-    /// obtainable from a tracked materialization, and most callers — scoring, readability, every
-    /// section append — neither address an entry nor should pay for tracking to avoid a second method.
-    /// This one is for the two operations that must name one entry out of many: removing and replacing.
+    /// SEPARATE FROM <see cref="GetByIdAsync"/> ON PURPOSE, and not merged into it. Both loads
+    /// materialize tracked; what the with-ids form ADDS is a per-entry walk of every item's shadow key,
+    /// and most callers — scoring, readability, every section append — neither address an entry nor
+    /// need that walk. This one is for the two operations that must name one entry out of many:
+    /// removing and replacing.
     /// </remarks>
     Task<ResumeWithItemIds?> GetByIdWithItemIdsAsync(
         ResumeId id, CancellationToken cancellationToken = default);

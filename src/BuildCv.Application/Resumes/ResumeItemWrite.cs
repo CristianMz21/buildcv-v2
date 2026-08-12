@@ -1,8 +1,8 @@
 namespace BuildCv.Application.Resumes;
 
+using BuildCv.Application.Common;
 using BuildCv.Application.Common.Repositories;
 using BuildCv.Domain.Common.ValueObjects;
-using BuildCv.Domain.Exceptions;
 using BuildCv.Domain.Identity;
 using BuildCv.Domain.Resumes;
 
@@ -11,33 +11,20 @@ using BuildCv.Domain.Resumes;
 /// appending a new entry or replacing an existing one.
 /// </summary>
 /// <remarks>
-/// <para>
-/// ONE COPY OF THE PLUMBING, for the reason spelled out on <see cref="RemoveResumeItemHandler"/>: the
-/// ten Add handlers differed in exactly one expression — the two lines that build the value and hand
-/// it to the aggregate — and were otherwise the same load, the same ownership check and the same two
-/// catch blocks, written ten times. Adding the replace form to each of them would have made that
-/// twenty. The per-collection part stays in the per-collection file, where it belongs.
-/// </para>
-/// <para>
-/// THE VALUE IS BUILT BEFORE ANYTHING IS LOADED, which is what <c>Func&lt;Action&lt;Resume&gt;&gt;</c>
-/// buys and a plain <c>Action&lt;Resume&gt;</c> would not: a lambda that both constructs and appends
-/// runs its constructor at append time, which on a replace is AFTER the entry it replaces has been
-/// removed. That matters because the in-memory store hands out the stored instance itself
-/// (<c>InMemoryResumeRepository.GetByIdAsync</c> returns <c>row.Item</c>), so a mutation that is never
-/// saved is still a mutation there — and the whole Api suite runs on that store. A rejected value
-/// would have deleted the entry the caller was trying to fix.
-/// </para>
-/// <para>
-/// A REPLACE REMOVES BEFORE IT ADDS, and both happen inside one <c>UpdateAsync</c>. Four of these
-/// collections refuse an entry whose name duplicates one already there, so adding first would refuse
-/// every edit that changes something OTHER than the name — the common case. The order also cannot be
-/// left to the client as delete-then-post: a post that fails after a successful delete loses what the
-/// candidate wrote, which is the whole reason this route exists rather than two.
-/// </para>
+/// THE RESUME HALF OF <see cref="ItemWrite"/>. Every one of these use cases performs the same
+/// load/check/remove/save, and that plumbing is the generic core; this type supplies the resume part
+/// and keeps the public signature the ten Add handlers call. The load is the two-shape one:
+/// <see cref="IResumeRepository.GetByIdAsync"/> for an append — returning <c>(resume, null)</c>, so a
+/// path that addresses no entry is spared the per-entry id walk — and
+/// <see cref="IResumeRepository.GetByIdWithItemIdsAsync"/> for a replace, returning <c>(resume, ids)</c>.
+/// The per-collection build — the one expression the ten Add handlers differ in — stays in the
+/// per-collection file, where it belongs. The rules (the value is built before anything is loaded, a
+/// replace removes before it adds, "not found" never "forbidden") are on <see cref="ItemWrite"/> and are
+/// not restated here, so they cannot drift.
 /// </remarks>
 internal static class ResumeItemWrite
 {
-    public static async Task<Result<Resume>> Execute(
+    public static Task<Result<Resume>> Execute(
         IResumeRepository resumeRepository,
         AccountId requesterId,
         ResumeId resumeId,
@@ -45,57 +32,29 @@ internal static class ResumeItemWrite
         int? replacingItemId,
         Func<Action<Resume>> build,
         CancellationToken cancellationToken)
-    {
-        try
-        {
-            var append = build();
-
-            // An append needs no ids, and GetByIdWithItemIdsAsync exists precisely so that the paths
-            // which do not address an entry are not made to pay for tracking. See its remarks.
-            if (replacingItemId is null)
+        => ItemWrite.Execute(
+            load: async token =>
             {
-                var appendTo = await resumeRepository.GetByIdAsync(resumeId, cancellationToken);
-                if (appendTo is null)
-                    return Result<Resume>.Failure("Resume not found.");
+                // An append needs no ids, and GetByIdWithItemIdsAsync exists precisely so that the paths
+                // which do not address an entry are spared the per-entry id walk. See its remarks.
+                if (replacingItemId is null)
+                {
+                    var resume = await resumeRepository.GetByIdAsync(resumeId, token);
+                    return (resume, (ResumeItemIds?)null);
+                }
 
-                if (appendTo.OwnerId != requesterId)
-                    return Result<Resume>.Failure("Forbidden.");
-
-                append(appendTo);
-                await resumeRepository.UpdateAsync(appendTo, cancellationToken);
-                return Result<Resume>.Success(appendTo);
-            }
-
-            var loaded = await resumeRepository.GetByIdWithItemIdsAsync(resumeId, cancellationToken);
-            if (loaded is null)
-                return Result<Resume>.Failure("Resume not found.");
-
-            var resume = loaded.Resume;
-            if (resume.OwnerId != requesterId)
-                return Result<Resume>.Failure("Forbidden.");
-
-            // "not found", never "forbidden", and resolved only against a resume the caller was already
-            // allowed to load — the same ordering RemoveResumeItemHandler documents. Ids are unique
-            // within one CV, so aiming a valid id at somebody else's CV teaches the caller nothing.
-            var position = loaded.ItemIds.PositionOf(section, replacingItemId.Value);
-            if (position is null)
-                return Result<Resume>.Failure($"{section} entry not found.");
-
-            ResumeItems.RemoveAt(resume, section, position.Value);
-            append(resume);
-
-            await resumeRepository.UpdateAsync(resume, cancellationToken);
-            return Result<Resume>.Success(resume);
-        }
-        catch (DomainException ex)
-        {
-            return Result<Resume>.Failure(ex.Message);
-        }
-        catch (ArgumentException ex)
-        {
-            return Result<Resume>.Failure(ex.Message);
-        }
-    }
+                var loaded = await resumeRepository.GetByIdWithItemIdsAsync(resumeId, token);
+                return loaded is null ? (null, null) : (loaded.Resume, loaded.ItemIds);
+            },
+            ownerIdOf: resume => resume.OwnerId,
+            removeAt: ResumeItems.RemoveAt,
+            save: resumeRepository.UpdateAsync,
+            requesterId: requesterId,
+            section: section,
+            replacingItemId: replacingItemId,
+            notFoundMessage: "Resume not found.",
+            build: build,
+            cancellationToken: cancellationToken);
 }
 
 /// <summary>

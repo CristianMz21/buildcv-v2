@@ -22,6 +22,60 @@ namespace BuildCv.Infrastructure.Persistence.Migrations
 
             SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
 
+            modelBuilder.Entity("BuildCv.Domain.Candidates.CandidateProfile", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uniqueidentifier")
+                        .HasColumnName("Id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset?>("DeletedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<Guid?>("DeletedBy")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("OwnerId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
+                    b.Property<long>("Seq")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Seq"));
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<Guid?>("UpdatedBy")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    SqlServerKeyBuilderExtensions.IsClustered(b.HasKey("Id"), false);
+
+                    b.HasIndex("OwnerId")
+                        .IsUnique()
+                        .HasFilter("[DeletedAt] IS NULL");
+
+                    b.HasIndex("Seq")
+                        .IsUnique();
+
+                    SqlServerIndexBuilderExtensions.IsClustered(b.HasIndex("Seq"));
+
+                    b.ToTable("Profiles", "candidates");
+                });
+
             modelBuilder.Entity("BuildCv.Domain.Identity.Account", b =>
                 {
                     b.Property<Guid>("Id")
@@ -509,6 +563,555 @@ namespace BuildCv.Infrastructure.Persistence.Migrations
                     b.ToTable("Analyses", "scoring");
                 });
 
+            modelBuilder.Entity("BuildCv.Domain.Candidates.CandidateProfile", b =>
+                {
+                    b.OwnsMany("BuildCv.Domain.Resumes.Award", "Awards", b1 =>
+                        {
+                            b1.Property<int>("Id")
+                                .ValueGeneratedOnAdd()
+                                .HasColumnType("int");
+
+                            SqlServerPropertyBuilderExtensions.UseIdentityColumn(b1.Property<int>("Id"));
+
+                            b1.Property<byte[]>("Awarder")
+                                .HasMaxLength(768)
+                                .HasColumnType("varbinary(768)")
+                                .HasAnnotation("BuildCv:Encrypted", true)
+                                .HasAnnotation("BuildCv:EncryptionContext", "CandidateProfile.Award.Awarder");
+
+                            b1.Property<Guid>("CandidateProfileId")
+                                .HasColumnType("uniqueidentifier");
+
+                            b1.Property<DateOnly?>("Date")
+                                .HasColumnType("date");
+
+                            b1.Property<byte[]>("Summary")
+                                .HasColumnType("varbinary(max)")
+                                .HasAnnotation("BuildCv:Encrypted", true)
+                                .HasAnnotation("BuildCv:EncryptionContext", "CandidateProfile.Award.Summary");
+
+                            b1.Property<byte[]>("Title")
+                                .IsRequired()
+                                .HasColumnType("varbinary(max)")
+                                .HasAnnotation("BuildCv:Encrypted", true)
+                                .HasAnnotation("BuildCv:EncryptionContext", "CandidateProfile.Award.Title");
+
+                            b1.HasKey("Id");
+
+                            b1.HasIndex("CandidateProfileId");
+
+                            b1.ToTable("Awards", "candidates");
+
+                            b1.WithOwner()
+                                .HasForeignKey("CandidateProfileId");
+                        });
+
+                    b.OwnsMany("BuildCv.Domain.Resumes.Certificate", "Certificates", b1 =>
+                        {
+                            b1.Property<int>("Id")
+                                .ValueGeneratedOnAdd()
+                                .HasColumnType("int");
+
+                            SqlServerPropertyBuilderExtensions.UseIdentityColumn(b1.Property<int>("Id"));
+
+                            b1.Property<Guid>("CandidateProfileId")
+                                .HasColumnType("uniqueidentifier");
+
+                            b1.Property<byte[]>("CredentialId")
+                                .HasColumnType("varbinary(max)")
+                                .HasAnnotation("BuildCv:Encrypted", true)
+                                .HasAnnotation("BuildCv:EncryptionContext", "CandidateProfile.Certificate.CredentialId");
+
+                            b1.Property<byte[]>("CredentialUrl")
+                                .HasColumnType("varbinary(max)")
+                                .HasAnnotation("BuildCv:Encrypted", true)
+                                .HasAnnotation("BuildCv:EncryptionContext", "CandidateProfile.Certificate.CredentialUrl");
+
+                            b1.Property<byte[]>("Issuer")
+                                .IsRequired()
+                                .HasMaxLength(768)
+                                .HasColumnType("varbinary(768)")
+                                .HasAnnotation("BuildCv:Encrypted", true)
+                                .HasAnnotation("BuildCv:EncryptionContext", "CandidateProfile.Certificate.Issuer");
+
+                            b1.Property<byte[]>("Name")
+                                .IsRequired()
+                                .HasColumnType("varbinary(max)")
+                                .HasAnnotation("BuildCv:Encrypted", true)
+                                .HasAnnotation("BuildCv:EncryptionContext", "CandidateProfile.Certificate.Name");
+
+                            b1.Property<string>("ValidityPeriod")
+                                .HasMaxLength(21)
+                                .IsUnicode(false)
+                                .HasColumnType("varchar(21)");
+
+                            b1.HasKey("Id");
+
+                            b1.HasIndex("CandidateProfileId");
+
+                            b1.ToTable("Certificates", "candidates");
+
+                            b1.WithOwner()
+                                .HasForeignKey("CandidateProfileId");
+                        });
+
+                    b.OwnsOne("BuildCv.Domain.Resumes.ContactInformation", "ContactInformation", b1 =>
+                        {
+                            b1.Property<Guid>("CandidateProfileId")
+                                .HasColumnType("uniqueidentifier");
+
+                            b1.Property<byte[]>("Email")
+                                .IsRequired()
+                                .HasMaxLength(512)
+                                .HasColumnType("varbinary(512)")
+                                .HasColumnName("Contact_Email")
+                                .HasAnnotation("BuildCv:Encrypted", true)
+                                .HasAnnotation("BuildCv:EncryptionContext", "CandidateProfile.ContactInformation.Email");
+
+                            b1.Property<byte[]>("FullName")
+                                .IsRequired()
+                                .HasMaxLength(1024)
+                                .HasColumnType("varbinary(1024)")
+                                .HasColumnName("Contact_FullName")
+                                .HasAnnotation("BuildCv:Encrypted", true)
+                                .HasAnnotation("BuildCv:EncryptionContext", "CandidateProfile.ContactInformation.FullName");
+
+                            b1.Property<byte[]>("Location")
+                                .HasColumnType("varbinary(max)")
+                                .HasColumnName("Contact_Location")
+                                .HasAnnotation("BuildCv:Encrypted", true)
+                                .HasAnnotation("BuildCv:EncryptionContext", "CandidateProfile.ContactInformation.Location");
+
+                            b1.Property<byte[]>("PhoneNumber")
+                                .HasMaxLength(128)
+                                .HasColumnType("varbinary(128)")
+                                .HasColumnName("Contact_PhoneNumber")
+                                .HasAnnotation("BuildCv:Encrypted", true)
+                                .HasAnnotation("BuildCv:EncryptionContext", "CandidateProfile.ContactInformation.PhoneNumber");
+
+                            b1.Property<byte[]>("Profiles")
+                                .IsRequired()
+                                .HasColumnType("varbinary(max)")
+                                .HasColumnName("Contact_Profiles")
+                                .HasAnnotation("BuildCv:Encrypted", true)
+                                .HasAnnotation("BuildCv:EncryptionContext", "CandidateProfile.ContactInformation.Profiles");
+
+                            b1.Property<byte[]>("Summary")
+                                .HasColumnType("varbinary(max)")
+                                .HasColumnName("Contact_Summary")
+                                .HasAnnotation("BuildCv:Encrypted", true)
+                                .HasAnnotation("BuildCv:EncryptionContext", "CandidateProfile.ContactInformation.Summary");
+
+                            b1.Property<byte[]>("Website")
+                                .HasColumnType("varbinary(max)")
+                                .HasColumnName("Contact_Website")
+                                .HasAnnotation("BuildCv:Encrypted", true)
+                                .HasAnnotation("BuildCv:EncryptionContext", "CandidateProfile.ContactInformation.Website");
+
+                            b1.HasKey("CandidateProfileId");
+
+                            b1.ToTable("Profiles", "candidates");
+
+                            b1.WithOwner()
+                                .HasForeignKey("CandidateProfileId");
+                        });
+
+                    b.OwnsMany("BuildCv.Domain.Resumes.Education", "Educations", b1 =>
+                        {
+                            b1.Property<int>("Id")
+                                .ValueGeneratedOnAdd()
+                                .HasColumnType("int");
+
+                            SqlServerPropertyBuilderExtensions.UseIdentityColumn(b1.Property<int>("Id"));
+
+                            b1.Property<Guid>("CandidateProfileId")
+                                .HasColumnType("uniqueidentifier");
+
+                            b1.Property<byte[]>("Degree")
+                                .HasColumnType("varbinary(max)")
+                                .HasAnnotation("BuildCv:Encrypted", true)
+                                .HasAnnotation("BuildCv:EncryptionContext", "CandidateProfile.Education.Degree");
+
+                            b1.Property<byte[]>("FieldOfStudy")
+                                .HasColumnType("varbinary(max)")
+                                .HasAnnotation("BuildCv:Encrypted", true)
+                                .HasAnnotation("BuildCv:EncryptionContext", "CandidateProfile.Education.FieldOfStudy");
+
+                            b1.Property<byte[]>("Grade")
+                                .HasColumnType("varbinary(max)")
+                                .HasAnnotation("BuildCv:Encrypted", true)
+                                .HasAnnotation("BuildCv:EncryptionContext", "CandidateProfile.Education.Grade");
+
+                            b1.Property<byte[]>("Institution")
+                                .IsRequired()
+                                .HasMaxLength(768)
+                                .HasColumnType("varbinary(768)")
+                                .HasAnnotation("BuildCv:Encrypted", true)
+                                .HasAnnotation("BuildCv:EncryptionContext", "CandidateProfile.Education.Institution");
+
+                            b1.Property<byte?>("Level")
+                                .HasColumnType("tinyint");
+
+                            b1.Property<string>("Period")
+                                .IsRequired()
+                                .HasMaxLength(21)
+                                .IsUnicode(false)
+                                .HasColumnType("varchar(21)");
+
+                            b1.HasKey("Id");
+
+                            b1.HasIndex("CandidateProfileId");
+
+                            b1.ToTable("Educations", "candidates");
+
+                            b1.WithOwner()
+                                .HasForeignKey("CandidateProfileId");
+                        });
+
+                    b.OwnsMany("BuildCv.Domain.Resumes.Experience", "Experiences", b1 =>
+                        {
+                            b1.Property<int>("Id")
+                                .ValueGeneratedOnAdd()
+                                .HasColumnType("int");
+
+                            SqlServerPropertyBuilderExtensions.UseIdentityColumn(b1.Property<int>("Id"));
+
+                            b1.Property<Guid>("CandidateProfileId")
+                                .HasColumnType("uniqueidentifier");
+
+                            b1.Property<byte[]>("Highlights")
+                                .IsRequired()
+                                .HasColumnType("varbinary(max)")
+                                .HasAnnotation("BuildCv:Encrypted", true)
+                                .HasAnnotation("BuildCv:EncryptionContext", "CandidateProfile.Experience.Highlights");
+
+                            b1.Property<byte[]>("Organization")
+                                .IsRequired()
+                                .HasMaxLength(768)
+                                .HasColumnType("varbinary(768)")
+                                .HasAnnotation("BuildCv:Encrypted", true)
+                                .HasAnnotation("BuildCv:EncryptionContext", "CandidateProfile.Experience.Organization");
+
+                            b1.Property<string>("Period")
+                                .IsRequired()
+                                .HasMaxLength(21)
+                                .IsUnicode(false)
+                                .HasColumnType("varchar(21)");
+
+                            b1.Property<byte[]>("Position")
+                                .IsRequired()
+                                .HasColumnType("varbinary(max)")
+                                .HasAnnotation("BuildCv:Encrypted", true)
+                                .HasAnnotation("BuildCv:EncryptionContext", "CandidateProfile.Experience.Position");
+
+                            b1.Property<byte[]>("Summary")
+                                .HasColumnType("varbinary(max)")
+                                .HasAnnotation("BuildCv:Encrypted", true)
+                                .HasAnnotation("BuildCv:EncryptionContext", "CandidateProfile.Experience.Summary");
+
+                            b1.Property<byte>("Type")
+                                .HasColumnType("tinyint");
+
+                            b1.HasKey("Id");
+
+                            b1.HasIndex("CandidateProfileId");
+
+                            b1.ToTable("Experiences", "candidates");
+
+                            b1.WithOwner()
+                                .HasForeignKey("CandidateProfileId");
+                        });
+
+                    b.OwnsMany("BuildCv.Domain.Resumes.Interest", "Interests", b1 =>
+                        {
+                            b1.Property<int>("Id")
+                                .ValueGeneratedOnAdd()
+                                .HasColumnType("int");
+
+                            SqlServerPropertyBuilderExtensions.UseIdentityColumn(b1.Property<int>("Id"));
+
+                            b1.Property<Guid>("CandidateProfileId")
+                                .HasColumnType("uniqueidentifier");
+
+                            b1.Property<byte[]>("Keywords")
+                                .IsRequired()
+                                .HasColumnType("varbinary(max)")
+                                .HasAnnotation("BuildCv:Encrypted", true)
+                                .HasAnnotation("BuildCv:EncryptionContext", "CandidateProfile.Interest.Keywords");
+
+                            b1.Property<byte[]>("Name")
+                                .IsRequired()
+                                .HasColumnType("varbinary(max)")
+                                .HasAnnotation("BuildCv:Encrypted", true)
+                                .HasAnnotation("BuildCv:EncryptionContext", "CandidateProfile.Interest.Name");
+
+                            b1.HasKey("Id");
+
+                            b1.HasIndex("CandidateProfileId");
+
+                            b1.ToTable("Interests", "candidates");
+
+                            b1.WithOwner()
+                                .HasForeignKey("CandidateProfileId");
+                        });
+
+                    b.OwnsMany("BuildCv.Domain.Resumes.Language", "Languages", b1 =>
+                        {
+                            b1.Property<int>("Id")
+                                .ValueGeneratedOnAdd()
+                                .HasColumnType("int");
+
+                            SqlServerPropertyBuilderExtensions.UseIdentityColumn(b1.Property<int>("Id"));
+
+                            b1.Property<Guid>("CandidateProfileId")
+                                .HasColumnType("uniqueidentifier");
+
+                            b1.Property<byte[]>("Fluency")
+                                .HasColumnType("varbinary(max)")
+                                .HasAnnotation("BuildCv:Encrypted", true)
+                                .HasAnnotation("BuildCv:EncryptionContext", "CandidateProfile.Language.Fluency");
+
+                            b1.Property<byte?>("Level")
+                                .HasColumnType("tinyint");
+
+                            b1.Property<string>("Name")
+                                .IsRequired()
+                                .HasMaxLength(100)
+                                .HasColumnType("nvarchar(100)");
+
+                            b1.HasKey("Id");
+
+                            b1.HasIndex("CandidateProfileId");
+
+                            b1.HasIndex("Name");
+
+                            b1.ToTable("Languages", "candidates");
+
+                            b1.WithOwner()
+                                .HasForeignKey("CandidateProfileId");
+                        });
+
+                    b.OwnsMany("BuildCv.Domain.Resumes.Project", "Projects", b1 =>
+                        {
+                            b1.Property<int>("Id")
+                                .ValueGeneratedOnAdd()
+                                .HasColumnType("int");
+
+                            SqlServerPropertyBuilderExtensions.UseIdentityColumn(b1.Property<int>("Id"));
+
+                            b1.Property<Guid>("CandidateProfileId")
+                                .HasColumnType("uniqueidentifier");
+
+                            b1.Property<byte[]>("Description")
+                                .HasColumnType("varbinary(max)")
+                                .HasAnnotation("BuildCv:Encrypted", true)
+                                .HasAnnotation("BuildCv:EncryptionContext", "CandidateProfile.Project.Description");
+
+                            b1.Property<byte[]>("Highlights")
+                                .IsRequired()
+                                .HasColumnType("varbinary(max)")
+                                .HasAnnotation("BuildCv:Encrypted", true)
+                                .HasAnnotation("BuildCv:EncryptionContext", "CandidateProfile.Project.Highlights");
+
+                            b1.Property<byte[]>("LiveDemoUrl")
+                                .HasColumnType("varbinary(max)")
+                                .HasAnnotation("BuildCv:Encrypted", true)
+                                .HasAnnotation("BuildCv:EncryptionContext", "CandidateProfile.Project.LiveDemoUrl");
+
+                            b1.Property<byte[]>("Name")
+                                .IsRequired()
+                                .HasColumnType("varbinary(max)")
+                                .HasAnnotation("BuildCv:Encrypted", true)
+                                .HasAnnotation("BuildCv:EncryptionContext", "CandidateProfile.Project.Name");
+
+                            b1.Property<string>("Period")
+                                .IsRequired()
+                                .HasMaxLength(21)
+                                .IsUnicode(false)
+                                .HasColumnType("varchar(21)");
+
+                            b1.Property<byte[]>("RepositoryUrl")
+                                .HasColumnType("varbinary(max)")
+                                .HasAnnotation("BuildCv:Encrypted", true)
+                                .HasAnnotation("BuildCv:EncryptionContext", "CandidateProfile.Project.RepositoryUrl");
+
+                            b1.Property<string>("Technologies")
+                                .IsRequired()
+                                .HasColumnType("nvarchar(max)");
+
+                            b1.HasKey("Id");
+
+                            b1.HasIndex("CandidateProfileId");
+
+                            b1.ToTable("Projects", "candidates");
+
+                            b1.WithOwner()
+                                .HasForeignKey("CandidateProfileId");
+                        });
+
+                    b.OwnsMany("BuildCv.Domain.Resumes.Publication", "Publications", b1 =>
+                        {
+                            b1.Property<int>("Id")
+                                .ValueGeneratedOnAdd()
+                                .HasColumnType("int");
+
+                            SqlServerPropertyBuilderExtensions.UseIdentityColumn(b1.Property<int>("Id"));
+
+                            b1.Property<Guid>("CandidateProfileId")
+                                .HasColumnType("uniqueidentifier");
+
+                            b1.Property<byte[]>("Publisher")
+                                .HasMaxLength(768)
+                                .HasColumnType("varbinary(768)")
+                                .HasAnnotation("BuildCv:Encrypted", true)
+                                .HasAnnotation("BuildCv:EncryptionContext", "CandidateProfile.Publication.Publisher");
+
+                            b1.Property<DateOnly?>("ReleaseDate")
+                                .HasColumnType("date");
+
+                            b1.Property<byte[]>("Summary")
+                                .HasColumnType("varbinary(max)")
+                                .HasAnnotation("BuildCv:Encrypted", true)
+                                .HasAnnotation("BuildCv:EncryptionContext", "CandidateProfile.Publication.Summary");
+
+                            b1.Property<byte[]>("Title")
+                                .IsRequired()
+                                .HasColumnType("varbinary(max)")
+                                .HasAnnotation("BuildCv:Encrypted", true)
+                                .HasAnnotation("BuildCv:EncryptionContext", "CandidateProfile.Publication.Title");
+
+                            b1.Property<byte[]>("Url")
+                                .HasColumnType("varbinary(max)")
+                                .HasAnnotation("BuildCv:Encrypted", true)
+                                .HasAnnotation("BuildCv:EncryptionContext", "CandidateProfile.Publication.Url");
+
+                            b1.HasKey("Id");
+
+                            b1.HasIndex("CandidateProfileId");
+
+                            b1.ToTable("Publications", "candidates");
+
+                            b1.WithOwner()
+                                .HasForeignKey("CandidateProfileId");
+                        });
+
+                    b.OwnsMany("BuildCv.Domain.Resumes.Reference", "References", b1 =>
+                        {
+                            b1.Property<int>("Id")
+                                .ValueGeneratedOnAdd()
+                                .HasColumnType("int");
+
+                            SqlServerPropertyBuilderExtensions.UseIdentityColumn(b1.Property<int>("Id"));
+
+                            b1.Property<Guid>("CandidateProfileId")
+                                .HasColumnType("uniqueidentifier");
+
+                            b1.Property<byte[]>("Company")
+                                .HasMaxLength(768)
+                                .HasColumnType("varbinary(768)")
+                                .HasAnnotation("BuildCv:Encrypted", true)
+                                .HasAnnotation("BuildCv:EncryptionContext", "CandidateProfile.Reference.Company");
+
+                            b1.Property<byte[]>("Email")
+                                .HasMaxLength(512)
+                                .HasColumnType("varbinary(512)")
+                                .HasAnnotation("BuildCv:Encrypted", true)
+                                .HasAnnotation("BuildCv:EncryptionContext", "CandidateProfile.Reference.Email");
+
+                            b1.Property<byte[]>("Name")
+                                .IsRequired()
+                                .HasColumnType("varbinary(max)")
+                                .HasAnnotation("BuildCv:Encrypted", true)
+                                .HasAnnotation("BuildCv:EncryptionContext", "CandidateProfile.Reference.Name");
+
+                            b1.Property<byte[]>("PhoneNumber")
+                                .HasMaxLength(128)
+                                .HasColumnType("varbinary(128)")
+                                .HasAnnotation("BuildCv:Encrypted", true)
+                                .HasAnnotation("BuildCv:EncryptionContext", "CandidateProfile.Reference.PhoneNumber");
+
+                            b1.Property<byte[]>("Position")
+                                .HasColumnType("varbinary(max)")
+                                .HasAnnotation("BuildCv:Encrypted", true)
+                                .HasAnnotation("BuildCv:EncryptionContext", "CandidateProfile.Reference.Position");
+
+                            b1.Property<byte[]>("ReferenceText")
+                                .HasColumnType("varbinary(max)")
+                                .HasAnnotation("BuildCv:Encrypted", true)
+                                .HasAnnotation("BuildCv:EncryptionContext", "CandidateProfile.Reference.ReferenceText");
+
+                            b1.HasKey("Id");
+
+                            b1.HasIndex("CandidateProfileId");
+
+                            b1.ToTable("References", "candidates");
+
+                            b1.WithOwner()
+                                .HasForeignKey("CandidateProfileId");
+                        });
+
+                    b.OwnsMany("BuildCv.Domain.Resumes.Skill", "Skills", b1 =>
+                        {
+                            b1.Property<int>("Id")
+                                .ValueGeneratedOnAdd()
+                                .HasColumnType("int");
+
+                            SqlServerPropertyBuilderExtensions.UseIdentityColumn(b1.Property<int>("Id"));
+
+                            b1.Property<Guid>("CandidateProfileId")
+                                .HasColumnType("uniqueidentifier");
+
+                            b1.Property<string>("Keywords")
+                                .IsRequired()
+                                .HasColumnType("nvarchar(max)");
+
+                            b1.Property<byte?>("Level")
+                                .HasColumnType("tinyint");
+
+                            b1.Property<string>("Name")
+                                .IsRequired()
+                                .HasMaxLength(100)
+                                .HasColumnType("nvarchar(100)");
+
+                            b1.Property<int?>("YearsOfExperience")
+                                .HasColumnType("int");
+
+                            b1.HasKey("Id");
+
+                            b1.HasIndex("CandidateProfileId");
+
+                            b1.HasIndex("Name");
+
+                            b1.ToTable("Skills", "candidates");
+
+                            b1.WithOwner()
+                                .HasForeignKey("CandidateProfileId");
+                        });
+
+                    b.Navigation("Awards");
+
+                    b.Navigation("Certificates");
+
+                    b.Navigation("ContactInformation")
+                        .IsRequired();
+
+                    b.Navigation("Educations");
+
+                    b.Navigation("Experiences");
+
+                    b.Navigation("Interests");
+
+                    b.Navigation("Languages");
+
+                    b.Navigation("Projects");
+
+                    b.Navigation("Publications");
+
+                    b.Navigation("References");
+
+                    b.Navigation("Skills");
+                });
+
             modelBuilder.Entity("BuildCv.Domain.Identity.RefreshToken", b =>
                 {
                     b.HasOne("BuildCv.Domain.Identity.Account", null)
@@ -745,6 +1348,35 @@ namespace BuildCv.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("BuildCv.Domain.Resumes.Resume", b =>
                 {
+                    b.OwnsOne("BuildCv.Domain.Resumes.ImportSignals", "ImportSignals", b1 =>
+                        {
+                            b1.Property<Guid>("ResumeId")
+                                .HasColumnType("uniqueidentifier");
+
+                            b1.Property<byte>("ColumnLayout")
+                                .HasColumnType("tinyint")
+                                .HasColumnName("Import_ColumnLayout");
+
+                            b1.Property<bool>("HadTextLayer")
+                                .HasColumnType("bit")
+                                .HasColumnName("Import_HadTextLayer");
+
+                            b1.Property<int?>("PageCount")
+                                .HasColumnType("int")
+                                .HasColumnName("Import_PageCount");
+
+                            b1.Property<int>("Warnings")
+                                .HasColumnType("int")
+                                .HasColumnName("Import_Warnings");
+
+                            b1.HasKey("ResumeId");
+
+                            b1.ToTable("Resumes", "resumes");
+
+                            b1.WithOwner()
+                                .HasForeignKey("ResumeId");
+                        });
+
                     b.OwnsMany("BuildCv.Domain.Resumes.Award", "Awards", b1 =>
                         {
                             b1.Property<int>("Id")
@@ -997,35 +1629,6 @@ namespace BuildCv.Infrastructure.Persistence.Migrations
                             b1.HasIndex("ResumeId");
 
                             b1.ToTable("Experiences", "resumes");
-
-                            b1.WithOwner()
-                                .HasForeignKey("ResumeId");
-                        });
-
-                    b.OwnsOne("BuildCv.Domain.Resumes.ImportSignals", "ImportSignals", b1 =>
-                        {
-                            b1.Property<Guid>("ResumeId")
-                                .HasColumnType("uniqueidentifier");
-
-                            b1.Property<byte>("ColumnLayout")
-                                .HasColumnType("tinyint")
-                                .HasColumnName("Import_ColumnLayout");
-
-                            b1.Property<bool>("HadTextLayer")
-                                .HasColumnType("bit")
-                                .HasColumnName("Import_HadTextLayer");
-
-                            b1.Property<int?>("PageCount")
-                                .HasColumnType("int")
-                                .HasColumnName("Import_PageCount");
-
-                            b1.Property<int>("Warnings")
-                                .HasColumnType("int")
-                                .HasColumnName("Import_Warnings");
-
-                            b1.HasKey("ResumeId");
-
-                            b1.ToTable("Resumes", "resumes");
 
                             b1.WithOwner()
                                 .HasForeignKey("ResumeId");
