@@ -168,14 +168,19 @@ jobs:
   #
   # WHY THE JOB IS CONDITIONAL: it needs SONAR_TOKEN, which is a repository secret that can only be
   # created by somebody with admin rights to the repo. Until it exists this job would fail every PR for
-  # a reason that has nothing to do with the code, so `if: secrets.SONAR_TOKEN != ''` makes it appear
-  # the moment the secret is added and stay invisible until then. The secret is created in
-  # Settings → Secrets and variables → Actions, alongside the org/project values in
-  # sonar-project.properties.
+  # a reason that has nothing to do with the code, so it appears the moment the secret is added and
+  # stays invisible until then. The secret is created in Settings → Secrets and variables → Actions,
+  # alongside the org/project values in sonar-project.properties.
+  #
+  # The gate is a job-level env var rather than `if: secrets.SONAR_TOKEN != ''`: GitHub's workflow
+  # syntax does not allow the secrets context inside an `if` condition at all ("Unrecognized named
+  # value 'secrets'"), but a job-level env var mapped from a secret is visible to the job's own `if`.
   sonar-analysis:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    if: ${{ secrets.SONAR_TOKEN != '' }}
+    if: ${{ env.SONAR_TOKEN != '' }}
+    env:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
     # checks: write is what lets the quality-gate step report a check run on the PR. Everything else
     # the job does is read-only, and that is all it is granted.
     permissions:
