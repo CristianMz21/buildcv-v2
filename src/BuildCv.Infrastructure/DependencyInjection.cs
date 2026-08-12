@@ -9,6 +9,7 @@ using BuildCv.Application.Organizations;
 using BuildCv.Application.Readability;
 using BuildCv.Application.Resumes;
 using BuildCv.Application.Scoring;
+using BuildCv.Domain.Candidates;
 using BuildCv.Domain.Common.ValueObjects;
 using BuildCv.Domain.Identity;
 using BuildCv.Domain.Jobs;
@@ -226,6 +227,23 @@ public static class DependencyInjection
         services.AddScoped<ICommandHandler<AddPublicationCommand, Result<Resume>>, AddPublicationHandler>();
         services.AddScoped<ICommandHandler<AddInterestCommand, Result<Resume>>, AddInterestHandler>();
         services.AddScoped<ICommandHandler<AddReferenceCommand, Result<Resume>>, AddReferenceHandler>();
+
+        // Candidate profile — every collection is shared with Resumes, so the ten Add* commands and
+        // handlers share names with their resume twins; hence the full qualification here. The three
+        // non-twin types (GetCandidateProfile, UpsertProfileContact, RemoveProfileItem) are profile-only.
+        services.AddScoped<IQueryHandler<BuildCv.Application.Candidates.GetCandidateProfileQuery, Result<CandidateProfileWithItemIds>>, BuildCv.Application.Candidates.GetCandidateProfileHandler>();
+        services.AddScoped<ICommandHandler<BuildCv.Application.Candidates.UpsertProfileContactCommand, Result<CandidateProfile>>, BuildCv.Application.Candidates.UpsertProfileContactHandler>();
+        services.AddScoped<ICommandHandler<BuildCv.Application.Candidates.AddExperienceCommand, Result<CandidateProfile>>, BuildCv.Application.Candidates.AddExperienceHandler>();
+        services.AddScoped<ICommandHandler<BuildCv.Application.Candidates.AddEducationCommand, Result<CandidateProfile>>, BuildCv.Application.Candidates.AddEducationHandler>();
+        services.AddScoped<ICommandHandler<BuildCv.Application.Candidates.AddSkillCommand, Result<CandidateProfile>>, BuildCv.Application.Candidates.AddSkillHandler>();
+        services.AddScoped<ICommandHandler<BuildCv.Application.Candidates.AddProjectCommand, Result<CandidateProfile>>, BuildCv.Application.Candidates.AddProjectHandler>();
+        services.AddScoped<ICommandHandler<BuildCv.Application.Candidates.AddCertificateCommand, Result<CandidateProfile>>, BuildCv.Application.Candidates.AddCertificateHandler>();
+        services.AddScoped<ICommandHandler<BuildCv.Application.Candidates.AddLanguageCommand, Result<CandidateProfile>>, BuildCv.Application.Candidates.AddLanguageHandler>();
+        services.AddScoped<ICommandHandler<BuildCv.Application.Candidates.AddAwardCommand, Result<CandidateProfile>>, BuildCv.Application.Candidates.AddAwardHandler>();
+        services.AddScoped<ICommandHandler<BuildCv.Application.Candidates.AddPublicationCommand, Result<CandidateProfile>>, BuildCv.Application.Candidates.AddPublicationHandler>();
+        services.AddScoped<ICommandHandler<BuildCv.Application.Candidates.AddInterestCommand, Result<CandidateProfile>>, BuildCv.Application.Candidates.AddInterestHandler>();
+        services.AddScoped<ICommandHandler<BuildCv.Application.Candidates.AddReferenceCommand, Result<CandidateProfile>>, BuildCv.Application.Candidates.AddReferenceHandler>();
+        services.AddScoped<ICommandHandler<BuildCv.Application.Candidates.RemoveProfileItemCommand, Result<CandidateProfile>>, BuildCv.Application.Candidates.RemoveProfileItemHandler>();
 
         // Jobs
         services.AddScoped<ICommandHandler<CreateJobPostingCommand, Result<JobPosting>>, CreateJobPostingHandler>();

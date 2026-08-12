@@ -812,29 +812,6 @@ public static class ResumeEndpoints
     }
 
     /// <summary>
-    /// The URL segment each collection is addressed by, paired with the section it names.
-    /// </summary>
-    /// <remarks>
-    /// The segments are the property names <c>ResumeResponse</c> uses and the ones the existing POST
-    /// routes already carry, so one CV renders from `GET /{id}`, and every entry's delete URL is its
-    /// own array's name plus its own id. Stated once as a table because ten hand-written route strings
-    /// is where the typo lives, and a typo here fails OPEN — the route simply never exists.
-    /// </remarks>
-    private static readonly (string Segment, ResumeSection Section)[] ItemSections =
-    [
-        ("experiences", ResumeSection.Experiences),
-        ("educations", ResumeSection.Educations),
-        ("skills", ResumeSection.Skills),
-        ("projects", ResumeSection.Projects),
-        ("certificates", ResumeSection.Certificates),
-        ("languages", ResumeSection.Languages),
-        ("awards", ResumeSection.Awards),
-        ("publications", ResumeSection.Publications),
-        ("interests", ResumeSection.Interests),
-        ("references", ResumeSection.References)
-    ];
-
-    /// <summary>
     /// Registers the two ways an entry gets into one of a CV's collections: <c>POST /{id}/{segment}</c>
     /// appends one, <c>PUT /{id}/{segment}/{itemId}</c> replaces one.
     /// </summary>
@@ -899,7 +876,7 @@ public static class ResumeEndpoints
     // entry ids it must re-read anyway. Re-fetch GET /{id} when the ids matter.
     private static void MapItemDeletes(RouteGroupBuilder group)
     {
-        foreach (var (segment, section) in ItemSections)
+        foreach (var (segment, section) in ItemSections.All)
         {
             group.MapDelete($"/{{id:guid}}/{segment}/{{itemId:int}}", async (
                 Guid id,

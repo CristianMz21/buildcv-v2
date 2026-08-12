@@ -270,6 +270,7 @@ var v1 = app.MapGroup("/v1");
 
 v1.MapAuthEndpoints();
 v1.MapResumeEndpoints();
+v1.MapCandidateProfileEndpoints();
 v1.MapJobEndpoints();
 v1.MapJobOfferEndpoints();
 v1.MapOrganizationEndpoints();
