@@ -166,21 +166,38 @@ jobs:
   # the way a senior engineer does; this reads the same diff the way six thousand deterministic rules
   # do, and answers with a quality gate rather than a comment.
   #
-  # WHY THE JOB IS CONDITIONAL: it needs SONAR_TOKEN, which is a repository secret that can only be
-  # created by somebody with admin rights to the repo. Until it exists this job would fail every PR for
-  # a reason that has nothing to do with the code, so it appears the moment the secret is added and
-  # stays invisible until then. The secret is created in Settings → Secrets and variables → Actions,
-  # alongside the org/project values in sonar-project.properties.
+  # WHY THE ANALYSIS JOB IS CONDITIONAL: it needs SONAR_TOKEN, a repository secret only somebody with
+  # admin rights can create. Until it exists this job would fail every PR for a reason that has nothing
+  # to do with the code, so it stays invisible until the secret is added. The secret is created in
+  # Settings → Secrets and variables → Actions, alongside the org/project values in
+  # sonar-project.properties.
   #
-  # The gate is a job-level env var rather than `if: secrets.SONAR_TOKEN != ''`: GitHub's workflow
-  # syntax does not allow the secrets context inside an `if` condition at all ("Unrecognized named
-  # value 'secrets'"), but a job-level env var mapped from a secret is visible to the job's own `if`.
+  # The gate has to go through a probe job because of what a job-level `if` can reference: the GitHub
+  # Actions context-availability table allows only `github`, `needs`, `vars` and `inputs` there --
+  # neither `secrets` (rejected at parse time) nor `env` (same) is visible to a job's own `if`. So a
+  # two-second job that can read the secret into its env, and reports its presence as an output, is
+  # the narrowest thing that lets the real job learn it via `needs`.
+  sonar-probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    env:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+    outputs:
+      enabled: ${{ steps.probe.outputs.enabled }}
+    steps:
+      - id: probe
+        run: |
+          if [ -n "$SONAR_TOKEN" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+
   sonar-analysis:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    if: ${{ env.SONAR_TOKEN != '' }}
-    env:
-      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+    needs: sonar-probe
+    if: ${{ needs.sonar-probe.outputs.enabled == 'true' }}
     # checks: write is what lets the quality-gate step report a check run on the PR. Everything else
     # the job does is read-only, and that is all it is granted.
     permissions:
