@@ -162,6 +162,108 @@ jobs:
         if: always()
         run: docker compose -f docker-compose.app.yml down -v
 
+  # SONARQUBE CLOUD — the deterministic half of review, CodeRabbit's complement. CodeRabbit reads a PR
+  # the way a senior engineer does; this reads the same diff the way six thousand deterministic rules
+  # do, and answers with a quality gate rather than a comment.
+  #
+  # WHY THE ANALYSIS JOB IS CONDITIONAL: it needs SONAR_TOKEN, a repository secret only somebody with
+  # admin rights can create. Until it exists this job would fail every PR for a reason that has nothing
+  # to do with the code, so it stays invisible until the secret is added. The secret is created in
+  # Settings → Secrets and variables → Actions, alongside the org/project values in
+  # sonar-project.properties.
+  #
+  # The gate has to go through a probe job because of what a job-level `if` can reference: the GitHub
+  # Actions context-availability table allows only `github`, `needs`, `vars` and `inputs` there --
+  # neither `secrets` (rejected at parse time) nor `env` (same) is visible to a job's own `if`. So a
+  # two-second job that can read the secret into its env, and reports its presence as an output, is
+  # the narrowest thing that lets the real job learn it via `needs`.
+  sonar-probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    env:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+    outputs:
+      enabled: ${{ steps.probe.outputs.enabled }}
+    steps:
+      - id: probe
+        run: |
+          if [ -n "$SONAR_TOKEN" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  sonar-analysis:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: sonar-probe
+    if: ${{ needs.sonar-probe.outputs.enabled == 'true' }}
+    # checks: write is what lets the quality-gate step report a check run on the PR. Everything else
+    # the job does is read-only, and that is all it is granted.
+    permissions:
+      contents: read
+      checks: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # SonarCloud attributes findings to the commit that introduced them; a shallow clone would
+          # rob it of the history to do that with.
+          fetch-depth: 0
+
+      # The SonarScanner for .NET is a Java process in disguise.
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      # Scanner packages are large and version-stable; a cache is a minute saved per run.
+      - name: Cache SonarQube packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.sonar/cache
+          key: ${{ runner.os }}-sonar
+          restore-keys: ${{ runner.os }}-sonar
+
+      - name: Install SonarScanner for .NET
+        run: dotnet tool install --global dotnet-sonarscanner
+
+      # begin/build/end must run in ONE job: the scanner records MSBuild's compilation events, so the
+      # build it sees must be the build being analyzed. This job deliberately re-runs the build that
+      # build-and-unit-test already did, rather than sharing artifacts, because a build nobody scanned
+      # is not the analysis this product shipped.
+      - name: Begin analysis
+        run: |
+          dotnet sonarscanner begin \
+            /d:sonar.token="${{ secrets.SONAR_TOKEN }}" \
+            /d:sonar.host.url="https://sonarcloud.io" \
+            /d:sonar.cs.cobertura.reportsPaths="**/TestResults/**/coverage.cobertura.xml"
+
+      - name: Build
+        run: dotnet build BuildCv.slnx -c Release
+
+      # Identical to the step in build-and-unit-test — XPlat coverage already writes cobertura, which
+      # is what the begin step above told the scanner to expect.
+      - name: Test
+        run: dotnet test BuildCv.slnx -c Release --no-build --filter "Category!=Integration" --collect:"XPlat Code Coverage"
+
+      - name: End analysis
+        run: dotnet sonarscanner end /d:sonar.token="${{ secrets.SONAR_TOKEN }}"
+
+      - name: Quality gate
+        uses: SonarSource/sonarqube-quality-gate-action@v1.2.1
+        with:
+          scanMetadataReportFile: .sonarqube/out/.sonar/report-task.txt
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: https://sonarcloud.io
+
   # PUBLISHES THE IMAGES, and the point is that no long-lived credential exists anywhere. GITHUB_TOKEN
   # is minted for this run and expires with it, so nothing on a laptop and nothing in Azure holds push
   # rights. It replaced a personal token that carried `repo` and `delete_repo` -- a credential able to

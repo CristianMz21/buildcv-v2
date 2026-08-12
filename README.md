@@ -57,3 +57,7 @@ src/BuildCv.Api/            → Minimal APIs + composición
 ## Regla de comprensión
 
 No se mergea un PR que no puedas explicar línea por línea en voz alta.
+
+## Licencia
+
+Elastic License 2.0 — el mismo texto que el cliente `buildcv-web`, de modo que los dos repos del producto comparten una sola licencia. Ver [`LICENSE`](LICENSE).
