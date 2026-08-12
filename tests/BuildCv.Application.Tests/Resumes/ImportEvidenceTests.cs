@@ -15,11 +15,13 @@ namespace BuildCv.Application.Tests.Resumes;
 public class ImportEvidenceTests
 {
     private readonly FakeResumeRepository _resumes = new();
+    private readonly FakeCandidateProfileRepository _profiles = new();
     private readonly FakeImportEvidenceProtector _evidence = new();
     private readonly CreateResumeFromDraftHandler _handler;
     private readonly AccountId _owner = AccountId.New();
 
-    public ImportEvidenceTests() => _handler = new CreateResumeFromDraftHandler(_resumes, _evidence);
+    public ImportEvidenceTests() =>
+        _handler = new CreateResumeFromDraftHandler(_resumes, _profiles, _evidence);
 
     private static readonly ImportSignals Signals =
         ImportSignals.Create(ColumnLayout.Multiple, hadTextLayer: true, pageCount: 2);
@@ -38,6 +40,7 @@ public class ImportEvidenceTests
         result.IsSuccess.Should().BeTrue();
         result.Resume!.ImportSignals.Should().Be(Signals);
         _resumes.WriteCount.Should().Be(1);
+        _profiles.WriteCount.Should().Be(1, "a successful import feeds the profile as well as the resume");
     }
 
     // THE ORDINARY CASE. A draft typed by hand carries no token, and that is not an error: the
@@ -50,6 +53,8 @@ public class ImportEvidenceTests
         result.IsSuccess.Should().BeTrue();
         result.Resume!.ImportSignals.Should().BeNull();
         _evidence.UnprotectCallCount.Should().Be(0, "there is nothing to verify");
+        _resumes.WriteCount.Should().Be(1);
+        _profiles.WriteCount.Should().Be(1, "a successful import feeds the profile as well as the resume");
     }
 
     // A blank string is the same as absent rather than a rejection: a client that sends "" for an
@@ -80,6 +85,7 @@ public class ImportEvidenceTests
                 Message = IImportEvidenceProtector.InvalidTokenError,
             });
         _resumes.WriteCount.Should().Be(0, "a rejected import creates nothing at all");
+        _profiles.WriteCount.Should().Be(0, "a rejected import creates nothing at all");
     }
 
     // The account binding, and it is asserted against a token that is otherwise perfectly valid — issued
@@ -96,6 +102,7 @@ public class ImportEvidenceTests
         result.FieldErrors.Should().ContainSingle()
             .Which.Message.Should().Be(IImportEvidenceProtector.InvalidTokenError);
         _resumes.WriteCount.Should().Be(0);
+        _profiles.WriteCount.Should().Be(0, "a rejected import feeds neither store");
     }
 
     // Expiry gets its own message because it names a different fix and gives nothing away: a caller
@@ -112,6 +119,7 @@ public class ImportEvidenceTests
         result.FieldErrors.Should().ContainSingle()
             .Which.Message.Should().Be(IImportEvidenceProtector.ExpiredTokenError);
         _resumes.WriteCount.Should().Be(0);
+        _profiles.WriteCount.Should().Be(0, "a rejected import feeds neither store");
     }
 
     // COLLECTED, NOT SHORT-CIRCUITED. A candidate whose token expired while they were correcting their
@@ -128,6 +136,7 @@ public class ImportEvidenceTests
         result.FieldErrors.Select(error => error.Path).Should().BeEquivalentTo(
             ["contact.email", CreateResumeFromDraftHandler.ImportEvidencePath]);
         _resumes.WriteCount.Should().Be(0);
+        _profiles.WriteCount.Should().Be(0, "a rejected import feeds neither store");
     }
 
     // A draft that fails on its own fields must not have its token verified away silently either: the
@@ -142,5 +151,6 @@ public class ImportEvidenceTests
         result.IsSuccess.Should().BeFalse();
         result.Resume.Should().BeNull();
         _resumes.WriteCount.Should().Be(0);
+        _profiles.WriteCount.Should().Be(0, "a rejected import feeds neither store");
     }
 }

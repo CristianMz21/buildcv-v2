@@ -105,6 +105,82 @@ public class CandidateProfileTests
         profile.UpdatedAt.Should().Be(after);
     }
 
+    // The same rule, on the contact: the import path calls UpdateContactInformation with the result of
+    // a gap-fill merge, and on a no-op re-import that result is EQUAL to what the profile already holds
+    // but is a NEW instance — GapFill returns a fresh record. Touching on that would announce a contact
+    // change the import did not make.
+    [Fact]
+    public void UpdateContactInformation_WithAnEqualContactBuiltFreshly_DoesNotTouchUpdatedAt()
+    {
+        var profile = SomeProfile();
+        var after = profile.UpdatedAt;
+
+        profile.UpdateContactInformation(new ContactInformation(
+            FullName: profile.ContactInformation.FullName,
+            Email: profile.ContactInformation.Email));
+
+        profile.UpdatedAt.Should().Be(after);
+    }
+
+    // THE BOUNDARY THE TESTS ABOVE DO NOT CROSS. They add the SAME instance twice, which is the same
+    // list instance twice, so record equality passes without noticing that its IReadOnlyList members
+    // compare BY REFERENCE. A re-import builds every entry fresh, lists included, so the profile's
+    // idempotence has to survive two instances holding the same contents. These four types are the ones
+    // that carry such a member, and each pair here is equal content in two different list instances.
+    public static TheoryData<object, object> EqualContentInTwoListInstances() =>
+        new()
+        {
+            {
+                SomeExperience() with { Highlights = ["Cut latency in half"] },
+                SomeExperience() with { Highlights = ["Cut latency in half"] }
+            },
+            {
+                new Project("buildcv", DateRange.Create(DateOnly.Parse("2024-01-01")))
+                {
+                    Technologies = [Technology.Create("C#")],
+                    Highlights = ["Deterministic"],
+                },
+                new Project("buildcv", DateRange.Create(DateOnly.Parse("2024-01-01")))
+                {
+                    Technologies = [Technology.Create("C#")],
+                    Highlights = ["Deterministic"],
+                }
+            },
+            {
+                Skill.Create(Technology.Create("C#"), SkillLevel.Advanced, 7) with { Keywords = ["aspnet"] },
+                Skill.Create(Technology.Create("C#"), SkillLevel.Advanced, 7) with { Keywords = ["aspnet"] }
+            },
+            {
+                new Interest("Climbing") with { Keywords = ["bouldering"] },
+                new Interest("Climbing") with { Keywords = ["bouldering"] }
+            }
+        };
+
+    [Theory]
+    [MemberData(nameof(EqualContentInTwoListInstances))]
+    public void TwoEntriesWithTheSameContentInDifferentListInstances_AreEqualAndHashEqual(object left, object right)
+    {
+        left.Should().Be(right);
+        left.GetHashCode().Should().Be(right.GetHashCode());
+    }
+
+    // Adding the same entry to a profile that already holds it stays a no-op when the "same" entry is a
+    // fresh build with new list instances — the ordinary shape across two imports, and the case the
+    // record-level sequence equality exists for. The same-instance tests above would pass without it.
+    [Fact]
+    public void AddingAnEqualEntryBuiltFreshly_IsANoOp()
+    {
+        var profile = SomeProfile();
+        var experience = SomeExperience() with { Highlights = ["Cut latency in half"] };
+
+        profile.AddExperience(experience);
+        var after = profile.UpdatedAt;
+        profile.AddExperience(experience with { Highlights = ["Cut latency in half"] });
+
+        profile.Experiences.Should().ContainSingle();
+        profile.UpdatedAt.Should().Be(after, "a no-op must not look like a write");
+    }
+
     [Fact]
     public void EveryCollectionAcceptsItsOwnType()
     {

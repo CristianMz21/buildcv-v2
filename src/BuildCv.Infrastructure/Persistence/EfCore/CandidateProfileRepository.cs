@@ -1,6 +1,8 @@
 using BuildCv.Application.Common.Repositories;
+using BuildCv.Application.Resumes;
 using BuildCv.Domain.Candidates;
 using BuildCv.Domain.Identity;
+using BuildCv.Infrastructure.Persistence.Conventions;
 using Microsoft.EntityFrameworkCore;
 
 namespace BuildCv.Infrastructure.Persistence.EfCore;
@@ -37,10 +39,49 @@ internal sealed class CandidateProfileRepository : ICandidateProfileRepository
     {
         ArgumentNullException.ThrowIfNull(ownerId);
 
-        return await _context.CandidateProfiles.AsTracking()
-            .AsSplitQuery()
-            .FirstOrDefaultAsync(profile => profile.OwnerId == ownerId, cancellationToken);
+        return await ByOwnerQuery(_context, ownerId).FirstOrDefaultAsync(cancellationToken);
     }
+
+    // The ids come out of the CHANGE TRACKER, not out of a second query, and that is what makes the
+    // positional alignment ResumeItemIds promises true rather than hoped for — the same reasoning as
+    // ResumeRepository.GetByIdWithItemIdsAsync, and it is worth repeating here because the two are
+    // asked the same way across a shared enum. ByOwnerQuery is AsTracking, so each owned entry EF
+    // materialized into profile.Skills is the very instance the tracker holds a shadow key for. Walking
+    // the aggregate's own list and asking the tracker per element therefore reads ids in the
+    // aggregate's order by construction, with no ORDER BY to keep in sync.
+    public async Task<CandidateProfileWithItemIds?> GetByOwnerIdWithItemIdsAsync(
+        AccountId ownerId, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(ownerId);
+
+        var profile = await ByOwnerQuery(_context, ownerId).FirstOrDefaultAsync(cancellationToken);
+        if (profile is null)
+            return null;
+
+        return new CandidateProfileWithItemIds(profile, new ResumeItemIds(new Dictionary<ResumeSection, IReadOnlyList<int>>
+        {
+            [ResumeSection.Experiences] = KeysOf(profile.Experiences),
+            [ResumeSection.Educations] = KeysOf(profile.Educations),
+            [ResumeSection.Skills] = KeysOf(profile.Skills),
+            [ResumeSection.Projects] = KeysOf(profile.Projects),
+            [ResumeSection.Certificates] = KeysOf(profile.Certificates),
+            [ResumeSection.Languages] = KeysOf(profile.Languages),
+            [ResumeSection.Awards] = KeysOf(profile.Awards),
+            [ResumeSection.Publications] = KeysOf(profile.Publications),
+            [ResumeSection.Interests] = KeysOf(profile.Interests),
+            [ResumeSection.References] = KeysOf(profile.References)
+        }));
+    }
+
+    private IReadOnlyList<int> KeysOf<T>(IReadOnlyList<T> items)
+        where T : class =>
+        [.. items.Select(item => (int)_context.Entry(item).Property(ChildTable.Key).CurrentValue!)];
+
+    internal static IQueryable<CandidateProfile> ByOwnerQuery(
+        BuildCvDbContext context, AccountId ownerId) =>
+        context.CandidateProfiles.AsTracking()
+            .AsSplitQuery()
+            .Where(profile => profile.OwnerId == ownerId);
 
     // The unique filtered index on OwnerId is what makes "one profile per account" true, and it is
     // reached rather than pre-empted: two concurrent imports both read "no profile yet", both insert,

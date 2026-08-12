@@ -4,6 +4,7 @@ using BuildCv.Application.Common;
 using BuildCv.Application.Common.Abstractions;
 using BuildCv.Application.Common.Repositories;
 using BuildCv.Application.Common.Services;
+using BuildCv.Domain.Candidates;
 using BuildCv.Domain.Identity;
 using BuildCv.Domain.Resumes;
 
@@ -23,18 +24,25 @@ public sealed record CreateResumeFromDraftCommand(
     ResumeDraft Draft,
     string? ImportEvidence = null) : ICommand<ResumeImportResult>;
 
-// The whole aggregate is assembled in memory and handed to the repository in a SINGLE AddAsync. That
-// is not a micro-optimization: ten Add-then-Update calls would each be a write, so a draft that failed
-// halfway would leave a resume the candidate cannot tell the shape of, and re-importing would
-// duplicate whatever landed.
+// The import is TWO WRITES into two aggregates, and the ordering is the property rather than a
+// preference. The candidate's master data lands in their PROFILE first, then the resume itself —
+// because one of those writes is idempotent and the other is not, and that is what makes a retry safe.
+// The profile write is create-or-merge: every Add* on CandidateProfile ignores what the profile already
+// holds, so re-importing the same document, or a corrected one, merges into the same profile and
+// nothing duplicates. The resume write is the one that MUST NOT run twice — each AddAsync inserts a
+// fresh resume — so it runs last, only once the merge has succeeded: a failure between the two loses
+// nothing, the retry merges again (a no-op) and recreates the resume against a profile that already
+// holds the data; the reverse order would recreate the resume against a profile that lost it.
 //
-// No new port, no repository change and no new configuration is needed, and that is checked rather than
-// assumed: ResumeRepository.AddAsync is `_context.Resumes.Add(resume)` plus one SaveChanges, and
-// SchemaRoundTripTests.Resume_RoundTrips_WithEveryChildCollectionAndFullContactInformation already
-// proves against a real SQL Server that exactly that call persists all ten owned collections, the
-// Website and the Profiles in one go.
+// The resume itself is still assembled in memory and handed to its repository in a SINGLE AddAsync,
+// and that half is not a micro-optimization either: ten Add-then-Update calls would each be a write,
+// so a draft that failed halfway would leave a resume the candidate cannot tell the shape of. It is
+// verified to persist all ten owned collections, the Website and the Profiles in one go against a real
+// SQL Server by
+// SchemaRoundTripTests.Resume_RoundTrips_WithEveryChildCollectionAndFullContactInformation.
 public sealed class CreateResumeFromDraftHandler(
     IResumeRepository resumeRepository,
+    ICandidateProfileRepository candidateProfileRepository,
     IImportEvidenceProtector importEvidenceProtector)
     : ICommandHandler<CreateResumeFromDraftCommand, ResumeImportResult>
 {
@@ -53,13 +61,14 @@ public sealed class CreateResumeFromDraftHandler(
         // ArgumentException into a FieldError. A catch around Validate could only catch a bug, and
         // dressing a bug up as a 400 the client can "fix" is worse than the 500 it deserves.
         //
-        // AddAsync is a different matter and is deliberately left uncaught. It runs after the validator
-        // and can fail on things no amount of validation can inspect — a lost connection, a deadlock, a
-        // constraint the Domain does not model. Those are 500s, correctly. The one case that was NOT
-        // legitimate is now closed at its source: a language name longer than its nvarchar(100) column
-        // used to arrive here as SQL Server error 2628, untranslated, so Language.Create owns that
-        // length rule and the validator catches it like any other. If another bounded plaintext column
-        // is ever added, its rule belongs on the Domain type too, not in a catch here.
+        // The persistence writes — the profile's and the resume's — are deliberately left uncaught.
+        // They run after the validator and can fail on things no amount of validation can inspect — a
+        // lost connection, a deadlock, a constraint the Domain does not model. Those are 500s,
+        // correctly. The one case that was NOT legitimate is now closed at its source: a language name
+        // longer than its nvarchar(100) column used to arrive here as SQL Server error 2628,
+        // untranslated, so Language.Create owns that length rule and the validator catches it like any
+        // other. If another bounded plaintext column is ever added, its rule belongs on the Domain type
+        // too, not in a catch here.
         // Verified BEFORE the draft is validated, so the signals can be built into the aggregate in the
         // same single construction everything else goes through — there is no "create then attach", and
         // therefore no window in which a resume exists without the evidence it was imported with.
@@ -78,8 +87,61 @@ public sealed class CreateResumeFromDraftHandler(
         if (!result.IsSuccess)
             return result;
 
+        await WriteProfileAsync(command.RequesterId, result.Resume!, cancellationToken);
         await resumeRepository.AddAsync(result.Resume!, cancellationToken);
         return result;
+    }
+
+    // THE PROFILE IS WRITTEN BEFORE THE RESUME, and the two writes are deliberately not one unit of
+    // work: they go to two repositories and there is no transaction across them. What keeps a retry
+    // honest is the ORDER, not atomicity — see the remarks on the class for the full argument. The
+    // one extra property this method owns is that the merge is by VALUE rather than by instance.
+    private async Task WriteProfileAsync(
+        AccountId ownerId, Resume resume, CancellationToken cancellationToken)
+    {
+        // The clone is an EF requirement rather than a style choice: the two aggregates are written to
+        // the same DbContext in one request, and an OwnsMany entry is a row owned by exactly one
+        // principal. If the profile shared Resume's own instances, the second SaveChanges would find
+        // those rows already tracked under the first owner and silently move them — or re-insert them.
+        var contact = resume.ContactInformation with { };
+
+        var profile = await candidateProfileRepository.GetByOwnerIdAsync(ownerId, cancellationToken);
+        if (profile is null)
+        {
+            profile = CandidateProfile.Create(ownerId, contact);
+            MergeInto(profile, resume);
+            await candidateProfileRepository.AddAsync(profile, cancellationToken);
+            return;
+        }
+
+        // CONTACT IS MERGED IN THE PROFILE'S DIRECTION, never the other way. The profile is what the
+        // candidate typed or corrected by hand; the draft's contact is a convenience source that fills
+        // only what the profile does not already have. An import that replaced the profile's contact
+        // wholesale would silently destroy a hand-typed correction the moment an old draft was
+        // re-imported — the exact data-loss this aggregate exists to prevent.
+        profile.UpdateContactInformation(ContactInformation.GapFill(profile.ContactInformation, contact));
+        MergeInto(profile, resume);
+        await candidateProfileRepository.UpdateAsync(profile, cancellationToken);
+    }
+
+    // Every Add on a CandidateProfile is idempotent, so this is a merge rather than an append and
+    // crashing on a duplicate is impossible: re-importing the same document, or a corrected one, is the
+    // ordinary case. The item types are the same records Resume holds — a shared definition by design —
+    // so the copy is these ten loops and not a translation. Each entry is copied by `with { }` for the
+    // ownership reason above; the nested collections are converter columns rather than owned rows, so
+    // sharing their list instances is harmless and one level of copy is exactly enough.
+    private static void MergeInto(CandidateProfile profile, Resume resume)
+    {
+        foreach (var experience in resume.Experiences) profile.AddExperience(experience with { });
+        foreach (var education in resume.Educations) profile.AddEducation(education with { });
+        foreach (var skill in resume.Skills) profile.AddSkill(skill with { });
+        foreach (var project in resume.Projects) profile.AddProject(project with { });
+        foreach (var certificate in resume.Certificates) profile.AddCertificate(certificate with { });
+        foreach (var language in resume.Languages) profile.AddLanguage(language with { });
+        foreach (var award in resume.Awards) profile.AddAward(award with { });
+        foreach (var publication in resume.Publications) profile.AddPublication(publication with { });
+        foreach (var interest in resume.Interests) profile.AddInterest(interest with { });
+        foreach (var reference in resume.References) profile.AddReference(reference with { });
     }
 
     // Absent evidence is the ordinary case and is not an error: a hand-typed draft has no document to

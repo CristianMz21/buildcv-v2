@@ -101,6 +101,8 @@ public sealed class CandidateProfile
     public void UpdateContactInformation(ContactInformation contactInformation)
     {
         ArgumentNullException.ThrowIfNull(contactInformation);
+        if (ContactInformation == contactInformation)
+            return;
         ContactInformation = contactInformation;
         Touch();
     }

@@ -23,6 +23,20 @@ public interface ICandidateProfileRepository
 {
     Task<CandidateProfile?> GetByOwnerIdAsync(AccountId ownerId, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// The same profile, plus the identity of every entry in its ten collections.
+    /// </summary>
+    /// <remarks>
+    /// SEPARATE FROM <see cref="GetByOwnerIdAsync"/> ON PURPOSE, and not merged into it — the mirror of
+    /// <c>IResumeRepository.GetByIdWithItemIdsAsync</c>. Both loads materialize tracked; what the
+    /// with-ids form ADDS is a per-entry walk of every item's shadow key, and the reads that only
+    /// consult a profile — a generator selecting from it, a merge that only appends — are spared that
+    /// walk, not tracking. This one is for the two operations that must name one entry out of many:
+    /// removing and replacing.
+    /// </remarks>
+    Task<CandidateProfileWithItemIds?> GetByOwnerIdWithItemIdsAsync(
+        AccountId ownerId, CancellationToken cancellationToken = default);
+
     Task AddAsync(CandidateProfile profile, CancellationToken cancellationToken = default);
 
     Task UpdateAsync(CandidateProfile profile, CancellationToken cancellationToken = default);

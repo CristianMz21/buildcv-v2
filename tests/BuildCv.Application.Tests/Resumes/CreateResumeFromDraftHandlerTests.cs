@@ -15,11 +15,13 @@ namespace BuildCv.Application.Tests.Resumes;
 public class CreateResumeFromDraftHandlerTests
 {
     private readonly FakeResumeRepository _resumes = new();
+    private readonly FakeCandidateProfileRepository _profiles = new();
     private readonly FakeImportEvidenceProtector _evidence = new();
     private readonly CreateResumeFromDraftHandler _handler;
     private readonly AccountId _owner = AccountId.New();
 
-    public CreateResumeFromDraftHandlerTests() => _handler = new CreateResumeFromDraftHandler(_resumes, _evidence);
+    public CreateResumeFromDraftHandlerTests() =>
+        _handler = new CreateResumeFromDraftHandler(_resumes, _profiles, _evidence);
 
     private Task<ResumeImportResult> Import(ResumeDraft draft) =>
         _handler.Handle(new CreateResumeFromDraftCommand(_owner, draft));
@@ -103,9 +105,18 @@ public class CreateResumeFromDraftHandlerTests
 
         // The point of the endpoint, and WriteCount rather than AddCount because the regression to catch
         // is not a second insert: a handler that created the resume and then updated it once per section
-        // would leave identical contents behind AND an AddCount of exactly 1.
+        // would leave identical contents behind AND an AddCount of exactly 1. The import writes BOTH
+        // aggregates and each exactly once — the resume it was called for and the profile it also feeds.
         _resumes.WriteCount.Should().Be(1);
         _resumes.AddCount.Should().Be(1);
+        _profiles.WriteCount.Should().Be(1);
+        _profiles.AddCount.Should().Be(1);
+
+        // The "both writes" claim is about the data reaching the profile, not about a write happening.
+        var profile = await _profiles.GetByOwnerIdAsync(_owner);
+        profile.Should().NotBeNull();
+        profile!.Experiences.Should().ContainSingle().Which.Position.Should().Be("Senior Engineer");
+        profile.Skills.Should().ContainSingle().Which.Name.Name.Should().Be("C#");
 
         var stored = await _resumes.GetByIdAsync(result.Resume!.Id);
         stored.Should().NotBeNull();
@@ -189,6 +200,71 @@ public class CreateResumeFromDraftHandlerTests
         reference.ReferenceText.Should().Be("Would hire again.");
     }
 
+    // THE PROFILE MERGE IS BY VALUE ACROSS REQUEST BOUNDARIES, and the value is the SEQUENCE of a
+    // collection member, not the list instance. Each import builds its entries and lists fresh, so
+    // reference equality would let re-importing the same CV grow one duplicate entry per collection per
+    // import — which is why the four list-bearing records define equality by sequence. The resume is
+    // NOT deduplicated here: each import creates a fresh one, which is the two-write ordering the
+    // handler documents on CreateResumeFromDraft.cs. What must hold one entry is the profile, and this
+    // test proves it from the handler, not from CandidateProfile's own tests.
+    [Fact]
+    public async Task ImportingTheSameDraftTwice_MergesIntoOneProfileEntryPerCollection()
+    {
+        var draft = new ResumeDraft(
+            Contact: ValidContact(),
+            Experiences:
+            [
+                new ExperienceDraft(
+                    "Professional", "Globant", "Engineer", "2020-01-01",
+                    Highlights: ["Cut latency in half"])
+            ],
+            Projects:
+            [
+                new ProjectDraft("buildcv", "2024-01-01", Technologies: ["dotnet"], Highlights: ["Deterministic"])
+            ],
+            Skills: [new SkillDraft("C#", "Advanced", "7")],
+            Interests: [new InterestDraft("Climbing", ["bouldering"])]);
+
+        (await Import(draft)).IsSuccess.Should().BeTrue();
+        (await Import(draft)).IsSuccess.Should().BeTrue();
+
+        _resumes.WriteCount.Should().Be(2, "each import creates a fresh resume");
+        _profiles.WriteCount.Should().Be(2, "each import feeds the profile");
+
+        var profile = await _profiles.GetByOwnerIdAsync(_owner);
+        profile.Should().NotBeNull();
+        profile!.Experiences.Should().ContainSingle();
+        profile.Projects.Should().ContainSingle();
+        profile.Skills.Should().ContainSingle();
+        profile.Interests.Should().ContainSingle();
+    }
+
+    // THE DIRECTION OF THE CONTACT MERGE, in the profile's favour. A corrected re-import is typically
+    // SPARSER than the hand-typed profile it feeds (the document omitted the phone), so existing-wins
+    // is the property that keeps a hand-typed correction intact. The merge must also fill gaps: a field
+    // the profile does not yet have is the one thing the draft is allowed to supply. Without the fill,
+    // this second import would simply leave the website null forever.
+    [Fact]
+    public async Task Import_WithASparserDraft_KeepsTheProfilesFieldsAndFillsTheProfilesGaps()
+    {
+        (await Import(new ResumeDraft(Contact: new ContactDraft(
+            FullName: "Jane Candidate",
+            Email: "jane@example.com",
+            PhoneNumber: "+541155550123")))).IsSuccess.Should().BeTrue();
+
+        (await Import(new ResumeDraft(Contact: new ContactDraft(
+            FullName: "Jane Candidate",
+            Email: "jane@example.com",
+            Website: "https://jane.example.com")))).IsSuccess.Should().BeTrue();
+
+        var contact = (await _profiles.GetByOwnerIdAsync(_owner))!.ContactInformation;
+
+        contact.PhoneNumber!.Value.Should().Be("+541155550123",
+            "a sparser draft must not take the profile's phone back");
+        contact.Website!.Value.Should().Be("https://jane.example.com",
+            "a field the profile does not have is filled from the draft");
+    }
+
     // Website and Profiles were IMPOSSIBLE to set through the API before this endpoint — not merely
     // un-exposed. ContactInformationFactory passes a literal null for Website and Profiles had no
     // writer at all, so this is new capability rather than a refactor and gets its own test.
@@ -267,9 +343,10 @@ public class CreateResumeFromDraftHandlerTests
 
         result.IsSuccess.Should().BeFalse();
 
-        // Not "the result says failure" — that is a different claim. Nothing reached the store, so the
-        // valid C# skill beside the invalid Go one was not half-imported either.
+        // Not "the result says failure" — that is a different claim. Nothing reached EITHER store, so
+        // the valid C# skill beside the invalid Go one was not half-imported either.
         _resumes.AddCount.Should().Be(0);
+        _profiles.WriteCount.Should().Be(0, "a rejected draft must not feed the profile either");
     }
 
     // A real extracted CV lists "React" twice routinely, and Resume.AddSkill rejects case-insensitive

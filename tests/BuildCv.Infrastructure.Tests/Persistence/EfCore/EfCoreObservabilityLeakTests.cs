@@ -144,7 +144,8 @@ public sealed class EfCoreObservabilityLeakTests
     private async Task<ResumeId> ImportASentinelResumeAsync(ILoggerFactory loggerFactory, AccountId owner)
     {
         await using var writer = _fixture.NewRecordedContext(loggerFactory);
-        var handler = new CreateResumeFromDraftHandler(TestRepositories.Resumes(writer), TestImportEvidence.Protector());
+        var handler = new CreateResumeFromDraftHandler(
+            TestRepositories.Resumes(writer), TestRepositories.CandidateProfiles(writer), TestImportEvidence.Protector());
         var result = await handler.Handle(new CreateResumeFromDraftCommand(owner, SentinelDraft()));
 
         result.FieldErrors.Should().BeEmpty();
