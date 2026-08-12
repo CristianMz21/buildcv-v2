@@ -169,8 +169,7 @@ jobs:
   # WHY THE ANALYSIS JOB IS CONDITIONAL: it needs SONAR_TOKEN, a repository secret only somebody with
   # admin rights can create. Until it exists this job would fail every PR for a reason that has nothing
   # to do with the code, so it stays invisible until the secret is added. The secret is created in
-  # Settings → Secrets and variables → Actions, alongside the org/project values in
-  # sonar-project.properties.
+  # Settings → Secrets and variables → Actions.
   #
   # The gate has to go through a probe job because of what a job-level `if` can reference: the GitHub
   # Actions context-availability table allows only `github`, `needs`, `vars` and `inputs` there --
@@ -238,11 +237,22 @@ jobs:
       # build it sees must be the build being analyzed. This job deliberately re-runs the build that
       # build-and-unit-test already did, rather than sharing artifacts, because a build nobody scanned
       # is not the analysis this product shipped.
+      #
+      # The org and project key live HERE, on the command line, because that is the only configuration
+      # the SonarScanner for .NET reads: it ignores sonar-project.properties (it looks for a settings
+      # file next to the executable, which is not this repo), so a properties file would be a second,
+      # inert statement of the same values. sonar.sources and sonar.tests narrow the analysis the same
+      # way the properties file would have; the in-memory repositories stay covered because the whole
+      # Api suite runs on them.
       - name: Begin analysis
         run: |
           dotnet sonarscanner begin \
+            /k:cristianmz21_buildcv-v2 \
+            /o:cristianmz21 \
             /d:sonar.token="${{ secrets.SONAR_TOKEN }}" \
             /d:sonar.host.url="https://sonarcloud.io" \
+            /d:sonar.sources="src" \
+            /d:sonar.tests="tests" \
             /d:sonar.cs.cobertura.reportsPaths="**/TestResults/**/coverage.cobertura.xml"
 
       - name: Build
