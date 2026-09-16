@@ -33,7 +33,7 @@
 
       Removing this line does not remove the package. It only puts the flagged version back.
     -->
-    <PackageReference Include="Microsoft.Identity.Client" Version="4.87.0" />
+    <PackageReference Include="Microsoft.Identity.Client" Version="4.89.0" />
   </ItemGroup>
 
   <ItemGroup>
